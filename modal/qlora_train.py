@@ -5,10 +5,14 @@ This is the qig-studio-native implementation of the qlora-train ASGI contract th
 Qwen path is local Ollama (``targets/qwen_local.py``). The whole app runs end-to-end WITHOUT this —
 ``QwenModalTarget`` is None-safe and only used when ``QIG_STUDIO_MODAL_URL`` points here.
 
-NOTE on purity: Qwen is a Euclidean transformer (LANGUAGE loss regime). QLoRA fine-tunes it with
-standard AdamW — that is CORRECT for a non-manifold LM, NOT a violation. Geometric purity (Fisher-Rao
-/ natural gradient) governs the Δ⁶³ KERNEL targets, not Qwen. This file lives in ``modal/`` (outside
-the ``src/`` geometric-purity scope) precisely because it trains a Euclidean model.
+NOTE on purity: Qwen has Euclidean INTERNALS (dot-product attention, additive residual stream,
+RMSNorm-sphere, AdamW) and a SIMPLEX OUTPUT PORT (softmax → categorical on Δ^(V-1), which is the
+Δ⁶³ handoff to the kernel). QLoRA fine-tunes the Euclidean weights — its LoRA deltas are flat-space
+weight updates and the loss is cross-entropy on logits, so AdamW is CORRECT here, NOT a violation.
+Geometric purity (Fisher-Rao / natural gradient) governs the Δ⁶³ KERNEL's basin coords, not Qwen's
+weight matrices. This file lives in ``modal/`` (outside the ``src/`` Δ⁶³ purity scope) precisely
+because it trains the Euclidean-internals LM. The simplex-native object that grows over time is the
+KERNEL (it takes over from Qwen — scaffold removal), NOT Qwen converting to simplex.
 
 Deploy:  modal deploy modal/qlora_train.py   (sets QIG_STUDIO_MODAL_URL to the printed web URL)
 Auth:    set a Modal secret ``qig-studio-modal`` with key ``api_key``; the client sends it as the
