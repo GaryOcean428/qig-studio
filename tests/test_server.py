@@ -70,3 +70,15 @@ def test_curriculum_endpoint_geometric_mode():
         assert body["loss_regime"] == "geometric"
         assert body["mode"] == "basin-driving"
         assert "listening" in body["phases"]
+
+
+def test_index_serves_web_console():
+    with TestClient(app) as client:
+        r = client.get("/")
+        assert r.status_code == 200
+        assert "Telemetry console" in r.text and "trainBtn" in r.text
+
+
+def test_favicon_no_content():
+    with TestClient(app) as client:
+        assert client.get("/favicon.ico").status_code == 204

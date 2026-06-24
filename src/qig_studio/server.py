@@ -27,7 +27,8 @@ from pathlib import Path
 from typing import Any, AsyncGenerator
 
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, Response, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from . import __version__
@@ -72,6 +73,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
 
 app = FastAPI(title="qig-studio", version=__version__, lifespan=lifespan)
+
+_WEB_DIR = Path(__file__).resolve().parent / "web"
+if (_WEB_DIR / "index.html").is_file():
+    app.mount("/static", StaticFiles(directory=str(_WEB_DIR)), name="static")
 
 
 class ChatRequest(BaseModel):
@@ -222,12 +227,14 @@ async def train(req: TrainRequest) -> StreamingResponse:
     return StreamingResponse(gen(), media_type="text/event-stream")
 
 
-@app.get("/", response_class=HTMLResponse)
-async def index() -> str:
-    # Browser UI is mounted in Phase 2; for now a minimal pointer.
-    return (
-        "<!doctype html><meta charset=utf-8><title>qig-studio</title>"
-        "<h1>qig-studio</h1><p>FastAPI core up. Browser console arrives in Phase 2. "
-        "API: <code>/health</code>, <code>/targets</code>, <code>/telemetry</code>, "
-        "<code>/train</code> (SSE), <code>/chat</code>.</p>"
-    )
+@app.get("/")
+async def index():
+    idx = _WEB_DIR / "index.html"
+    if idx.is_file():
+        return FileResponse(str(idx))
+    return HTMLResponse("<h1>qig-studio</h1><p>API up; web console asset missing.</p>")
+
+
+@app.get("/favicon.ico")
+async def favicon() -> Response:
+    return Response(status_code=204)

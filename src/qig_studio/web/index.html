@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>qig-studio</title>
+<style>
+  :root{
+    /* colourblind-safe: blue / purple / amber, no red-green */
+    --bg:#0e1116; --panel:#171c24; --edge:#283041; --ink:#e6edf3; --muted:#9aa7b8;
+    --blue:#6ab7ff; --purple:#b388ff; --amber:#ffca54; --pink:#ff7ab6; --ok:#5ad1c4;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace}
+  header{display:flex;align-items:center;gap:1rem;padding:.6rem 1rem;border-bottom:1px solid var(--edge);background:var(--panel)}
+  header h1{font-size:1rem;margin:0;letter-spacing:.04em}
+  header .status{color:var(--muted);font-size:.8rem}
+  .wrap{display:grid;grid-template-columns:360px 1fr;gap:1rem;padding:1rem;min-height:calc(100vh - 52px)}
+  .panel{background:var(--panel);border:1px solid var(--edge);border-radius:10px;padding:1rem}
+  .panel h2{font-size:.78rem;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin:.1rem 0 .8rem}
+  label{display:block;color:var(--muted);font-size:.72rem;margin:.5rem 0 .2rem}
+  select,input,button,textarea{font:inherit;background:#0b0f15;color:var(--ink);border:1px solid var(--edge);border-radius:7px;padding:.45rem .6rem}
+  select,input,textarea{width:100%}
+  button{cursor:pointer;background:#1c2532;border-color:#33425a}
+  button:hover{border-color:var(--blue)}
+  .row{display:flex;gap:.5rem;align-items:end}
+  .row > *{flex:1}
+  .metric{display:flex;justify-content:space-between;padding:.2rem 0;border-bottom:1px dashed var(--edge)}
+  .metric .v{font-weight:600}
+  .bar{height:14px;border-radius:7px;background:#0b0f15;overflow:hidden;margin:.3rem 0 .8rem;border:1px solid var(--edge)}
+  .bar > i{display:block;height:100%;background:linear-gradient(90deg,var(--blue),var(--amber));transition:width .25s}
+  .pill{display:inline-block;padding:.1rem .5rem;border-radius:999px;font-size:.74rem;border:1px solid var(--edge)}
+  #log{height:48vh;overflow:auto;background:#0b0f15;border:1px solid var(--edge);border-radius:8px;padding:.6rem;white-space:pre-wrap}
+  #log .you{color:var(--blue)} #log .tgt{color:var(--ok)} #log .sys{color:var(--amber)} #log .err{color:var(--pink)}
+  .regime-linear{color:var(--blue)} .regime-hierarchical{color:var(--purple)}
+  .regime-geometric{color:var(--amber)} .regime-topological_instability{color:var(--pink)}
+  .hint{color:var(--muted);font-size:.72rem;margin-top:.4rem}
+</style>
+</head>
+<body>
+<header>
+  <h1>🧠 qig-studio</h1>
+  <span class="status" id="status">connecting…</span>
+</header>
+<div class="wrap">
+  <!-- TELEMETRY CONSOLE -->
+  <section class="panel">
+    <h2>Telemetry console</h2>
+    <label>Active target</label>
+    <select id="target"></select>
+    <div class="hint" id="regimeMode"></div>
+
+    <label>Φ (integration)</label>
+    <div class="bar"><i id="phiBar" style="width:0%"></i></div>
+    <div class="metric"><span>Φ</span><span class="v" id="phi">—</span></div>
+    <div class="metric"><span>κ (coupling)</span><span class="v" id="kappa">—</span></div>
+    <div class="metric"><span>regime</span><span class="v"><span class="pill" id="regime">—</span></span></div>
+    <div class="metric"><span>basin Δ</span><span class="v" id="basin">—</span></div>
+    <div class="metric"><span>loss</span><span class="v" id="loss">—</span></div>
+    <div class="metric"><span>step</span><span class="v" id="step">—</span></div>
+
+    <div class="row" style="margin-top:1rem">
+      <div><label>train steps</label><input id="steps" type="number" value="20" min="1" max="500"/></div>
+      <div><button id="trainBtn">▶ Train (basin-driving)</button></div>
+    </div>
+    <div class="hint">SSE stream from <code>/train</code> drives this panel live.</div>
+  </section>
+
+  <!-- CHAT -->
+  <section class="panel">
+    <h2>Chat</h2>
+    <div id="log"></div>
+    <div class="row" style="margin-top:.6rem">
+      <textarea id="msg" rows="2" placeholder="message the active target…"></textarea>
+      <div style="flex:0 0 auto;display:flex;align-items:end"><button id="sendBtn">Send</button></div>
+    </div>
+    <div class="hint">Geometric targets reason on Δ⁶³ (lm_weight=0); fluent prose is Qwen's job (Phase 3).</div>
+  </section>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const REGIMES = ["linear","hierarchical","geometric","topological_instability"];
+
+function log(cls, msg){
+  const el = $("log"); const d = document.createElement("div");
+  d.className = cls; d.textContent = msg; el.appendChild(d); el.scrollTop = el.scrollHeight;
+}
+function setTelemetry(t){
+  const phi = t.phi ?? 0;
+  $("phiBar").style.width = Math.max(0, Math.min(1, phi))*100 + "%";
+  $("phi").textContent = phi.toFixed(3);
+  $("kappa").textContent = (t.kappa ?? 0).toFixed(2);
+  const r = $("regime"); r.textContent = t.regime ?? "—";
+  r.className = "pill regime-" + (t.regime ?? "");
+  $("basin").textContent = (t.basin_distance ?? 0).toFixed(3);
+  $("loss").textContent = (t.loss==null ? "—" : Number(t.loss).toFixed(3));
+  $("step").textContent = t.step ?? "—";
+}
+async function refreshHealth(){
+  try{
+    const h = await (await fetch("/health")).json();
+    $("status").textContent = `v${h.version} · purity ${h.purity} · pillars ${h.pillars||"none"} · active ${h.active_target}`;
+  }catch(e){ $("status").textContent = "server unreachable"; }
+}
+async function loadTargets(){
+  const data = await (await fetch("/targets")).json();
+  const sel = $("target"); sel.innerHTML = "";
+  for(const t of data.targets){
+    const o = document.createElement("option");
+    o.value = t.name;
+    o.textContent = `${t.name} · ${t.loss_regime}${t.available ? "" : " (unavailable)"}`;
+    if(t.name === data.active) o.selected = true;
+    sel.appendChild(o);
+  }
+  await refreshCurriculum();
+}
+async function refreshCurriculum(){
+  const c = await (await fetch("/curriculum")).json();
+  $("regimeMode").textContent = `loss_regime: ${c.loss_regime} · curriculum: ${c.mode} · phases: ${c.phases.join(" → ")}`;
+}
+async function refreshTelemetry(){
+  try{ setTelemetry(await (await fetch("/telemetry")).json()); }catch(e){}
+}
+$("target").addEventListener("change", async (e) => {
+  await fetch(`/targets/${e.target.value}/select`, {method:"POST"});
+  log("sys", `· selected target: ${e.target.value}`);
+  await refreshHealth(); await refreshCurriculum(); await refreshTelemetry();
+});
+$("sendBtn").addEventListener("click", sendChat);
+$("msg").addEventListener("keydown", (e)=>{ if(e.key==="Enter" && !e.shiftKey){ e.preventDefault(); sendChat(); }});
+async function sendChat(){
+  const m = $("msg").value.trim(); if(!m) return;
+  $("msg").value = ""; log("you", "you> " + m);
+  const r = await fetch("/chat", {method:"POST", headers:{"content-type":"application/json"}, body:JSON.stringify({message:m})});
+  if(!r.ok){ log("err", `${r.status} ${await r.text()}`); return; }
+  const body = await r.json(); log("tgt", "target> " + body.text); setTelemetry(body.telemetry);
+}
+$("trainBtn").addEventListener("click", runTrain);
+async function runTrain(){
+  const steps = parseInt($("steps").value || "20", 10);
+  log("sys", `· training ${steps} steps (basin-driving) ·`);
+  const r = await fetch("/train", {method:"POST", headers:{"content-type":"application/json"}, body:JSON.stringify({steps})});
+  if(!r.ok || !r.body){ log("err", "train failed: " + r.status); return; }
+  const reader = r.body.getReader(); const dec = new TextDecoder(); let buf = "";
+  while(true){
+    const {value, done} = await reader.read(); if(done) break;
+    buf += dec.decode(value, {stream:true});
+    let idx;
+    while((idx = buf.indexOf("\n\n")) >= 0){
+      const chunk = buf.slice(0, idx); buf = buf.slice(idx+2);
+      const line = chunk.split("\n").find(l => l.startsWith("data: "));
+      if(!line) continue;
+      const ev = JSON.parse(line.slice(6));
+      if(ev.type === "step"){ setTelemetry(ev.telemetry); log("sys", `  step ${ev.step} [${ev.phase}] ${ev.prompt.slice(0,52)}`); }
+      else if(ev.type === "error"){ log("err", "train error: " + ev.error); }
+      else if(ev.type === "done"){ log("sys", "· done ·"); }
+    }
+  }
+}
+// boot
+refreshHealth(); loadTargets().then(refreshTelemetry);
+</script>
+</body>
+</html>
