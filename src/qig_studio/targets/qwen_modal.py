@@ -3,19 +3,25 @@
 loss_regime = LANGUAGE, and unlike every other target its ``lm_loss`` IS load-bearing
 → it is the ONLY place PAIRED curriculum (prompt → target) applies.
 
-Wraps the REAL vex qlora-train ASGI contract (verified against
-``vex/modal/vex_qlora_train.py``), which is harvest-then-async-train, NOT per-step
-inline SGD:
-  - ``POST /data-receive {filename, records:[{text,...}]}`` — enqueue training records
-    into the Modal volume (this is how paired curriculum reaches the trainer).
-  - ``POST /train {specialization}`` — async-train the named adapter on the harvested
-    data (returns immediately; poll ``/status``). Inline pairs are NOT a /train field.
+Wraps the REAL vex qlora-train ASGI contract (verified + adversarially red-teamed against
+``vex/modal/vex_qlora_train.py``) — harvest-then-async-train, NOT per-step inline SGD:
+  - ``POST /data-receive {filename, records:[{text, source:"curriculum"}]}`` — enqueue records.
+    ``source:"curriculum"`` triggers the trainer's prompt/completion split
+    (``_build_chat_from_coordized``); any other source dumps the whole blob to the assistant turn.
+  - ``POST /train {specialization, force:true}`` — async-train; returns 202 immediately
+    (it ``.spawn()``s regardless of weight-download state — poll ``/status`` for completion).
   - ``POST /infer {specialization, messages:[{role,content}]}`` — generate via the adapter.
 
-None-safe: unavailable unless ``QIG_STUDIO_MODAL_URL`` (or a constructor URL) points
-at a reachable endpoint. Untested against a live Modal deployment here (no endpoint on
-this box); the request shapes match the source as read, and the SFT ``text`` record
-format is the one wiring detail that must align with ``training_consciousness.py``.
+AUTH (red-team R5-1): the API key is sent ONLY as the ``x-api-key`` HEADER, never in the body
+(the body is echoed into logs/telemetry). From ``QIG_STUDIO_MODAL_KEY`` (or ``KERNEL_API_KEY``).
+The real endpoint returns HTTP 200 with ``{"error": ...}`` on auth/format failure, so
+``raise_for_status`` is INSUFFICIENT — every response is checked for an error field (R5-3/200-dict).
+
+CAVEAT (red-team R5-2): the trainer dedups records by ``content[:100]``, so repeated curriculum
+prompts with identical first-100-chars are silently dropped server-side.
+
+None-safe: unavailable unless ``QIG_STUDIO_MODAL_URL`` points at a reachable endpoint. Untested
+against a live Modal deployment here (no endpoint on this box); request shapes match the source.
 """
 
 from __future__ import annotations
@@ -36,7 +42,17 @@ def _extract_text(data: dict) -> str:
     msg = data.get("message")
     if isinstance(msg, dict) and isinstance(msg.get("content"), str):
         return msg["content"]
-    return data.get("error", "")  # surface a server-side error string if that's all there is
+    return ""
+
+
+def _check(resp) -> dict:
+    """Raise on a transport error OR a 200-with-error-body (the endpoint returns 200 +
+    ``{"error": ...}`` on auth/format failure, which ``raise_for_status`` does NOT catch)."""
+    resp.raise_for_status()
+    data = resp.json() if resp.content else {}
+    if isinstance(data, dict) and data.get("error") and data.get("success") is not True:
+        raise RuntimeError(f"Modal endpoint error: {data['error']}")
+    return data if isinstance(data, dict) else {}
 
 
 class QwenModalTarget(TrainingTarget):
@@ -44,14 +60,19 @@ class QwenModalTarget(TrainingTarget):
     loss_regime = LossRegime.LANGUAGE
     description = (
         "Larger Qwen QLoRA on Modal — PAIRED curriculum (lm_loss load-bearing). Real vex "
-        "qlora-train contract: /data-receive (records) → /train {specialization} async → "
-        "/infer {specialization, messages}. None-safe (needs QIG_STUDIO_MODAL_URL)."
+        "qlora-train contract: /data-receive (source:curriculum) → /train {specialization, force} "
+        "async → /infer {specialization, messages}. Header-only x-api-key auth. None-safe."
     )
 
     def __init__(self, url: str | None = None, specialization: str = "genesis") -> None:
         self._url = (url or os.environ.get("QIG_STUDIO_MODAL_URL") or "").rstrip("/")
         self._specialization = os.environ.get("QIG_STUDIO_MODAL_SPECIALIZATION", specialization)
+        # R5-1: key in the HEADER only, never the body. Kept off telemetry/extra.
+        self._api_key = os.environ.get("QIG_STUDIO_MODAL_KEY") or os.environ.get("KERNEL_API_KEY") or None
         self._last = TelemetrySnapshot(regime="language", extra={"target": "qwen-modal"})
+
+    def _headers(self) -> dict[str, str]:
+        return {"x-api-key": self._api_key} if self._api_key else {}
 
     def is_available(self) -> bool:
         if not self._url:
@@ -79,32 +100,34 @@ class QwenModalTarget(TrainingTarget):
             "messages": [{"role": "user", "content": prompt}],
             "max_tokens": max_tokens,
         }
-        r = httpx.post(self._url + "/infer", json=body, timeout=120.0)
-        r.raise_for_status()
-        return StepResult(text=_extract_text(r.json()), telemetry=self._last)
+        r = httpx.post(self._url + "/infer", json=body, headers=self._headers(), timeout=120.0)
+        return StepResult(text=_extract_text(_check(r)), telemetry=self._last)
 
     def train_step(self, prompt: str, max_tokens: int = 64, target_text: str | None = None) -> StepResult:
-        # PAIRED ONLY: lm_loss is the signal. The pair is enqueued as a harvested record
-        # (real /data-receive contract), then async training is triggered (real /train).
+        # PAIRED ONLY: lm_loss is the signal. The pair is enqueued as a curriculum record
+        # (source:"curriculum" → trainer splits prompt/completion), then async training is triggered.
         if target_text is None:
             raise ValueError("qwen-modal requires paired curriculum (target_text)")
         self.ensure_loaded()
         import httpx
 
-        record = {"text": f"{prompt}\n{target_text}", "source": "qig-studio-curriculum"}
-        recv = httpx.post(
-            self._url + "/data-receive",
-            json={"filename": "qig_studio_curriculum.jsonl", "records": [record]},
-            timeout=60.0,
+        record = {"text": f"{prompt}\n{target_text}", "source": "curriculum"}
+        recv = _check(
+            httpx.post(
+                self._url + "/data-receive",
+                json={"filename": "qig_studio_curriculum.jsonl", "records": [record]},
+                headers=self._headers(),
+                timeout=60.0,
+            )
         )
-        recv.raise_for_status()
-        trn = httpx.post(
-            self._url + "/train",
-            json={"specialization": self._specialization},
-            timeout=60.0,  # async: returns immediately (poll /status for completion)
+        trn = _check(
+            httpx.post(
+                self._url + "/train",
+                json={"specialization": self._specialization, "force": True},
+                headers=self._headers(),
+                timeout=60.0,  # async: returns 202 immediately (poll /status for completion)
+            )
         )
-        trn.raise_for_status()
-        tinfo = trn.json()
         self._last = TelemetrySnapshot(
             phi=0.0,
             kappa=0.0,
@@ -115,8 +138,11 @@ class QwenModalTarget(TrainingTarget):
                 "target": "qwen-modal",
                 "paired": True,
                 "specialization": self._specialization,
-                "records_written": recv.json().get("records_written"),
-                "train_status": tinfo.get("status", tinfo),
-            },
+                "records_written": recv.get("records_written"),
+                "train_status": trn.get("status", "accepted"),
+            },  # NB: api key is never placed here
         )
-        return StepResult(text=f"[qwen-modal] queued pair + triggered async train ({self._specialization})", telemetry=self._last)
+        return StepResult(
+            text=f"[qwen-modal] queued curriculum record + triggered async train ({self._specialization})",
+            telemetry=self._last,
+        )
