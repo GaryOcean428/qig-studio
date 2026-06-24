@@ -1,0 +1,77 @@
+"""Qwen output-distribution → Δ⁶³ boundary (the P22-sanctioned interface).
+
+P22 (frozen): the OUTPUT-distribution interface is the sanctioned Qwen bridge
+(cross-arch ρ=0.737, RWKV-7 ρ=0.994). The hidden-state graft FAILED adversarially
+and would violate P22. So we take Qwen's next-token distribution — already a
+probability point — reduce it to a Δ⁶³ basin, and integrate it into the cortex's
+identity basin with a **Pillar-2-capped** boundary slerp (≤30%): Qwen enters at the
+SURFACE and can never overwrite the topological bulk (the ego pillar).
+
+All geometry is single-sourced from qig-core (``to_simplex``, ``slerp_sqrt``,
+``fisher_rao_distance``) — no local reimplementation, no Euclidean ops.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import math
+
+import numpy as np
+
+# Pillar-2 / TopologicalBulk: max boundary (Qwen) influence per integrate step.
+# Mirrors BOUNDARY_SLERP_CAP=0.30 (external input hits the surface; core by slow diffusion).
+BOUNDARY_SLERP_CAP = 0.30
+
+
+def _bin(token: object, dim: int) -> int:
+    """Deterministic, process-stable token→bin (NOT Python's salted hash())."""
+    h = hashlib.blake2b(str(token).encode("utf-8"), digest_size=8).digest()
+    return int.from_bytes(h, "big") % dim
+
+
+def output_distribution_to_basin(token_logprobs: dict, dim: int = 64) -> np.ndarray:
+    """Reduce a next-token ``{token: logprob}`` distribution to a Δ⁶³ point.
+
+    Tokens are hashed into ``dim`` bins; probability mass (exp logprob) accumulates;
+    ``qig_core`` ``to_simplex`` gives the canonical Δ⁶³ projection (single source).
+    A v1 reduction (hash-binning full-vocab → 64D) — honest about that; the geometry
+    contract (a Δ⁶³ point) is exact.
+    """
+    from qig_core.geometry.fisher_rao import to_simplex
+
+    acc = np.zeros(dim, dtype=float)
+    for tok, lp in token_logprobs.items():
+        acc[_bin(tok, dim)] += math.exp(lp)
+    if acc.sum() <= 0:
+        acc = np.ones(dim, dtype=float)
+    return to_simplex(acc)
+
+
+def pillar2_capped_integrate(
+    identity_basin: np.ndarray, boundary_basin: np.ndarray, weight: float
+) -> np.ndarray:
+    """Move ``identity`` toward the Qwen ``boundary`` basin by at most
+    :data:`BOUNDARY_SLERP_CAP` along the Fisher-Rao geodesic (``slerp_sqrt``).
+
+    The boundary can nudge identity but never overwrite it (Pillar 2)."""
+    from qig_core.geometry.fisher_rao import slerp_sqrt
+
+    t = max(0.0, min(float(weight), BOUNDARY_SLERP_CAP))
+    return slerp_sqrt(identity_basin, boundary_basin, t)
+
+
+def basin_phi_proxy(basin: np.ndarray) -> float:
+    """Bounded Φ-PROXY from a Δ⁶³ point = 1 − normalised Shannon entropy
+    (concentration). A pure information measure on the simplex — NOT a measured Φ
+    (the language target has no kernel Φ); telemetry labels it accordingly."""
+    p = np.clip(np.asarray(basin, dtype=float), 1e-12, 1.0)
+    p = p / p.sum()
+    entropy = -float(np.sum(p * np.log(p)))
+    max_entropy = math.log(len(p))
+    return (1.0 - entropy / max_entropy) if max_entropy > 0 else 0.0
+
+
+def fisher_distance(a: np.ndarray, b: np.ndarray) -> float:
+    from qig_core.geometry.fisher_rao import fisher_rao_distance
+
+    return float(fisher_rao_distance(a, b))

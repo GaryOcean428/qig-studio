@@ -36,6 +36,7 @@ from .config import Settings
 from .curriculum import CurriculumProvider, phase_names
 from .governance.pillars import PillarEnforcerAdapter
 from .governance.purity import PurityGateError, run_purity_gate
+from .targets.base import LossRegime
 from .targets.registry import default_registry
 
 settings = Settings.from_env()
@@ -203,21 +204,26 @@ async def train(req: TrainRequest) -> StreamingResponse:
             "curriculum": provider.mode(),
             "steps": req.steps,
         })
+        is_language = t.loss_regime == LossRegime.LANGUAGE
         for step in range(1, req.steps + 1):
+            target_text = None
             if req.prompts:
                 prompt = req.prompts[(step - 1) % len(req.prompts)]
+            elif is_language:
+                prompt, target_text = provider.next_pair(step)  # PAIRED (lm_loss signal)
             else:
-                prompt = provider.next_prompt(step)
+                prompt = provider.next_prompt(step)  # basin-driving
             try:
-                res = await _run_target(t.train_step, prompt, req.max_tokens)
+                res = await _run_target(t.train_step, prompt, req.max_tokens, target_text)
             except Exception as exc:
                 yield _sse({"type": "error", "error": str(exc), "step": step})
                 return
             yield _sse({
                 "type": "step",
                 "step": step,
-                "phase": CurriculumProvider.phase_for(step),
+                "phase": ("paired" if is_language else CurriculumProvider.phase_for(step)),
                 "prompt": prompt,
+                "target": target_text,
                 "text": res.text,
                 "telemetry": res.telemetry.to_dict(),
             })

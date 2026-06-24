@@ -19,19 +19,22 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
-# App shell is LIGHT — heavy targets (kernel/constellation via qig-consciousness,
-# Qwen via Ollama/Modal) are None-safe optional integrations, not install deps.
+# Shell stays LIGHT (no torch). qig-core is numpy-only and IS the geometry the
+# Qwen output-distribution→Δ⁶³ boundary uses — a core dep. Heavy targets
+# (kernel/constellation via qig-consciousness+torch, Qwen via Ollama/Modal) are
+# None-safe optional integrations loaded lazily at runtime.
 dependencies = [
     "fastapi>=0.110.0",
     "uvicorn[standard]>=0.27.0",
     "pydantic>=2.0.0",
     "httpx>=0.26.0",
+    "qig-core>=2.12.0",
 ]
 
 [project.optional-dependencies]
 tui = ["textual>=0.50.0"]
-# Real geometric targets (loaded lazily at runtime if present):
-kernel = ["torch>=2.0.0", "qig-coordizer>=0.1.0", "qig-core>=2.12.0"]
+# Real geometric kernel targets (torch + the coordizer):
+kernel = ["torch>=2.0.0", "qig-coordizer>=0.1.0"]
 dev = ["pytest>=7.0.0", "ruff>=0.1.0", "mypy>=1.0.0"]
 
 [project.scripts]

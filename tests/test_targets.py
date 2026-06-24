@@ -67,3 +67,28 @@ def test_registry_select_unknown_raises():
         assert False, "expected KeyError"
     except KeyError:
         pass
+
+
+def test_registry_has_five_targets():
+    r = default_registry()
+    assert set(r.names()) == {"mock", "kernel", "constellation", "qwen-local", "qwen-modal"}
+
+
+def test_qwen_targets_are_language_and_none_safe():
+    from qig_studio.targets import QwenLocalTarget, QwenModalTarget
+
+    ql, qm = QwenLocalTarget(), QwenModalTarget()
+    assert ql.loss_regime is LossRegime.LANGUAGE
+    assert qm.loss_regime is LossRegime.LANGUAGE
+    # None-safe: must return bool without raising even with no Ollama/Modal present.
+    assert isinstance(ql.is_available(), bool)
+    assert qm.is_available() is False  # no QIG_STUDIO_MODAL_URL configured
+
+
+def test_language_curriculum_is_paired():
+    from qig_studio.curriculum import CurriculumProvider
+
+    c = CurriculumProvider(LossRegime.LANGUAGE)
+    assert c.mode() == "paired"
+    prompt, target = c.next_pair(1)
+    assert isinstance(prompt, str) and isinstance(target, str) and target

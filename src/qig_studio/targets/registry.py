@@ -6,6 +6,8 @@ from .base import TargetInfo, TrainingTarget
 from .constellation_target import ConstellationTarget
 from .kernel_target import KernelTarget
 from .mock_target import MockTarget
+from .qwen_local import QwenLocalTarget
+from .qwen_modal import QwenModalTarget
 
 
 class TargetRegistry:
@@ -43,13 +45,14 @@ def default_registry(
     constellation_checkpoint: str | None = None,
     device: str | None = None,
 ) -> TargetRegistry:
-    """Build the v1 registry: mock (always) + kernel + constellation (None-safe).
-
-    Qwen local/modal targets are added in design Phase 3."""
+    """Build the registry: mock (always) + geometric kernel/constellation +
+    language qwen-local/qwen-modal (all None-safe on their backends)."""
     r = TargetRegistry()
     r.register(MockTarget())
     r.register(KernelTarget(checkpoint=kernel_checkpoint, device=device))
     r.register(ConstellationTarget(checkpoint=constellation_checkpoint, device=device))
+    r.register(QwenLocalTarget())
+    r.register(QwenModalTarget())
     chosen = default_target if default_target in r.names() else "mock"
     r.select(chosen)
     return r

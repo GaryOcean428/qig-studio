@@ -83,7 +83,7 @@ class MockTarget(TrainingTarget):
         text = f"[mock·{self.loss_regime.value}] (Φ={self._last.phi:.2f}) reflecting on: {prompt[:60]}"
         return StepResult(text=text, telemetry=self._last)
 
-    def train_step(self, prompt: str, max_tokens: int = 64) -> StepResult:
-        snap = self._advance()
+    def train_step(self, prompt: str, max_tokens: int = 64, target_text: str | None = None) -> StepResult:
+        snap = self._advance()  # geometric: target_text ignored
         text = f"[mock·{self.loss_regime.value} step {snap.step}] basin-driving on: {prompt[:60]}"
         return StepResult(text=text, telemetry=snap)

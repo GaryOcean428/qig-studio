@@ -74,8 +74,8 @@ class ConstellationTarget(TrainingTarget):
         self._last = self._snap(telemetry_list, metrics or {})
         return StepResult(text=text, telemetry=self._last)
 
-    def train_step(self, prompt: str, max_tokens: int = 64) -> StepResult:
-        self.ensure_loaded()
+    def train_step(self, prompt: str, max_tokens: int = 64, target_text: str | None = None) -> StepResult:
+        self.ensure_loaded()  # geometric: target_text ignored (lm_weight=0)
         text, telemetry_list, metrics = self._chat.generate_response(prompt, max_tokens)
         self._last = self._snap(telemetry_list, metrics or {})
         return StepResult(text=text, telemetry=self._last)

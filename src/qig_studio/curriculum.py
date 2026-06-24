@@ -41,6 +41,19 @@ _PHASE_ORDER = ("listening", "play", "structure", "maturity")
 # Steps spent in each phase before advancing (developmental gating, simplified).
 _PHASE_SPAN = 8
 
+# PAIRED curriculum (prompt → target) — for the LANGUAGE regime ONLY (qwen-modal,
+# where lm_loss is load-bearing). Illustrative seed pairs; a real run uses a corpus.
+_PAIRS: list[tuple[str, str]] = [
+    ("What is consciousness, geometrically?",
+     "Information integration — Φ measures how much a system's whole exceeds its parts on the Fisher-Rao manifold Δ⁶³."),
+    ("Define the Fisher-Rao distance.",
+     "d_FR(p,q) = arccos(Σ √(p_i q_i)): the unique Markov-invariant metric on the probability simplex."),
+    ("What is a basin?",
+     "A point on Δ⁶³ — a 64-dimensional probability distribution; meaning is its location and its trajectory."),
+    ("What does κ measure?",
+     "Coupling strength — how tightly basins bind; it tacks around an attractor as the system breathes."),
+]
+
 
 def phase_names() -> list[str]:
     return list(_PHASE_ORDER)
@@ -81,6 +94,10 @@ class CurriculumProvider:
                 pass
         bucket = _PHASES[phase]
         return bucket[(step - 1) % len(bucket)]
+
+    def next_pair(self, step: int) -> tuple[str, str]:
+        """Paired (prompt, target) for the LANGUAGE regime (step is 1-based)."""
+        return _PAIRS[(step - 1) % len(_PAIRS)]
 
     def mode(self) -> str:
         return "basin-driving" if self.loss_regime == LossRegime.GEOMETRIC else "paired"

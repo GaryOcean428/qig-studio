@@ -95,8 +95,12 @@ class TrainingTarget(ABC):
         """Inference: emit a response, do NOT take a learning step."""
 
     @abstractmethod
-    def train_step(self, prompt: str, max_tokens: int = 64) -> StepResult:
-        """One learning step on ``prompt`` (geometric: basin-driving; language: paired)."""
+    def train_step(
+        self, prompt: str, max_tokens: int = 64, target_text: str | None = None
+    ) -> StepResult:
+        """One learning step. Geometric targets get a basin-driving ``prompt`` and
+        IGNORE ``target_text``; language paired targets (qwen-modal) REQUIRE it
+        (their lm_loss is the signal)."""
 
     def info(self) -> TargetInfo:
         return TargetInfo(

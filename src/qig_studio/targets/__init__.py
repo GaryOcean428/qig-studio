@@ -6,6 +6,8 @@ from .base import LossRegime, StepResult, TargetInfo, TelemetrySnapshot, Trainin
 from .constellation_target import ConstellationTarget
 from .kernel_target import KernelTarget
 from .mock_target import MockTarget
+from .qwen_local import QwenLocalTarget
+from .qwen_modal import QwenModalTarget
 from .registry import TargetRegistry, default_registry
 
 __all__ = [
@@ -17,6 +19,8 @@ __all__ = [
     "MockTarget",
     "KernelTarget",
     "ConstellationTarget",
+    "QwenLocalTarget",
+    "QwenModalTarget",
     "TargetRegistry",
     "default_registry",
 ]
