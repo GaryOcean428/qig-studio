@@ -1,0 +1,233 @@
+"""qig-studio FastAPI core.
+
+Reuses the vex ``kernel/server.py`` shell pattern: ``asynccontextmanager``
+lifespan, ``run_purity_gate()`` fail-closed preflight, ``PillarEnforcer`` hook,
+and SSE ``start``/``chunk``/``step``/``done`` events via ``StreamingResponse``.
+
+Endpoints (Phase 1):
+- ``GET  /health``                 — liveness + purity status + active target
+- ``GET  /targets``                — list targets (name, loss_regime, available)
+- ``POST /targets/{name}/select``  — set active target (lazy load on first use)
+- ``GET  /telemetry``              — current telemetry snapshot
+- ``GET  /curriculum``             — curriculum mode for the active target's regime
+- ``POST /chat``                   — inference (no learning step)
+- ``POST /chat/stream``  (SSE)     — inference, streamed
+- ``POST /train``        (SSE)     — N learning steps (curriculum-driven), streamed
+
+The full qig_chat protocol surface (sleep/dream/mushroom/twin/lightning/14-stage/
+basin-sync/4D/foresight/reasoning) lands in Phase 4.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+from contextlib import asynccontextmanager
+from pathlib import Path
+from typing import Any, AsyncGenerator
+
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import HTMLResponse, StreamingResponse
+from pydantic import BaseModel
+
+from . import __version__
+from .config import Settings
+from .curriculum import CurriculumProvider, phase_names
+from .governance.pillars import PillarEnforcerAdapter
+from .governance.purity import PurityGateError, run_purity_gate
+from .targets.registry import default_registry
+
+settings = Settings.from_env()
+
+
+def _sse(data: dict[str, Any]) -> str:
+    """Format a Server-Sent Event (vex server.py:2095 pattern)."""
+    return f"data: {json.dumps(data)}\n\n"
+
+
+async def _run_target(fn, *args):
+    """Run a (sync, possibly torch) target call off the event loop."""
+    return await asyncio.get_event_loop().run_in_executor(None, lambda: fn(*args))
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
+    # Fail-closed purity preflight over qig-studio's OWN source.
+    pkg_root = Path(__file__).resolve().parent
+    try:
+        run_purity_gate(pkg_root)
+        app.state.purity = "PASSED"
+    except PurityGateError as exc:
+        app.state.purity = f"FAILED: {exc}"
+        raise
+    app.state.registry = default_registry(
+        default_target=settings.default_target,
+        kernel_checkpoint=settings.kernel_checkpoint,
+        constellation_checkpoint=settings.constellation_checkpoint,
+        device=settings.device,
+    )
+    app.state.pillars = PillarEnforcerAdapter()
+    yield
+    # (no special shutdown for Phase 1)
+
+
+app = FastAPI(title="qig-studio", version=__version__, lifespan=lifespan)
+
+
+class ChatRequest(BaseModel):
+    message: str
+    max_tokens: int = 64
+
+
+class TrainRequest(BaseModel):
+    steps: int = 10
+    prompts: list[str] | None = None  # override curriculum; geometric ignores response side
+    max_tokens: int = 64
+
+
+def _registry():
+    reg = getattr(app.state, "registry", None)
+    if reg is None:
+        raise HTTPException(503, "registry not initialised")
+    return reg
+
+
+@app.get("/health")
+async def health() -> dict[str, Any]:
+    reg = getattr(app.state, "registry", None)
+    pillars = getattr(app.state, "pillars", None)
+    active = reg.active if reg else None
+    return {
+        "status": "ok",
+        "version": __version__,
+        "purity": getattr(app.state, "purity", None),
+        "pillars": (pillars.origin if pillars and pillars.available else None),
+        "active_target": active.name if active else None,
+    }
+
+
+@app.get("/targets")
+async def targets() -> dict[str, Any]:
+    reg = _registry()
+    active = reg.active
+    return {
+        "active": active.name if active else None,
+        "targets": [info.to_dict() for info in reg.list_info()],
+    }
+
+
+@app.post("/targets/{name}/select")
+async def select_target(name: str) -> dict[str, Any]:
+    reg = _registry()
+    try:
+        t = reg.select(name)
+    except KeyError:
+        raise HTTPException(404, f"unknown target '{name}'")
+    return {"active": t.name, "info": t.info().to_dict()}
+
+
+@app.get("/telemetry")
+async def telemetry() -> dict[str, Any]:
+    t = _registry().active
+    if t is None:
+        raise HTTPException(409, "no active target")
+    return t.telemetry().to_dict()
+
+
+@app.get("/curriculum")
+async def curriculum() -> dict[str, Any]:
+    t = _registry().active
+    regime = t.loss_regime if t else None
+    provider = CurriculumProvider(regime) if regime else None
+    return {
+        "loss_regime": regime.value if regime else None,
+        "mode": provider.mode() if provider else None,
+        "phases": phase_names(),
+    }
+
+
+@app.post("/chat")
+async def chat(req: ChatRequest) -> dict[str, Any]:
+    t = _registry().active
+    if t is None:
+        raise HTTPException(409, "no active target")
+    if not t.is_available():
+        raise HTTPException(409, f"target '{t.name}' unavailable in this environment")
+    res = await _run_target(t.generate, req.message, req.max_tokens)
+    return res.to_dict()
+
+
+@app.post("/chat/stream", response_model=None)
+async def chat_stream(req: ChatRequest) -> StreamingResponse:
+    t = _registry().active
+
+    async def gen() -> AsyncGenerator[str, None]:
+        if t is None:
+            yield _sse({"type": "error", "error": "no active target"})
+            return
+        if not t.is_available():
+            yield _sse({"type": "error", "error": f"target '{t.name}' unavailable"})
+            return
+        yield _sse({"type": "start", "target": t.name, "loss_regime": t.loss_regime.value})
+        try:
+            res = await _run_target(t.generate, req.message, req.max_tokens)
+            yield _sse({"type": "chunk", "content": res.text})
+            yield _sse({"type": "done", "telemetry": res.telemetry.to_dict()})
+        except Exception as exc:  # surface, don't crash the stream
+            yield _sse({"type": "error", "error": str(exc)})
+
+    return StreamingResponse(gen(), media_type="text/event-stream")
+
+
+@app.post("/train", response_model=None)
+async def train(req: TrainRequest) -> StreamingResponse:
+    t = _registry().active
+
+    async def gen() -> AsyncGenerator[str, None]:
+        if t is None:
+            yield _sse({"type": "error", "error": "no active target"})
+            return
+        if not t.is_available():
+            yield _sse({"type": "error", "error": f"target '{t.name}' unavailable"})
+            return
+        provider = CurriculumProvider(t.loss_regime)
+        yield _sse({
+            "type": "start",
+            "target": t.name,
+            "loss_regime": t.loss_regime.value,
+            "curriculum": provider.mode(),
+            "steps": req.steps,
+        })
+        for step in range(1, req.steps + 1):
+            if req.prompts:
+                prompt = req.prompts[(step - 1) % len(req.prompts)]
+            else:
+                prompt = provider.next_prompt(step)
+            try:
+                res = await _run_target(t.train_step, prompt, req.max_tokens)
+            except Exception as exc:
+                yield _sse({"type": "error", "error": str(exc), "step": step})
+                return
+            yield _sse({
+                "type": "step",
+                "step": step,
+                "phase": CurriculumProvider.phase_for(step),
+                "prompt": prompt,
+                "text": res.text,
+                "telemetry": res.telemetry.to_dict(),
+            })
+            await asyncio.sleep(0)  # cooperative yield
+        yield _sse({"type": "done", "final": t.telemetry().to_dict()})
+
+    return StreamingResponse(gen(), media_type="text/event-stream")
+
+
+@app.get("/", response_class=HTMLResponse)
+async def index() -> str:
+    # Browser UI is mounted in Phase 2; for now a minimal pointer.
+    return (
+        "<!doctype html><meta charset=utf-8><title>qig-studio</title>"
+        "<h1>qig-studio</h1><p>FastAPI core up. Browser console arrives in Phase 2. "
+        "API: <code>/health</code>, <code>/targets</code>, <code>/telemetry</code>, "
+        "<code>/train</code> (SSE), <code>/chat</code>.</p>"
+    )
