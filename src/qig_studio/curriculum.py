@@ -84,23 +84,29 @@ class CurriculumProvider:
         p = Path(directory)
         if not p.is_dir():
             return
+        max_files, max_bytes = 64, 5_000_000  # bound DoS (REL-2): file-count + per-file size caps
         prompts: list[str] = []
-        for f in sorted(p.glob("*.txt")):
+        for f in sorted(p.glob("*.txt"))[:max_files]:
             try:
+                if f.stat().st_size > max_bytes:
+                    continue
                 prompts += [ln.strip() for ln in f.read_text(encoding="utf-8").splitlines() if ln.strip()]
-            except OSError:
+            except (OSError, ValueError, MemoryError):
                 continue
         pairs: list[tuple[str, str]] = []
-        for f in sorted(p.glob("*.jsonl")):
+        for f in sorted(p.glob("*.jsonl"))[:max_files]:
             try:
+                if f.stat().st_size > max_bytes:
+                    continue
                 for ln in f.read_text(encoding="utf-8").splitlines():
                     ln = ln.strip()
                     if not ln:
                         continue
                     rec = _json.loads(ln)
-                    if "prompt" in rec and "target" in rec:
+                    # REL-1: guard non-dict JSON (a number/bool/bare string would TypeError on `in`)
+                    if isinstance(rec, dict) and "prompt" in rec and "target" in rec:
                         pairs.append((rec["prompt"], rec["target"]))
-            except (OSError, ValueError):
+            except (OSError, ValueError, TypeError, MemoryError):
                 continue
         self._file_prompts = prompts or None
         self._file_pairs = pairs or None

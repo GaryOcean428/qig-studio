@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import secrets
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, AsyncGenerator
@@ -115,6 +116,8 @@ class TrainRequest(BaseModel):
     prompts: list[str] | None = None  # override curriculum; geometric ignores response side
     max_tokens: int = 64
     early_stop: bool = False  # qig-warp check_ci_stabilized convergence early-stop (opt-in)
+    early_stop_window: int = 5  # rolling window; early-stop cannot fire before window+1 steps
+    early_stop_threshold: float = 0.05  # relative-change threshold for stabilization
     confirm: bool = False  # REQUIRED for LANGUAGE targets (each step triggers a remote training job)
 
 
@@ -130,8 +133,8 @@ def verify_key(x_studio_key: str | None = Header(default=None, alias="X-Studio-K
     When unset (localhost dev), no check — but a non-loopback bind without a key is refused
     at boot (see lifespan, P0-F2)."""
     key = getattr(app.state, "auth_key", None)
-    if key and x_studio_key != key:
-        raise HTTPException(401, "invalid or missing X-Studio-Key")
+    if key and not (x_studio_key and secrets.compare_digest(x_studio_key, key)):
+        raise HTTPException(401, "invalid or missing X-Studio-Key")  # constant-time compare (SEC-1)
 
 
 @app.get("/health")
@@ -250,6 +253,7 @@ async def train(req: TrainRequest, _: None = Depends(verify_key)) -> StreamingRe
             "curriculum": provider.mode(),
             "steps": req.steps,
             "early_stop": req.early_stop and _WARP_AVAILABLE,
+            "early_stop_min_steps": (req.early_stop_window + 1) if (req.early_stop and _WARP_AVAILABLE) else None,
         })
         series: list[float] = []
         for step in range(1, req.steps + 1):
@@ -275,19 +279,24 @@ async def train(req: TrainRequest, _: None = Depends(verify_key)) -> StreamingRe
                 "telemetry": res.telemetry.to_dict(),
             })
             # qig-warp convergence early-stop (opt-in package lever): geometric→Φ, language→loss.
+            # COR-2: never early-stop on an UNMEASURED metric — skip the append when None
+            # (don't conflate "absent" with "0.0"); the metric must actually be measured.
             if req.early_stop and _WARP_AVAILABLE:
-                metric = res.telemetry.phi if not is_language else (res.telemetry.loss or 0.0)
-                series.append(float(metric))
-                decision = check_ci_stabilized(series, window=5, rel_change_threshold=0.05)
-                if bool(decision.should_stop):
-                    yield _sse({
-                        "type": "early_stop",
-                        "step": step,
-                        "reason": decision.reason,
-                        "metric": float(decision.metric_value),
-                        "lever": "qig_warp.check_ci_stabilized",
-                    })
-                    break
+                metric = res.telemetry.phi if not is_language else res.telemetry.loss
+                if metric is not None:
+                    series.append(float(metric))
+                    decision = check_ci_stabilized(
+                        series, window=req.early_stop_window, rel_change_threshold=req.early_stop_threshold
+                    )
+                    if bool(decision.should_stop):
+                        yield _sse({
+                            "type": "early_stop",
+                            "step": step,
+                            "reason": decision.reason,
+                            "metric": float(decision.metric_value),
+                            "lever": "qig_warp.check_ci_stabilized",
+                        })
+                        break
             await asyncio.sleep(0)  # cooperative yield
         yield _sse({"type": "done", "final": t.telemetry().to_dict()})
 

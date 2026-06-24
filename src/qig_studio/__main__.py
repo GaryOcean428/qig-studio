@@ -10,11 +10,16 @@ def main(argv: list[str] | None = None) -> int:
     cmd = argv[0] if argv else "serve"
 
     if cmd in ("serve", "server"):
-        import uvicorn
-
         from .config import Settings
 
         s = Settings.from_env()
+        # P0-F2 pre-bind (SEC-5): refuse a non-loopback bind without a key BEFORE the socket opens.
+        if not s.is_loopback and not s.auth_key:
+            raise SystemExit(
+                f"refusing to bind non-loopback host '{s.host}' without QIG_STUDIO_KEY (fail-closed, P0-F2)"
+            )
+        import uvicorn
+
         uvicorn.run("qig_studio.server:app", host=s.host, port=s.port, log_level="info")
         return 0
 

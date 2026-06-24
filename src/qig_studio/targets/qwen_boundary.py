@@ -48,7 +48,7 @@ def output_distribution_to_basin(token_logprobs: dict, dim: int = 64) -> np.ndar
 
     acc = np.zeros(dim, dtype=float)
     for tok, lp in token_logprobs.items():
-        acc[_bin(tok, dim)] += math.exp(lp)
+        acc[_bin(tok, dim)] += math.exp(min(lp, 0.0))  # clamp: logprobs >0 are invalid (overflow guard)
     if acc.sum() <= 0:
         acc = np.ones(dim, dtype=float)
     return to_simplex(acc)
@@ -72,7 +72,7 @@ def coordize_distribution_to_basin(token_logprobs: dict, coordizer, dim: int = 6
         coords = getattr(result, "coordinates", None) or []
         if not coords:
             continue
-        w = math.exp(lp) / len(coords)  # spread the token's probability over its basins
+        w = math.exp(min(lp, 0.0)) / len(coords)  # clamp logprobs ≤0 (overflow guard); spread over basins
         for c in coords:
             basins.append(c.vector)
             weights.append(w)

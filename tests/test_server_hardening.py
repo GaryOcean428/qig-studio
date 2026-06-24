@@ -100,3 +100,15 @@ def test_curriculum_loads_from_nominated_dir(tmp_path):
     assert p.next_prompt(1) == "custom prompt one"
     assert p.next_prompt(2) == "custom prompt two"
     assert p.next_prompt(3) == "custom prompt one"  # wraps
+
+
+def test_curriculum_malformed_jsonl_does_not_crash(tmp_path):
+    """REL-1: non-dict JSON values (number/bool/bare-string) must not crash the loader."""
+    from qig_studio.curriculum import CurriculumProvider
+
+    (tmp_path / "bad.jsonl").write_text(
+        '42\n"prompt and target"\ntrue\n{"prompt":"p","target":"t"}\nnull\n', encoding="utf-8"
+    )
+    p = CurriculumProvider(LossRegime.LANGUAGE, curriculum_dir=str(tmp_path))
+    # the one valid dict record loads; malformed lines are skipped (no TypeError)
+    assert p.next_pair(1) == ("p", "t")

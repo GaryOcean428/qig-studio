@@ -29,6 +29,12 @@ def test_output_distribution_deterministic():
     assert np.array_equal(output_distribution_to_basin(lp), output_distribution_to_basin(lp))
 
 
+def test_output_distribution_clamps_positive_logprob():
+    # COR-1: a malformed positive "logprob" must NOT raise OverflowError (clamped to ≤0).
+    b = output_distribution_to_basin({"x": 800.0, "y": -1.0}, dim=64)
+    assert abs(float(b.sum()) - 1.0) < 1e-6
+
+
 def test_pillar2_cap_clamps_to_30pct():
     np.random.seed(1); a = random_basin(64)
     np.random.seed(2); b = random_basin(64)
