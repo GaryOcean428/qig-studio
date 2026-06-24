@@ -35,8 +35,9 @@ from . import __version__
 from .config import Settings
 from .curriculum import CurriculumProvider, phase_names
 from .governance.pillars import PillarEnforcerAdapter
+from . import protocol as _protocol
 from .governance.purity import PurityGateError, run_purity_gate
-from .targets.base import LossRegime
+from .targets.base import LossRegime, ProtocolUnsupported
 from .targets.registry import default_registry
 
 settings = Settings.from_env()
@@ -231,6 +232,38 @@ async def train(req: TrainRequest) -> StreamingResponse:
         yield _sse({"type": "done", "final": t.telemetry().to_dict()})
 
     return StreamingResponse(gen(), media_type="text/event-stream")
+
+
+class ProtocolRequest(BaseModel):
+    args: dict[str, Any] = {}
+
+
+@app.get("/protocol")
+async def protocol_catalog() -> dict[str, Any]:
+    t = _registry().active
+    return {
+        "active": t.name if t else None,
+        "supported_by_active": bool(t and t.supports_protocol()),
+        "groups": _protocol.GROUPS,
+        "commands": [c.to_dict() for c in _protocol.PROTOCOL_COMMANDS],
+    }
+
+
+@app.post("/protocol/{command}")
+async def protocol_run(command: str, req: ProtocolRequest) -> dict[str, Any]:
+    t = _registry().active
+    if t is None:
+        raise HTTPException(409, "no active target")
+    if command not in _protocol.COMMANDS_BY_NAME:
+        raise HTTPException(404, f"unknown protocol command '{command}'")
+    if not t.supports_protocol():
+        raise HTTPException(409, f"target '{t.name}' does not expose protocol commands")
+    if not t.is_available():
+        raise HTTPException(409, f"target '{t.name}' unavailable in this environment")
+    try:
+        return await _run_target(t.run_protocol, command, req.args or {})
+    except ProtocolUnsupported as exc:
+        raise HTTPException(409, str(exc))
 
 
 @app.get("/")

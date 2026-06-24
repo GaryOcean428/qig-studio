@@ -35,6 +35,11 @@
   .regime-linear{color:var(--blue)} .regime-hierarchical{color:var(--purple)}
   .regime-geometric{color:var(--amber)} .regime-topological_instability{color:var(--pink)}
   .hint{color:var(--muted);font-size:.72rem;margin-top:.4rem}
+  .proto-group{margin:.45rem 0}
+  .proto-group > b{color:var(--muted);font-size:.7rem;text-transform:uppercase;letter-spacing:.06em}
+  .proto-group button{margin:.18rem .18rem 0 0;padding:.3rem .5rem;font-size:.78rem}
+  #protoLog{height:18vh;overflow:auto;background:#0b0f15;border:1px solid var(--edge);border-radius:8px;padding:.6rem;white-space:pre-wrap;margin-top:.6rem}
+  #protoLog .sys{color:var(--amber)} #protoLog .tgt{color:var(--ok)} #protoLog .err{color:var(--pink)}
 </style>
 </head>
 <body>
@@ -76,6 +81,17 @@
     </div>
     <div class="hint">Geometric targets reason on Δ⁶³ (lm_weight=0); fluent prose is Qwen's job (Phase 3).</div>
   </section>
+
+    <!-- PROTOCOL SURFACE (the full qig_chat command set) -->
+    <section class="panel" id="protocol" style="grid-column:1 / -1">
+      <h2>Protocol surface</h2>
+      <div id="protoStatus" class="hint"></div>
+      <div id="protoGroups"></div>
+      <div class="row" style="margin-top:.6rem">
+        <div><label>args (space-separated key=value)</label><input id="protoArgs" placeholder="e.g. strength=0.8   ·   n=20   ·   gary_id=B steps=100"/></div>
+      </div>
+      <div id="protoLog"></div>
+    </section>
 </div>
 
 <script>
@@ -125,7 +141,7 @@ async function refreshTelemetry(){
 $("target").addEventListener("change", async (e) => {
   await fetch(`/targets/${e.target.value}/select`, {method:"POST"});
   log("sys", `· selected target: ${e.target.value}`);
-  await refreshHealth(); await refreshCurriculum(); await refreshTelemetry();
+  await refreshHealth(); await refreshCurriculum(); await refreshTelemetry(); await loadProtocol();
 });
 $("sendBtn").addEventListener("click", sendChat);
 $("msg").addEventListener("keydown", (e)=>{ if(e.key==="Enter" && !e.shiftKey){ e.preventDefault(); sendChat(); }});
@@ -158,8 +174,52 @@ async function runTrain(){
     }
   }
 }
+// --- protocol surface ---
+async function loadProtocol(){
+  try{
+    const p = await (await fetch("/protocol")).json();
+    const groups = $("protoGroups"); groups.innerHTML = "";
+    $("protoStatus").textContent = p.supported_by_active
+      ? `active '${p.active}' exposes ${p.commands.length} commands across ${p.groups.length} groups`
+      : `active '${p.active}' does not expose protocol commands (kernel/constellation/mock only)`;
+    if(!p.supported_by_active) return;
+    const byGroup = {};
+    for(const c of p.commands){ (byGroup[c.group] = byGroup[c.group] || []).push(c); }
+    for(const g of p.groups){
+      if(!byGroup[g]) continue;
+      const d = document.createElement("div"); d.className = "proto-group";
+      const b = document.createElement("b"); b.textContent = g; d.appendChild(b); d.appendChild(document.createElement("br"));
+      for(const c of byGroup[g]){
+        const btn = document.createElement("button");
+        btn.textContent = c.name;
+        btn.title = c.description + (c.params.length ? " · params: " + c.params.map(x=>x.name).join(", ") : "");
+        btn.onclick = () => runProtocol(c.name);
+        d.appendChild(btn);
+      }
+      groups.appendChild(d);
+    }
+  }catch(e){ $("protoStatus").textContent = "protocol unavailable: " + e; }
+}
+function parseArgs(s){
+  const out = {};
+  for(const tok of (s||"").trim().split(/\s+/)){
+    if(!tok) continue; const i = tok.indexOf("="); if(i>0) out[tok.slice(0,i)] = tok.slice(i+1);
+  }
+  return out;
+}
+function plog(cls, msg){ const el=$("protoLog"); const d=document.createElement("div"); d.className=cls; d.textContent=msg; el.appendChild(d); el.scrollTop=el.scrollHeight; }
+async function runProtocol(name){
+  const args = parseArgs($("protoArgs").value);
+  plog("sys", `▶ ${name} ${Object.keys(args).length ? JSON.stringify(args) : ""}`);
+  const r = await fetch("/protocol/" + encodeURIComponent(name), {method:"POST", headers:{"content-type":"application/json"}, body:JSON.stringify({args})});
+  if(!r.ok){ plog("err", `${r.status} ${await r.text()}`); return; }
+  const body = await r.json();
+  plog("tgt", body.output || JSON.stringify(body));
+  if(body.telemetry) setTelemetry(body.telemetry);
+}
+
 // boot
-refreshHealth(); loadTargets().then(refreshTelemetry);
+refreshHealth(); loadTargets().then(()=>{ refreshTelemetry(); loadProtocol(); });
 </script>
 </body>
 </html>

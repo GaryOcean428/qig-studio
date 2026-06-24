@@ -81,3 +81,12 @@ class KernelTarget(TrainingTarget):
         text, telemetry_list, metrics = self._chat.generate_response(prompt, max_tokens)
         self._last = self._snap(telemetry_list, metrics or {})
         return StepResult(text=text, telemetry=self._last)
+
+    def supports_protocol(self) -> bool:
+        return True
+
+    def run_protocol(self, command: str, args: dict) -> dict:
+        from ..protocol import run_qigchat_protocol
+
+        self.ensure_loaded()
+        return run_qigchat_protocol(self._chat, command, args)

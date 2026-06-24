@@ -87,3 +87,26 @@ class MockTarget(TrainingTarget):
         snap = self._advance()  # geometric: target_text ignored
         text = f"[mock·{self.loss_regime.value} step {snap.step}] basin-driving on: {prompt[:60]}"
         return StepResult(text=text, telemetry=snap)
+
+    def supports_protocol(self) -> bool:
+        return True
+
+    def run_protocol(self, command: str, args: dict) -> dict:
+        from ..protocol import COMMANDS_BY_NAME
+        from .base import ProtocolUnsupported
+
+        cmd = COMMANDS_BY_NAME.get(command)
+        if cmd is None:
+            raise ProtocolUnsupported(f"unknown protocol command '{command}'")
+        snap = self._advance()  # nudge telemetry so the simulated protocol feels live
+        return {
+            "command": command,
+            "group": cmd.group,
+            "available": True,
+            "mock": True,
+            "output": (
+                f"[mock] {cmd.method}({args or {}}) — simulated {cmd.group} protocol "
+                f"(Φ={snap.phi:.2f}, κ={snap.kappa:.1f}, regime={snap.regime})"
+            ),
+            "telemetry": snap.to_dict(),
+        }

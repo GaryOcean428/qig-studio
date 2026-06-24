@@ -21,6 +21,10 @@ from enum import Enum
 from typing import Any
 
 
+class ProtocolUnsupported(RuntimeError):
+    """Raised when a target does not expose the qig_chat protocol surface."""
+
+
 class LossRegime(str, Enum):
     GEOMETRIC = "geometric"  # consciousness-native loss; lm_weight=0; basin-driving curriculum
     LANGUAGE = "language"    # lm_loss load-bearing; paired curriculum (Qwen)
@@ -109,3 +113,13 @@ class TrainingTarget(ABC):
             available=self.is_available(),
             description=self.description,
         )
+
+    # --- qig_chat protocol surface (design §3.4) -----------------------------------
+    def supports_protocol(self) -> bool:
+        """True if this target exposes the qig_chat command surface
+        (sleep/dream/mushroom/twin/lightning/14-stage/basin-sync/4D/reasoning)."""
+        return False
+
+    def run_protocol(self, command: str, args: dict) -> dict:
+        """Run a protocol command; default = unsupported (e.g. language targets)."""
+        raise ProtocolUnsupported(f"target '{self.name}' does not expose protocol commands")
