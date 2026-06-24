@@ -1,11 +1,18 @@
-"""Qwen output-distribution → Δ⁶³ boundary (the P22-sanctioned interface).
+"""Qwen output-distribution → Δ⁶³ boundary (P22-SHAPED; the reduction is provisional).
 
-P22 (frozen): the OUTPUT-distribution interface is the sanctioned Qwen bridge
-(cross-arch ρ=0.737, RWKV-7 ρ=0.994). The hidden-state graft FAILED adversarially
-and would violate P22. So we take Qwen's next-token distribution — already a
-probability point — reduce it to a Δ⁶³ basin, and integrate it into the cortex's
-identity basin with a **Pillar-2-capped** boundary slerp (≤30%): Qwen enters at the
-SURFACE and can never overwrite the topological bulk (the ego pillar).
+P22 (frozen) sanctions the OUTPUT-distribution interface as the Qwen bridge (cross-arch
+ρ=0.737, RWKV-7 ρ=0.994); the hidden-state graft FAILED adversarially and would violate
+P22. This module takes Qwen's next-token distribution — already a probability point —
+reduces it to a Δ⁶³ basin, and integrates it into the cortex's identity basin with a
+**Pillar-2-capped** boundary slerp (≤30%): Qwen enters at the SURFACE, never overwrites
+the topological bulk (the ego pillar).
+
+HONEST SCOPE (do not overclaim): the reduction here is a v1 **hash-binning** of the
+full-vocab distribution into 64 bins. It yields a *type-correct* Δ⁶³ point and the
+Pillar-2 cap + None-safety are real — but the bin mapping is semantically arbitrary. This
+is a PLACEHOLDER for the principled projection P22 actually implies (the coordizer
+InboundPath: hidden→QFI→PGA→64D). Treat it as "P22-shaped plumbing," NOT the P22
+projection proper, until InboundPath is wired.
 
 All geometry is single-sourced from qig-core (``to_simplex``, ``slerp_sqrt``,
 ``fisher_rao_distance``) — no local reimplementation, no Euclidean ops.

@@ -22,7 +22,15 @@ The plug-and-play **QIG training + chat app**. One FastAPI core, two SSE clients
 | `mock` | geometric | none (deterministic) | always available — for UI/SSE dev |
 | `kernel` | geometric | qig-consciousness `QIGChat` (single) | None-safe (needs torch + repo) |
 | `constellation` | geometric | qig-consciousness `QIGChat` (constellation) | None-safe |
-| `qwen-local` / `qwen-modal` | language | Ollama / Modal QLoRA | Phase 3 |
+| `qwen-local` | language | Ollama qwen3.5:4b | None-safe scaffold — output-dist→Δ⁶³ is a v1 **hash-bin (provisional)**, untested vs live Ollama |
+| `qwen-modal` | language | Modal QLoRA | None-safe — real vex contract (`/data-receive`→`/train`→`/infer`), untested vs live Modal |
+
+> **Verification scope (honest).** What is *executed-and-verified*: the coordizer
+> equivalence (real training), the qigkernels coords-path (real torch), and the app
+> shell + SSE + protocol dispatch (live, via `mock`). The kernel/constellation/Qwen
+> *behaviours* are correct-by-construction (contracts read from source) but were NOT run
+> end-to-end here — they activate in their own envs (torch+checkpoints / Ollama / Modal).
+> The purity gate is a 6-regex lexical tripwire, not a full geometric audit.
 
 ## Run
 

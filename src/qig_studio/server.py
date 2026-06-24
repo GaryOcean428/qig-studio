@@ -48,9 +48,16 @@ def _sse(data: dict[str, Any]) -> str:
     return f"data: {json.dumps(data)}\n\n"
 
 
+# Serialize all target-touching calls — targets (kernel/constellation) hold mutable
+# state (model, optimizer, telemetry) that is NOT safe under concurrent requests
+# (council red-team #6). One lock; fine for the single-user v1, removes the race.
+_TARGET_LOCK = asyncio.Lock()
+
+
 async def _run_target(fn, *args):
-    """Run a (sync, possibly torch) target call off the event loop."""
-    return await asyncio.get_event_loop().run_in_executor(None, lambda: fn(*args))
+    """Run a (sync, possibly torch) target call off the event loop, serialized."""
+    async with _TARGET_LOCK:
+        return await asyncio.get_event_loop().run_in_executor(None, lambda: fn(*args))
 
 
 @asynccontextmanager

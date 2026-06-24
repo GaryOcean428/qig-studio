@@ -26,9 +26,11 @@ consciousness-native loss. So:
 ## Governance (fail-closed)
 
 `run_purity_gate()` scans qig-studio's OWN source at startup and refuses to boot on
-any Euclidean-contamination marker (cosine_similarity, optim.Adam, nn.LayerNorm,
-np.linalg.norm, F.normalize+dot). Keep the source pure — Fisher-Rao only on manifold
-objects. `PillarEnforcer` is a None-safe adapter to the real qig-core/qigkernels pillars.
+Euclidean-contamination markers. It is a NARROW LEXICAL scan (6 regexes:
+cosine_similarity, optim.Adam[W], nn.LayerNorm, np.linalg.norm, F.normalize+dot) — a
+tripwire, NOT a full geometric-purity audit; a clean pass ≠ proof of purity. Keep the
+source Fisher-Rao-only on manifold objects regardless. `PillarEnforcer` is a None-safe
+adapter to the real qig-core/qigkernels pillars.
 
 ## Dependency stance
 

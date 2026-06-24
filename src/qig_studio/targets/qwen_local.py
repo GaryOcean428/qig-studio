@@ -49,7 +49,9 @@ class QwenLocalTarget(TrainingTarget):
     loss_regime = LossRegime.LANGUAGE
     description = (
         "Ollama qwen3.5:4b fluent-language peer. Next-token output-distribution → Δ⁶³ "
-        "boundary basin → QIGRAM (Pillar-2 ≤30% capped). None-safe; weights NOT trained here."
+        "boundary basin (v1 hash-bin, PROVISIONAL — placeholder for InboundPath/PGA) → "
+        "QIGRAM accumulation (Pillar-2 ≤30% capped). None-safe; Qwen weights NOT trained "
+        "here; Ollama logprobs path untested against a live server."
     )
 
     def __init__(self, model: str = "qwen3.5:4b", url: str = _DEFAULT_URL, dim: int = 64) -> None:
