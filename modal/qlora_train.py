@@ -29,11 +29,25 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import time
 
 import modal
 
 APP = modal.App("qig-studio-qlora")
+
+# Hardening caps (deployed HTTP endpoint): bound request size + a safe specialization slug so a
+# hostile body cannot exhaust the volume or escape it via path traversal.
+_MAX_RECORDS_PER_REQUEST = 10_000
+_MAX_TOKENS_CAP = 2_048
+_SPEC_RE = re.compile(r"[^A-Za-z0-9_-]")
+
+
+def _safe_spec(raw: object) -> str:
+    """Sanitize ``specialization`` to a path-safe slug — defeats traversal (``../``, absolute
+    paths, NUL). Anything outside ``[A-Za-z0-9_-]`` is stripped; empty falls back to ``genesis``."""
+    slug = _SPEC_RE.sub("", str(raw or ""))[:64]
+    return slug or "genesis"
 
 # PyPI-pinned image (NEVER add_local_dir for published deps — image layers cache + reproducibility).
 IMAGE = (
@@ -137,7 +151,12 @@ def web():
     _KEY = os.environ.get("api_key")
 
     def _auth(x_api_key: str | None):
-        if _KEY and x_api_key != _KEY:
+        # Fail-CLOSED: a missing server-side key is a misconfiguration, not an open door. If no key
+        # is provisioned (Modal secret ``qig-studio-modal`` → ``api_key``), authenticated routes are
+        # refused outright rather than silently allowing anonymous access.
+        if not _KEY:
+            raise HTTPException(status_code=503, detail="endpoint not configured (no api_key secret)")
+        if x_api_key != _KEY:
             raise HTTPException(status_code=401, detail="bad x-api-key")
 
     @api.get("/health")
@@ -148,8 +167,12 @@ def web():
     async def data_receive(req: Request, x_api_key: str | None = Header(default=None)):
         _auth(x_api_key)
         body = await req.json()
-        spec = body.get("specialization", "genesis")
+        spec = _safe_spec(body.get("specialization", "genesis"))
         records = body.get("records", [])
+        if not isinstance(records, list):
+            raise HTTPException(status_code=422, detail="records must be a list")
+        if len(records) > _MAX_RECORDS_PER_REQUEST:
+            raise HTTPException(status_code=413, detail=f"too many records (cap {_MAX_RECORDS_PER_REQUEST})")
         VOL.reload()
         p = pathlib.Path(_queue_path(spec))
         p.parent.mkdir(parents=True, exist_ok=True)
@@ -163,7 +186,7 @@ def web():
     async def train(req: Request, x_api_key: str | None = Header(default=None)):
         _auth(x_api_key)
         body = await req.json()
-        spec = body.get("specialization", "genesis")
+        spec = _safe_spec(body.get("specialization", "genesis"))
         train_qlora.spawn(spec)  # async — returns immediately; poll /status
         return {"status": "accepted", "specialization": spec, "success": True}
 
@@ -171,9 +194,9 @@ def web():
     async def infer(req: Request, x_api_key: str | None = Header(default=None)):
         _auth(x_api_key)
         body = await req.json()
-        spec = body.get("specialization", "genesis")
+        spec = _safe_spec(body.get("specialization", "genesis"))
         messages = body.get("messages", [])
-        max_tokens = int(body.get("max_tokens", 64))
+        max_tokens = max(1, min(int(body.get("max_tokens", 64)), _MAX_TOKENS_CAP))
         import torch
         from peft import PeftModel
         from transformers import AutoModelForCausalLM, AutoTokenizer
@@ -192,7 +215,7 @@ def web():
     @api.get("/status")
     def status(specialization: str = "genesis"):
         VOL.reload()
-        p = pathlib.Path(_status_path(specialization))
+        p = pathlib.Path(_status_path(_safe_spec(specialization)))
         return json.loads(p.read_text(encoding="utf-8")) if p.exists() else {"state": "idle", "step": 0}
 
     return api
