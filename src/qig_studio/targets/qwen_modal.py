@@ -3,8 +3,9 @@
 loss_regime = LANGUAGE, and unlike every other target its ``lm_loss`` IS load-bearing
 → it is the ONLY place PAIRED curriculum (prompt → target) applies.
 
-Wraps the REAL vex qlora-train ASGI contract (verified + adversarially red-teamed against
-``vex/modal/vex_qlora_train.py``) — harvest-then-async-train, NOT per-step inline SGD:
+Speaks qig-studio's OWN qlora-train ASGI contract (shipped as ``modal/qlora_train.py`` in THIS
+repo — NO vex dependency; Modal is OPTIONAL and self-contained, local Ollama is the primary Qwen
+path). The contract is the standard harvest-then-async-train pattern, NOT per-step inline SGD:
   - ``POST /data-receive {filename, records:[{text, source:"curriculum"}]}`` — enqueue records.
     ``source:"curriculum"`` triggers the trainer's prompt/completion split
     (``_build_chat_from_coordized``); any other source dumps the whole blob to the assistant turn.
@@ -59,9 +60,10 @@ class QwenModalTarget(TrainingTarget):
     name = "qwen-modal"
     loss_regime = LossRegime.LANGUAGE
     description = (
-        "Larger Qwen QLoRA on Modal — PAIRED curriculum (lm_loss load-bearing). Real vex "
-        "qlora-train contract: /data-receive (source:curriculum) → /train {specialization, force} "
-        "async → /infer {specialization, messages}. Header-only x-api-key auth. None-safe."
+        "Larger Qwen QLoRA on Modal (OPTIONAL — local Ollama is primary) — PAIRED curriculum "
+        "(lm_loss load-bearing). qig-studio's OWN qlora-train contract (modal/qlora_train.py, no vex): "
+        "/data-receive (source:curriculum) → /train {specialization, force} async → /infer "
+        "{specialization, messages}. Header-only x-api-key auth. None-safe."
     )
 
     def __init__(self, url: str | None = None, specialization: str = "genesis") -> None:
