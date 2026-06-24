@@ -24,10 +24,10 @@ import hashlib
 import math
 
 import numpy as np
-
-# Pillar-2 / TopologicalBulk: max boundary (Qwen) influence per integrate step.
-# Mirrors BOUNDARY_SLERP_CAP=0.30 (external input hits the surface; core by slow diffusion).
-BOUNDARY_SLERP_CAP = 0.30
+from qig_core import BASIN_DIM
+# Pillar-2 / TopologicalBulk cap (max Qwen-boundary influence per integrate) — SINGLE-SOURCED
+# from qig-core, which owns it (consciousness/pillars.py:68). qig-studio must not redefine it.
+from qig_core.consciousness.pillars import BOUNDARY_SLERP_CAP
 
 
 def _bin(token: object, dim: int) -> int:
@@ -36,7 +36,7 @@ def _bin(token: object, dim: int) -> int:
     return int.from_bytes(h, "big") % dim
 
 
-def output_distribution_to_basin(token_logprobs: dict, dim: int = 64) -> np.ndarray:
+def output_distribution_to_basin(token_logprobs: dict, dim: int = BASIN_DIM) -> np.ndarray:
     """Reduce a next-token ``{token: logprob}`` distribution to a Δ⁶³ point.
 
     Tokens are hashed into ``dim`` bins; probability mass (exp logprob) accumulates;
@@ -54,7 +54,7 @@ def output_distribution_to_basin(token_logprobs: dict, dim: int = 64) -> np.ndar
     return to_simplex(acc)
 
 
-def coordize_distribution_to_basin(token_logprobs: dict, coordizer, dim: int = 64) -> np.ndarray:
+def coordize_distribution_to_basin(token_logprobs: dict, coordizer, dim: int = BASIN_DIM) -> np.ndarray:
     """REAL Qwen→Δ⁶³ projection (R3) — replaces the hash-bin placeholder.
 
     Coordize each top-k token STRING through the trained ``FisherCoordizer`` and take the

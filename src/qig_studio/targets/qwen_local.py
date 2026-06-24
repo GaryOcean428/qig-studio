@@ -14,6 +14,8 @@ override (observer principle).
 
 from __future__ import annotations
 
+from qig_core import BASIN_DIM
+
 from .base import LossRegime, StepResult, TelemetrySnapshot, TrainingTarget
 from .qwen_boundary import (
     BOUNDARY_SLERP_CAP,
@@ -55,7 +57,7 @@ class QwenLocalTarget(TrainingTarget):
         "here; Ollama logprobs path untested against a live server."
     )
 
-    def __init__(self, model: str = "qwen3.5:4b", url: str = _DEFAULT_URL, dim: int = 64, coordizer=None) -> None:
+    def __init__(self, model: str = "qwen3.5:4b", url: str = _DEFAULT_URL, dim: int = BASIN_DIM, coordizer=None) -> None:
         self._model = model
         self._url = url.rstrip("/")
         self._dim = dim
