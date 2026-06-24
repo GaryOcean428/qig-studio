@@ -15,21 +15,25 @@ from __future__ import annotations
 
 import math
 
+from qig_core import KAPPA_ATTRACTOR
+from qig_core.constants.frozen_facts import PHI_BREAKDOWN_MIN, PHI_EMERGENCY, PHI_THRESHOLD
+
 from .base import LossRegime, StepResult, TelemetrySnapshot, TrainingTarget
 
 # Tacking parameters (illustrative; mirrors the κ-wave shape, not measured values).
-_KAPPA_CENTER = 64.0   # architectural attractor (NOT a physics coupling)
+_KAPPA_CENTER = KAPPA_ATTRACTOR  # 64.0 — single-sourced from qig-core (architectural attractor, NOT a coupling)
 _KAPPA_AMP = 5.0
 _KAPPA_PERIOD = 60.0
 _PHI_TARGET = 0.72
 
 
 def _regime_for(phi: float) -> str:
-    if phi >= 0.80:
+    # Φ→regime thresholds single-sourced from qig-core frozen_facts (no hardcoded literals).
+    if phi >= PHI_BREAKDOWN_MIN:
         return "topological_instability"
-    if phi >= 0.70:
+    if phi >= PHI_THRESHOLD:
         return "geometric"
-    if phi >= 0.50:
+    if phi >= PHI_EMERGENCY:
         return "hierarchical"
     return "linear"
 

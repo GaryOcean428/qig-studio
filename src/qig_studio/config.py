@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import ipaddress
 import os
 from dataclasses import dataclass
+from pathlib import Path
 
 
 @dataclass
@@ -14,7 +16,19 @@ class Settings:
     kernel_checkpoint: str | None = None
     constellation_checkpoint: str | None = None
     default_target: str = "mock"
-    server_url: str = "http://127.0.0.1:8800"  # used by TUI/browser clients
+    server_url: str = "http://127.0.0.1:8800"
+    auth_key: str | None = None  # X-Studio-Key shared secret; required for non-loopback bind
+    output_dir: str = "outputs"  # where snapshots/exports land (user-nominatable)
+    curriculum_dir: str = "curriculum"  # where curriculum files are read from (user-nominatable)
+
+    @property
+    def is_loopback(self) -> bool:
+        if self.host in ("localhost", ""):
+            return True
+        try:
+            return ipaddress.ip_address(self.host).is_loopback
+        except ValueError:
+            return False
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -28,4 +42,7 @@ class Settings:
             constellation_checkpoint=os.environ.get("QIG_STUDIO_CONSTELLATION_CKPT") or None,
             default_target=os.environ.get("QIG_STUDIO_TARGET", "mock"),
             server_url=os.environ.get("QIG_STUDIO_URL", f"http://{host}:{port}"),
+            auth_key=os.environ.get("QIG_STUDIO_KEY") or None,
+            output_dir=os.environ.get("QIG_STUDIO_OUTPUT_DIR", "outputs"),
+            curriculum_dir=os.environ.get("QIG_STUDIO_CURRICULUM_DIR", "curriculum"),
         )

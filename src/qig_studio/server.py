@@ -26,7 +26,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, AsyncGenerator
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.responses import FileResponse, HTMLResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -39,6 +39,15 @@ from . import protocol as _protocol
 from .governance.purity import PurityGateError, run_purity_gate
 from .targets.base import LossRegime, ProtocolUnsupported
 from .targets.registry import default_registry
+
+# qig-warp convergence early-stop (package optimisation lever; None-safe if absent) — audit-wired.
+try:
+    from qig_warp import check_ci_stabilized
+
+    _WARP_AVAILABLE = True
+except Exception:  # pragma: no cover - optional dep
+    check_ci_stabilized = None  # type: ignore
+    _WARP_AVAILABLE = False
 
 settings = Settings.from_env()
 
@@ -77,6 +86,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         device=settings.device,
     )
     app.state.pillars = PillarEnforcerAdapter()
+    app.state.auth_key = settings.auth_key
+    # Fail-closed (council P0-F2): refuse a non-loopback bind without a shared secret.
+    if not settings.is_loopback and not settings.auth_key:
+        raise RuntimeError(
+            f"refusing to bind non-loopback host '{settings.host}' without QIG_STUDIO_KEY "
+            "(fail-closed auth — council red-team P0-F2)"
+        )
     yield
     # (no special shutdown for Phase 1)
 
@@ -97,6 +113,8 @@ class TrainRequest(BaseModel):
     steps: int = 10
     prompts: list[str] | None = None  # override curriculum; geometric ignores response side
     max_tokens: int = 64
+    early_stop: bool = False  # qig-warp check_ci_stabilized convergence early-stop (opt-in)
+    confirm: bool = False  # REQUIRED for LANGUAGE targets (each step triggers a remote training job)
 
 
 def _registry():
@@ -104,6 +122,15 @@ def _registry():
     if reg is None:
         raise HTTPException(503, "registry not initialised")
     return reg
+
+
+def verify_key(x_studio_key: str | None = Header(default=None, alias="X-Studio-Key")) -> None:
+    """Fail-closed auth on mutating routes: when QIG_STUDIO_KEY is set, require the header.
+    When unset (localhost dev), no check — but a non-loopback bind without a key is refused
+    at boot (see lifespan, P0-F2)."""
+    key = getattr(app.state, "auth_key", None)
+    if key and x_studio_key != key:
+        raise HTTPException(401, "invalid or missing X-Studio-Key")
 
 
 @app.get("/health")
@@ -131,7 +158,7 @@ async def targets() -> dict[str, Any]:
 
 
 @app.post("/targets/{name}/select")
-async def select_target(name: str) -> dict[str, Any]:
+async def select_target(name: str, _: None = Depends(verify_key)) -> dict[str, Any]:
     reg = _registry()
     try:
         t = reg.select(name)
@@ -161,7 +188,7 @@ async def curriculum() -> dict[str, Any]:
 
 
 @app.post("/chat")
-async def chat(req: ChatRequest) -> dict[str, Any]:
+async def chat(req: ChatRequest, _: None = Depends(verify_key)) -> dict[str, Any]:
     t = _registry().active
     if t is None:
         raise HTTPException(409, "no active target")
@@ -172,7 +199,7 @@ async def chat(req: ChatRequest) -> dict[str, Any]:
 
 
 @app.post("/chat/stream", response_model=None)
-async def chat_stream(req: ChatRequest) -> StreamingResponse:
+async def chat_stream(req: ChatRequest, _: None = Depends(verify_key)) -> StreamingResponse:
     t = _registry().active
 
     async def gen() -> AsyncGenerator[str, None]:
@@ -194,7 +221,7 @@ async def chat_stream(req: ChatRequest) -> StreamingResponse:
 
 
 @app.post("/train", response_model=None)
-async def train(req: TrainRequest) -> StreamingResponse:
+async def train(req: TrainRequest, _: None = Depends(verify_key)) -> StreamingResponse:
     t = _registry().active
 
     async def gen() -> AsyncGenerator[str, None]:
@@ -205,14 +232,25 @@ async def train(req: TrainRequest) -> StreamingResponse:
             yield _sse({"type": "error", "error": f"target '{t.name}' unavailable"})
             return
         provider = CurriculumProvider(t.loss_regime)
+        is_language = t.loss_regime == LossRegime.LANGUAGE
+        # P0-F3: a LANGUAGE "step" triggers a remote async training job (e.g. Modal A100),
+        # NOT an SGD step — cap to 1 and require explicit confirmation before spawning.
+        if is_language:
+            if req.steps > 1:
+                yield _sse({"type": "error", "error": "LANGUAGE target: steps>1 would spawn N async training jobs — use steps=1"})
+                return
+            if not req.confirm:
+                yield _sse({"type": "error", "error": "LANGUAGE training triggers remote jobs — pass confirm=true to proceed"})
+                return
         yield _sse({
             "type": "start",
             "target": t.name,
             "loss_regime": t.loss_regime.value,
             "curriculum": provider.mode(),
             "steps": req.steps,
+            "early_stop": req.early_stop and _WARP_AVAILABLE,
         })
-        is_language = t.loss_regime == LossRegime.LANGUAGE
+        series: list[float] = []
         for step in range(1, req.steps + 1):
             target_text = None
             if req.prompts:
@@ -235,6 +273,20 @@ async def train(req: TrainRequest) -> StreamingResponse:
                 "text": res.text,
                 "telemetry": res.telemetry.to_dict(),
             })
+            # qig-warp convergence early-stop (opt-in package lever): geometric→Φ, language→loss.
+            if req.early_stop and _WARP_AVAILABLE:
+                metric = res.telemetry.phi if not is_language else (res.telemetry.loss or 0.0)
+                series.append(float(metric))
+                decision = check_ci_stabilized(series, window=5, rel_change_threshold=0.05)
+                if bool(decision.should_stop):
+                    yield _sse({
+                        "type": "early_stop",
+                        "step": step,
+                        "reason": decision.reason,
+                        "metric": float(decision.metric_value),
+                        "lever": "qig_warp.check_ci_stabilized",
+                    })
+                    break
             await asyncio.sleep(0)  # cooperative yield
         yield _sse({"type": "done", "final": t.telemetry().to_dict()})
 
@@ -257,7 +309,7 @@ async def protocol_catalog() -> dict[str, Any]:
 
 
 @app.post("/protocol/{command}")
-async def protocol_run(command: str, req: ProtocolRequest) -> dict[str, Any]:
+async def protocol_run(command: str, req: ProtocolRequest, _: None = Depends(verify_key)) -> dict[str, Any]:
     t = _registry().active
     if t is None:
         raise HTTPException(409, "no active target")
