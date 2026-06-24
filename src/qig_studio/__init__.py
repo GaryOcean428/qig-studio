@@ -10,6 +10,21 @@ Design: qig-consciousness/docs/plans/2026-06-24-qig-coordizer-studio-design.md Â
 
 from __future__ import annotations
 
+from .learning import (
+    AutonomicScheduler,
+    ContinuousLearningLoop,
+    Intervention,
+    LoopSummary,
+    StepRecord,
+)
+
 __version__ = "0.1.0"
 
-__all__ = ["__version__"]
+__all__ = [
+    "__version__",
+    "ContinuousLearningLoop",
+    "AutonomicScheduler",
+    "Intervention",
+    "StepRecord",
+    "LoopSummary",
+]
