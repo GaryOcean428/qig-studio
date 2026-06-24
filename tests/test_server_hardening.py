@@ -79,3 +79,24 @@ def test_early_stop_flag_wired_and_terminates():
         assert ev[0]["early_stop"] is True  # qig-warp present → lever active
         # converging mock telemetry → check_ci_stabilized should fire before 40 steps
         assert any(e["type"] == "early_stop" and e["lever"] == "qig_warp.check_ci_stabilized" for e in ev)
+
+
+# --- UI/UX: directory nomination ----------------------------------------------
+
+def test_config_get_and_set_dirs():
+    with TestClient(app) as c:
+        cfg = c.get("/config").json()
+        assert {"output_dir", "curriculum_dir", "warp_early_stop", "auth_required"} <= set(cfg)
+        r = c.post("/config", json={"output_dir": "/tmp/qs_out", "curriculum_dir": "/tmp/qs_curr"})
+        assert r.status_code == 200 and r.json()["output_dir"] == "/tmp/qs_out"
+        assert c.get("/config").json()["curriculum_dir"] == "/tmp/qs_curr"
+
+
+def test_curriculum_loads_from_nominated_dir(tmp_path):
+    from qig_studio.curriculum import CurriculumProvider
+
+    (tmp_path / "phase.txt").write_text("custom prompt one\ncustom prompt two\n", encoding="utf-8")
+    p = CurriculumProvider(LossRegime.GEOMETRIC, curriculum_dir=str(tmp_path))
+    assert p.next_prompt(1) == "custom prompt one"
+    assert p.next_prompt(2) == "custom prompt two"
+    assert p.next_prompt(3) == "custom prompt one"  # wraps

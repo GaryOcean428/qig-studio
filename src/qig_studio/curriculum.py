@@ -63,11 +63,47 @@ class CurriculumProvider:
     """Per-target curriculum source. Geometric → basin-driving prompts; language →
     paired (prompt, target) tuples (Phase-3 QwenModal)."""
 
-    def __init__(self, loss_regime: LossRegime) -> None:
+    def __init__(self, loss_regime: LossRegime, curriculum_dir: str | None = None) -> None:
         self.loss_regime = loss_regime
+        self.curriculum_dir = curriculum_dir
         self._real = None
-        if loss_regime == LossRegime.GEOMETRIC:
+        self._file_prompts: list[str] | None = None
+        self._file_pairs: list[tuple[str, str]] | None = None
+        if curriculum_dir:
+            self._load_dir(curriculum_dir)
+        if loss_regime == LossRegime.GEOMETRIC and not self._file_prompts:
             self._try_real_curriculum()
+
+    def _load_dir(self, directory: str) -> None:
+        """Load a nominated curriculum dir: ``*.txt`` → basin-driving prompts (one per
+        non-empty line, geometric); ``*.jsonl`` → paired ``{"prompt","target"}`` records
+        (language). Falls through to the built-ins if the dir is empty/absent."""
+        import json as _json
+        from pathlib import Path
+
+        p = Path(directory)
+        if not p.is_dir():
+            return
+        prompts: list[str] = []
+        for f in sorted(p.glob("*.txt")):
+            try:
+                prompts += [ln.strip() for ln in f.read_text(encoding="utf-8").splitlines() if ln.strip()]
+            except OSError:
+                continue
+        pairs: list[tuple[str, str]] = []
+        for f in sorted(p.glob("*.jsonl")):
+            try:
+                for ln in f.read_text(encoding="utf-8").splitlines():
+                    ln = ln.strip()
+                    if not ln:
+                        continue
+                    rec = _json.loads(ln)
+                    if "prompt" in rec and "target" in rec:
+                        pairs.append((rec["prompt"], rec["target"]))
+            except (OSError, ValueError):
+                continue
+        self._file_prompts = prompts or None
+        self._file_pairs = pairs or None
 
     def _try_real_curriculum(self) -> None:
         try:
@@ -86,6 +122,8 @@ class CurriculumProvider:
 
     def next_prompt(self, step: int) -> str:
         """Basin-driving prompt for geometric targets (step is 1-based)."""
+        if self._file_prompts:  # nominated curriculum dir wins
+            return self._file_prompts[(step - 1) % len(self._file_prompts)]
         phase = self.phase_for(step)
         if self._real is not None:
             try:
@@ -97,6 +135,8 @@ class CurriculumProvider:
 
     def next_pair(self, step: int) -> tuple[str, str]:
         """Paired (prompt, target) for the LANGUAGE regime (step is 1-based)."""
+        if self._file_pairs:  # nominated curriculum dir wins
+            return self._file_pairs[(step - 1) % len(self._file_pairs)]
         return _PAIRS[(step - 1) % len(_PAIRS)]
 
     def mode(self) -> str:

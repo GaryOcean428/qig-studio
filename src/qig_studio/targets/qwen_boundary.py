@@ -54,6 +54,33 @@ def output_distribution_to_basin(token_logprobs: dict, dim: int = 64) -> np.ndar
     return to_simplex(acc)
 
 
+def coordize_distribution_to_basin(token_logprobs: dict, coordizer, dim: int = 64) -> np.ndarray:
+    """REAL Qwen→Δ⁶³ projection (R3) — replaces the hash-bin placeholder.
+
+    Coordize each top-k token STRING through the trained ``FisherCoordizer`` and take the
+    probability-weighted **Fréchet mean** (``qig_core.frechet_mean``) of the resulting Δ⁶³
+    basins. Pure qig-core geometry — no hash, no contaminated InboundPath/PGA. Requires a
+    TRAINED coordizer (a vocab beyond raw bytes); falls back to the provisional hash-bin if
+    coordization yields nothing.
+    """
+    from qig_core.geometry.fisher_rao import frechet_mean
+
+    basins: list = []
+    weights: list[float] = []
+    for tok, lp in token_logprobs.items():
+        result = coordizer.coordize(str(tok))
+        coords = getattr(result, "coordinates", None) or []
+        if not coords:
+            continue
+        w = math.exp(lp) / len(coords)  # spread the token's probability over its basins
+        for c in coords:
+            basins.append(c.vector)
+            weights.append(w)
+    if not basins:
+        return output_distribution_to_basin(token_logprobs, dim)
+    return frechet_mean(basins, weights)
+
+
 def pillar2_capped_integrate(
     identity_basin: np.ndarray, boundary_basin: np.ndarray, weight: float
 ) -> np.ndarray:

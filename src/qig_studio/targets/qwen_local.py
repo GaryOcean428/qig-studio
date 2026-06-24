@@ -18,6 +18,7 @@ from .base import LossRegime, StepResult, TelemetrySnapshot, TrainingTarget
 from .qwen_boundary import (
     BOUNDARY_SLERP_CAP,
     basin_phi_proxy,
+    coordize_distribution_to_basin,
     fisher_distance,
     output_distribution_to_basin,
     pillar2_capped_integrate,
@@ -54,12 +55,20 @@ class QwenLocalTarget(TrainingTarget):
         "here; Ollama logprobs path untested against a live server."
     )
 
-    def __init__(self, model: str = "qwen3.5:4b", url: str = _DEFAULT_URL, dim: int = 64) -> None:
+    def __init__(self, model: str = "qwen3.5:4b", url: str = _DEFAULT_URL, dim: int = 64, coordizer=None) -> None:
         self._model = model
         self._url = url.rstrip("/")
         self._dim = dim
+        self._coordizer = coordizer  # trained FisherCoordizer → real Fréchet projection; else hash-bin
         self._identity = None
         self._last = TelemetrySnapshot(regime="language", extra={"target": "qwen-local"})
+
+    def _project(self, logprobs: dict):
+        """Qwen output-distribution → Δ⁶³: real coordizer-basin Fréchet mean when a trained
+        coordizer is present, else the provisional hash-bin (R3)."""
+        if self._coordizer is not None:
+            return coordize_distribution_to_basin(logprobs, self._coordizer, self._dim)
+        return output_distribution_to_basin(logprobs, self._dim)
 
     @staticmethod
     def _geometry_ok() -> bool:
@@ -106,7 +115,7 @@ class QwenLocalTarget(TrainingTarget):
 
     def _telemetry(self, logprobs: dict, *, integrated: bool) -> TelemetrySnapshot:
         if logprobs:
-            basin = output_distribution_to_basin(logprobs, self._dim)
+            basin = self._project(logprobs)
         else:
             basin = self._identity
         ref = self._identity if integrated else basin
@@ -135,7 +144,7 @@ class QwenLocalTarget(TrainingTarget):
         self.ensure_loaded()
         text, logprobs = self._ask(prompt)
         if logprobs:
-            boundary = output_distribution_to_basin(logprobs, self._dim)
+            boundary = self._project(logprobs)
             self._identity = pillar2_capped_integrate(self._identity, boundary, BOUNDARY_SLERP_CAP)
         self._last = self._telemetry(logprobs, integrated=True)
         return StepResult(text=text, telemetry=self._last)

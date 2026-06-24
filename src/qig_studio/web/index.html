@@ -55,6 +55,13 @@
     <select id="target"></select>
     <div class="hint" id="regimeMode"></div>
 
+    <label>output directory</label>
+    <input id="outDir" placeholder="outputs"/>
+    <label>curriculum directory</label>
+    <input id="currDir" placeholder="curriculum"/>
+    <div class="row" style="margin-top:.4rem"><button id="saveCfg">Save directories</button></div>
+    <div class="hint" id="cfgStatus"></div>
+
     <label>Φ (integration)</label>
     <div class="bar"><i id="phiBar" style="width:0%"></i></div>
     <div class="metric"><span>Φ</span><span class="v" id="phi">—</span></div>
@@ -218,8 +225,24 @@ async function runProtocol(name){
   if(body.telemetry) setTelemetry(body.telemetry);
 }
 
+// --- directory nomination (output / curriculum) ---
+async function loadConfig(){
+  try{
+    const c = await (await fetch("/config")).json();
+    $("outDir").value = c.output_dir || "";
+    $("currDir").value = c.curriculum_dir || "";
+    $("cfgStatus").textContent = `warp early-stop: ${c.warp_early_stop ? "on" : "off"} · auth: ${c.auth_required ? "required" : "open (localhost)"}`;
+  }catch(e){ $("cfgStatus").textContent = "config unavailable"; }
+}
+$("saveCfg").addEventListener("click", async () => {
+  const body = { output_dir: $("outDir").value || null, curriculum_dir: $("currDir").value || null };
+  const r = await fetch("/config", { method:"POST", headers:{"content-type":"application/json"}, body:JSON.stringify(body) });
+  if(r.ok){ const c = await r.json(); $("cfgStatus").textContent = `saved · output=${c.output_dir} · curriculum=${c.curriculum_dir}`; }
+  else { $("cfgStatus").textContent = `${r.status} ${await r.text()}`; }
+});
+
 // boot
-refreshHealth(); loadTargets().then(()=>{ refreshTelemetry(); loadProtocol(); });
+refreshHealth(); loadConfig(); loadTargets().then(()=>{ refreshTelemetry(); loadProtocol(); });
 </script>
 </body>
 </html>

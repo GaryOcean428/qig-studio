@@ -87,6 +87,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     )
     app.state.pillars = PillarEnforcerAdapter()
     app.state.auth_key = settings.auth_key
+    app.state.settings = settings  # mutable: /config can nominate output_dir/curriculum_dir at runtime
     # Fail-closed (council P0-F2): refuse a non-loopback bind without a shared secret.
     if not settings.is_loopback and not settings.auth_key:
         raise RuntimeError(
@@ -231,7 +232,7 @@ async def train(req: TrainRequest, _: None = Depends(verify_key)) -> StreamingRe
         if not t.is_available():
             yield _sse({"type": "error", "error": f"target '{t.name}' unavailable"})
             return
-        provider = CurriculumProvider(t.loss_regime)
+        provider = CurriculumProvider(t.loss_regime, curriculum_dir=app.state.settings.curriculum_dir)
         is_language = t.loss_regime == LossRegime.LANGUAGE
         # P0-F3: a LANGUAGE "step" triggers a remote async training job (e.g. Modal A100),
         # NOT an SGD step — cap to 1 and require explicit confirmation before spawning.
@@ -291,6 +292,35 @@ async def train(req: TrainRequest, _: None = Depends(verify_key)) -> StreamingRe
         yield _sse({"type": "done", "final": t.telemetry().to_dict()})
 
     return StreamingResponse(gen(), media_type="text/event-stream")
+
+
+class ConfigRequest(BaseModel):
+    output_dir: str | None = None
+    curriculum_dir: str | None = None
+
+
+@app.get("/config")
+async def get_config() -> dict[str, Any]:
+    s = app.state.settings
+    return {
+        "output_dir": s.output_dir,
+        "curriculum_dir": s.curriculum_dir,
+        "host": s.host,
+        "default_target": s.default_target,
+        "auth_required": bool(getattr(app.state, "auth_key", None)),
+        "warp_early_stop": _WARP_AVAILABLE,
+    }
+
+
+@app.post("/config")
+async def set_config(req: ConfigRequest, _: None = Depends(verify_key)) -> dict[str, Any]:
+    """Nominate output / curriculum directories at runtime (user-facing UX requirement)."""
+    s = app.state.settings
+    if req.output_dir is not None:
+        s.output_dir = req.output_dir
+    if req.curriculum_dir is not None:
+        s.curriculum_dir = req.curriculum_dir
+    return {"output_dir": s.output_dir, "curriculum_dir": s.curriculum_dir}
 
 
 class ProtocolRequest(BaseModel):
