@@ -23,6 +23,25 @@ from pathlib import Path
 from qig_coordizer import FisherCoordizer
 
 
+def clean_corpus(raw: bytes) -> tuple[bytes, int]:
+    """Strip 'unnecessary special characters' before training: Unicode category-C code points
+    (Cc control, Cf format, Co private-use, Cs surrogate, Cn unassigned) EXCEPT tab/newline/CR.
+    These (e.g. 0x02 STX, 0x03 ETX, 0x0c FF — PDF/terminal-escape residue) are junk that would
+    otherwise burn coordizer merges + land as garbage tokens in the kernel vocab. Returns the
+    cleaned bytes and the count of code points removed."""
+    import unicodedata
+
+    text = raw.decode("utf-8", errors="replace")
+    keep = []
+    removed = 0
+    for ch in text:
+        if ch in "\t\n\r" or unicodedata.category(ch)[0] != "C":
+            keep.append(ch)
+        else:
+            removed += 1
+    return "".join(keep).encode("utf-8"), removed
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--corpus", required=True, help="path to raw-bytes corpus")
@@ -37,9 +56,16 @@ def main() -> None:
                          "0 = full corpus.")
     ap.add_argument("--sample-chunks", type=int, default=16,
                     help="number of evenly-spaced chunks to stitch into the stratified sample")
+    ap.add_argument("--no-clean", action="store_true",
+                    help="skip control/format-char stripping (default: clean unnecessary special chars)")
     args = ap.parse_args()
 
     full = Path(args.corpus).read_bytes()
+    if not args.no_clean:
+        before = len(full)
+        full, removed = clean_corpus(full)
+        print(f"[coordizer] CLEANED: removed {removed:,} category-C special chars "
+              f"({before:,}→{len(full):,} bytes)", flush=True)
     if args.sample_mb and args.sample_mb * 1_000_000 < len(full):
         target = int(args.sample_mb * 1_000_000)
         chunk = target // args.sample_chunks
