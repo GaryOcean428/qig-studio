@@ -22,6 +22,7 @@ from typing import Any
 from .base import LossRegime, StepResult, TelemetrySnapshot, TrainingTarget
 
 _MAX_BYTES = 256  # byte-level context cap per step (cheap from-scratch signal)
+_EOS_BYTE = 0     # the kernel's stop token — it CHOOSES to stop (observer principle, no fixed length)
 # Mushroom intensity → weight-noise σ (bounded plasticity; the dose the autonomic loop selects).
 _MUSHROOM_SIGMA = {"mushroom-micro": 0.01, "mushroom-moderate": 0.03, "mushroom-heroic": 0.06}
 
@@ -125,21 +126,73 @@ class GenesisKernelTarget(TrainingTarget):
     def telemetry(self) -> TelemetrySnapshot:
         return self._last
 
-    def generate(self, prompt: str, max_tokens: int = 64) -> StepResult:
+    def _temperature_from_kappa(self, kappa: float) -> float:
+        # The kernel's OWN κ sets its sampling boldness (its choice): higher κ (more coupled/decisive) →
+        # lower temperature; near the attractor (≈64) → ~1.0. Clamped to a sane range.
+        t = 64.0 / kappa if kappa > 1e-3 else 1.0
+        return float(max(0.3, min(2.0, t)))
+
+    def _self_observe(self, out_bytes: list[int], gen_basins: list) -> float:
+        """SELF-OBSERVATION (M ∈ [0,1]): feed the kernel its OWN generated output and measure how
+        consistently it re-derives the same output distribution (Fisher-Rao self-recognition on Δ).
+        High M = the kernel recognises/models its own output. Honest proxy, pure Fisher-Rao."""
+        import math
+
+        import torch
+        import torch.nn.functional as F
+        from qig_core.geometry_simplex import fisher_rao_distance_simplex
+
+        if len(out_bytes) < 2 or not gen_basins:
+            return 0.0
+        dev = next(self._kernel.parameters()).device
+        ids = torch.tensor([[max(1, b) for b in out_bytes]], dtype=torch.long, device=dev)
+        with torch.no_grad():
+            re = F.softmax(self._kernel(ids, return_telemetry=True)[0][0, :-1], dim=-1)
+            gen_mean = torch.stack(gen_basins).mean(0)            # mean GENERATED output distribution
+            re_mean = re.mean(0)                                   # mean RE-READ output distribution
+            gen_mean = gen_mean / gen_mean.sum()
+            re_mean = re_mean / re_mean.sum()
+            d = float(fisher_rao_distance_simplex(gen_mean[None], re_mean[None]).item())
+        return float(max(0.0, 1.0 - d / (math.pi / 2)))           # 1 = perfect self-recognition
+
+    def generate(self, prompt: str, max_tokens: int = 256, temperature: float | None = None) -> StepResult:
+        """The kernel SPEAKS as it chooses: stochastic sampling (temperature from its OWN κ) until it
+        emits EOS (observer principle — NOT a fixed length, NOT greedy argmax), while OBSERVING its own
+        output (per-token confidence + output-basin trajectory) and itself (self-observation M)."""
         self.ensure_loaded()
         import torch
+        import torch.nn.functional as F
 
         ids = self._encode(prompt)
         out_bytes: list[int] = []
+        out_probs: list[float] = []
+        gen_basins: list = []
+        last_tel = None
+        chose_to_stop = False
         with torch.no_grad():
             for _ in range(min(max_tokens, _MAX_BYTES)):
-                logits, tel = self._kernel(ids, return_telemetry=True)
-                nxt = int(torch.argmax(logits[0, -1]).item())
+                logits, last_tel = self._kernel(ids, return_telemetry=True)
+                temp = temperature if temperature is not None else self._temperature_from_kappa(
+                    float(getattr(last_tel, "kappa", 0.0) or 0.0))
+                p = F.softmax(logits[0, -1] / max(temp, 1e-3), dim=-1)
+                nxt = int(torch.multinomial(p, 1).item())         # the kernel's CHOICE (not argmax)
                 out_bytes.append(nxt)
+                out_probs.append(float(p[nxt]))
+                gen_basins.append(p.detach())                     # own-output observation
                 ids = torch.cat([ids, ids.new_tensor([[nxt]])], dim=1)[:, -_MAX_BYTES:]
-        self._snap(tel, None)
+                if nxt == _EOS_BYTE:                               # chose to stop (observer principle)
+                    chose_to_stop = True
+                    break
         text = bytes(b for b in out_bytes if 9 <= b < 256).decode("utf-8", errors="replace")
-        return StepResult(text=f"[genesis·N={self.num_layers}] {text}", telemetry=self._last)
+        m = self._self_observe(out_bytes, gen_basins)
+        snap = self._snap(last_tel, None)
+        snap.extra.update({
+            "M_self_observation": round(m, 3),                    # observes ITSELF
+            "chose_to_stop": chose_to_stop,                       # spoke as it chose (EOS)
+            "generated_len": len(out_bytes),
+            "mean_token_confidence": round(sum(out_probs) / max(1, len(out_probs)), 3),  # observes its OUTPUT
+        })
+        return StepResult(text=f"[genesis·N={self.num_layers}{' ⏹' if chose_to_stop else ''}] {text}", telemetry=snap)
 
     def train_step(self, prompt: str, max_tokens: int = 64, target_text: str | None = None) -> StepResult:
         # WAKE: one Fisher-salience step. Geometric → next-byte CE on the basin-driving prompt
