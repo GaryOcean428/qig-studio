@@ -123,3 +123,10 @@ class TrainingTarget(ABC):
     def run_protocol(self, command: str, args: dict) -> dict:
         """Run a protocol command; default = unsupported (e.g. language targets)."""
         raise ProtocolUnsupported(f"target '{self.name}' does not expose protocol commands")
+
+    def architecture(self) -> dict | None:
+        """Optional: report the kernel's information-propagation geometry for the v_B locality budget
+        (learning.locality_budget). Keys: ``attention`` ('local'|'global'), ``locality_radius`` (int or
+        None=global), ``num_layers``, ``recursion_depth``, ``seq_len``. Default None = not a kernel /
+        unknown → the locality check is skipped (None-safe)."""
+        return None
