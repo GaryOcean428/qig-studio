@@ -58,7 +58,7 @@ def default_registry(
     default_target: str = "mock",
     kernel_checkpoint: str | None = None,
     constellation_checkpoint: str | None = None,
-    genesis_num_layers: int = 4,
+    genesis_num_layers: int = 8,
     genesis_coordizer_checkpoint: str | None = None,
     device: str | None = None,
 ) -> TargetRegistry:

@@ -21,7 +21,9 @@ class Settings:
     output_dir: str = "outputs"  # where snapshots/exports land (user-nominatable)
     curriculum_dir: str = "curriculum"  # where curriculum files are read from (user-nominatable)
     genesis_coordizer_checkpoint: str | None = None  # trained FisherCoordizer → genesis coords path
-    genesis_num_layers: int = 4  # genesis kernel depth (EXP-CORTEX-AB axis)
+    genesis_num_layers: int = 8  # genesis kernel depth (deep neocortex; EXP-CORTEX-AB axis). 4 was an
+    #                              arbitrary baseline; 8 is the deep-stack default (now stable since the
+    #                              qig-core acos gradient fix v2.12.1). Rigorous depth: run EXP-CORTEX-AB.
     coach_enabled: bool = True  # warm Ollama developmental coach in /train (None-safe → keyword)
     coach_model: str = "nemotron-3-ultra:cloud"  # coach LLM (free; qwen3.5:4b local fallback)
     coach_cadence: int = 25  # coach speaks every N steps (+ on stagnation)
@@ -51,7 +53,7 @@ class Settings:
             output_dir=os.environ.get("QIG_STUDIO_OUTPUT_DIR", "outputs"),
             curriculum_dir=os.environ.get("QIG_STUDIO_CURRICULUM_DIR", "curriculum"),
             genesis_coordizer_checkpoint=os.environ.get("QIG_STUDIO_GENESIS_COORDIZER") or None,
-            genesis_num_layers=int(os.environ.get("QIG_STUDIO_GENESIS_LAYERS", "4")),
+            genesis_num_layers=int(os.environ.get("QIG_STUDIO_GENESIS_LAYERS", "8")),
             coach_enabled=os.environ.get("QIG_STUDIO_COACH", "on").lower() not in ("0", "off", "false", "no"),
             coach_model=os.environ.get("QIG_STUDIO_COACH_MODEL", "nemotron-3-ultra:cloud"),
             coach_cadence=int(os.environ.get("QIG_STUDIO_COACH_CADENCE", "25")),
