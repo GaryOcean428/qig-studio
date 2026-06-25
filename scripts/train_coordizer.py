@@ -58,6 +58,15 @@ def main() -> None:
                     help="number of evenly-spaced chunks to stitch into the stratified sample")
     ap.add_argument("--no-clean", action="store_true",
                     help="skip control/format-char stripping (default: clean unnecessary special chars)")
+    ap.add_argument("--trainer", choices=["screened", "fisher"], default="screened",
+                    help="screened = CoordinzerTrainer with candidates_per_round (per-merge cost CAPPED → "
+                         "scales to vocab 32000; the QIG screening lever); fisher = FisherCoordizer "
+                         "(incremental==naive validated, but per-merge scan is O(distinct-pairs) → its tail "
+                         "is catastrophic at high vocab on multi-MB corpora).")
+    ap.add_argument("--candidates-per-round", type=int, default=50,
+                    help="screened: top-K candidate pairs scored per merge (caps the per-merge cost)")
+    ap.add_argument("--sample-size", type=int, default=4000,
+                    help="screened: corpus positions sampled to SCORE each round's merges")
     args = ap.parse_args()
 
     full = Path(args.corpus).read_bytes()
@@ -78,21 +87,36 @@ def main() -> None:
         print(f"[coordizer] FULL corpus={len(corpus):,} bytes  target_vocab={args.vocab}  out={args.out}", flush=True)
 
     t0 = time.time()
-    cz = FisherCoordizer(target_vocab_size=args.vocab)
-    cz.train(corpus, context_window=args.context_window, min_pair_count=args.min_pair_count, verbose=True)
+    if args.trainer == "screened":
+        from qig_coordizer.trainer import CoordinzerTrainer
+
+        print(f"[coordizer] SCREENED trainer (candidates_per_round={args.candidates_per_round}, "
+              f"sample_size={args.sample_size})", flush=True)
+        cz = CoordinzerTrainer(target_vocab_size=args.vocab)
+        cz.train(corpus, sample_size=args.sample_size, candidates_per_round=args.candidates_per_round,
+                 min_frequency=args.min_pair_count, context_window=args.context_window,
+                 verbose=True, use_kernel=False)
+        encode = cz.coordize  # CoordinzerTrainer API
+        decode = cz.decoordize
+        basin_dim = cz.basin_dim
+    else:
+        cz = FisherCoordizer(target_vocab_size=args.vocab)
+        cz.train(corpus, context_window=args.context_window, min_pair_count=args.min_pair_count, verbose=True)
+        encode, decode, basin_dim = cz.encode, cz.decode, cz.basin_dim
     dt = time.time() - t0
 
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)
-    cz.save(args.out)
+    cz.save(args.out)  # genesis loads via FisherCoordizer.load (schema-compatible: basin_dim/vocab/merge_rules)
 
     # result-dict + a cheap round-trip sanity check (governance: prove the artifact is usable)
     probe = "the geometry is the truth; patterns flow through basins"
-    ids = cz.encode(probe)
-    roundtrip_ok = cz.decode(ids) == probe
+    ids = encode(probe)
+    roundtrip_ok = decode(ids) == probe
     result = {
+        "trainer": args.trainer,
         "vocab_size": len(cz.vocab),
         "merges": len(cz.vocab) - 256,
-        "basin_dim": cz.basin_dim,
+        "basin_dim": basin_dim,
         "elapsed_s": round(dt, 1),
         "roundtrip_ok": roundtrip_ok,
         "out": args.out,
