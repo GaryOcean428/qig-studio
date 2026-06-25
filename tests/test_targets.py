@@ -69,9 +69,19 @@ def test_registry_select_unknown_raises():
         pass
 
 
-def test_registry_has_five_targets():
+def test_registry_has_six_targets():
     r = default_registry()
-    assert set(r.names()) == {"mock", "kernel", "constellation", "qwen-local", "qwen-modal"}
+    assert set(r.names()) == {"mock", "genesis", "kernel", "constellation", "qwen-local", "qwen-modal"}
+
+
+def test_genesis_target_is_geometric_and_none_safe():
+    from qig_studio.targets.base import LossRegime
+    from qig_studio.targets.genesis_kernel import GenesisKernelTarget
+
+    t = GenesisKernelTarget(num_layers=4)
+    assert t.loss_regime is LossRegime.GEOMETRIC
+    # None-safe: in the light app shell (no torch/qigkernels) it reports unavailable, never crashes.
+    assert t.is_available() in (True, False)
 
 
 def test_qwen_targets_are_language_and_none_safe():

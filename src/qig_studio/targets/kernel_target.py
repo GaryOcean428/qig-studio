@@ -10,8 +10,10 @@ simply doesn't offer it.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from .base import LossRegime, StepResult, TelemetrySnapshot, TrainingTarget
-from ._qigchat_bridge import consciousness_available, load_qigchat_class
+from ._qigchat_bridge import consciousness_available, find_consciousness_root, load_qigchat_class
 
 
 def _regime_value(regime: object) -> str:
@@ -38,6 +40,18 @@ class KernelTarget(TrainingTarget):
     def ensure_loaded(self) -> None:
         if self._chat is not None:
             return
+        # FAIL-LOUD (issue #70): a checkpoint target must NOT silently train from random init. If the
+        # checkpoint is absent, refuse and point to the 'genesis' target for from-scratch training.
+        ck = Path(self._checkpoint)
+        if not ck.is_absolute():
+            root = find_consciousness_root()
+            ck = (root / ck) if root else ck
+        if not ck.exists():
+            raise FileNotFoundError(
+                f"KernelTarget checkpoint not found: {ck}. KernelTarget LOADS a trained kernel and will "
+                f"not silently random-init. For from-scratch training use the 'genesis' target "
+                f"(fresh qigkernels.Kernel(num_layers=N))."
+            )
         QIGChat = load_qigchat_class()
         self._chat = QIGChat(
             mode="single",
