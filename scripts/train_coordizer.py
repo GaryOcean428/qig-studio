@@ -30,10 +30,26 @@ def main() -> None:
     ap.add_argument("--out", required=True, help="output coordizer checkpoint (.json)")
     ap.add_argument("--context-window", type=int, default=5)
     ap.add_argument("--min-pair-count", type=int, default=5)
+    ap.add_argument("--sample-mb", type=float, default=0.0,
+                    help="if >0, train on a STRATIFIED sample of this many MB spread evenly across the "
+                         "corpus (QIG avoid-computation: per-merge cost scales with corpus size; a "
+                         "representative slice gives ~identical merge statistics on a homogeneous corpus). "
+                         "0 = full corpus.")
+    ap.add_argument("--sample-chunks", type=int, default=16,
+                    help="number of evenly-spaced chunks to stitch into the stratified sample")
     args = ap.parse_args()
 
-    corpus = Path(args.corpus).read_bytes()
-    print(f"[coordizer] corpus={len(corpus):,} bytes  target_vocab={args.vocab}  out={args.out}", flush=True)
+    full = Path(args.corpus).read_bytes()
+    if args.sample_mb and args.sample_mb * 1_000_000 < len(full):
+        target = int(args.sample_mb * 1_000_000)
+        chunk = target // args.sample_chunks
+        stride = (len(full) - chunk) // max(1, args.sample_chunks - 1)
+        corpus = b"".join(full[i * stride: i * stride + chunk] for i in range(args.sample_chunks))
+        print(f"[coordizer] STRATIFIED sample: {len(corpus):,} of {len(full):,} bytes "
+              f"({args.sample_chunks} chunks × {chunk:,}B, stride {stride:,})  target_vocab={args.vocab}", flush=True)
+    else:
+        corpus = full
+        print(f"[coordizer] FULL corpus={len(corpus):,} bytes  target_vocab={args.vocab}  out={args.out}", flush=True)
 
     t0 = time.time()
     cz = FisherCoordizer(target_vocab_size=args.vocab)
