@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from .base import TargetInfo, TrainingTarget
 from .constellation_target import ConstellationTarget
+from .genesis_kernel import GenesisKernelTarget
 from .kernel_target import KernelTarget
 from .mock_target import MockTarget
 from .qwen_local import QwenLocalTarget
@@ -43,12 +44,14 @@ def default_registry(
     default_target: str = "mock",
     kernel_checkpoint: str | None = None,
     constellation_checkpoint: str | None = None,
+    genesis_num_layers: int = 4,
     device: str | None = None,
 ) -> TargetRegistry:
-    """Build the registry: mock (always) + geometric kernel/constellation +
-    language qwen-local/qwen-modal (all None-safe on their backends)."""
+    """Build the registry: mock (always) + genesis (fresh qigkernels.Kernel) + geometric
+    kernel/constellation + language qwen-local/qwen-modal (all None-safe on their backends)."""
     r = TargetRegistry()
     r.register(MockTarget())
+    r.register(GenesisKernelTarget(num_layers=genesis_num_layers, device=device))
     r.register(KernelTarget(checkpoint=kernel_checkpoint, device=device))
     r.register(ConstellationTarget(checkpoint=constellation_checkpoint, device=device))
     r.register(QwenLocalTarget())
