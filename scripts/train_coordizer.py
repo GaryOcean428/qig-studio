@@ -72,6 +72,12 @@ def main() -> None:
                          "(keeps the 3 most recent → resumable). None = only the final --out is saved.")
     ap.add_argument("--checkpoint-interval", type=int, default=2000,
                     help="vocab-size stride between checkpoints")
+    ap.add_argument("--resume-from", default=None,
+                    help="screened: CONTINUE an existing coordizer checkpoint (.json) up to --vocab "
+                         "instead of building byte-up. The existing merges are applied to the corpus "
+                         "first (compressing it), so continuing is fast AND uses the full curriculum — "
+                         "this is the correct way to push a verified vocab higher (never re-discover "
+                         "merges from scratch).")
     args = ap.parse_args()
 
     full = Path(args.corpus).read_bytes()
@@ -95,13 +101,23 @@ def main() -> None:
     if args.trainer == "screened":
         from qig_coordizer.trainer import CoordinzerTrainer
 
-        print(f"[coordizer] SCREENED trainer (candidates_per_round={args.candidates_per_round}, "
-              f"sample_size={args.sample_size})", flush=True)
-        cz = CoordinzerTrainer(target_vocab_size=args.vocab)
-        cz.train(corpus, sample_size=args.sample_size, candidates_per_round=args.candidates_per_round,
-                 min_frequency=args.min_pair_count, context_window=args.context_window,
-                 verbose=True, use_kernel=False,
-                 checkpoint_dir=args.checkpoint_dir, checkpoint_interval=args.checkpoint_interval)
+        common = dict(sample_size=args.sample_size, candidates_per_round=args.candidates_per_round,
+                      min_frequency=args.min_pair_count, context_window=args.context_window,
+                      verbose=True, use_kernel=False, enable_interrupt=False,
+                      checkpoint_dir=args.checkpoint_dir, checkpoint_interval=args.checkpoint_interval)
+        if args.resume_from:
+            print(f"[coordizer] RESUMING from {args.resume_from} → target {args.vocab:,} "
+                  f"(candidates_per_round={args.candidates_per_round}, sample_size={args.sample_size})",
+                  flush=True)
+            cz = CoordinzerTrainer.load(args.resume_from)
+            print(f"[coordizer] loaded vocab={len(cz.vocab):,}, merges={len(cz.merge_rules):,} — "
+                  f"continuing on full curriculum (existing merges applied first → compressed)", flush=True)
+            cz.resume_training(corpus, new_target_vocab_size=args.vocab, **common)
+        else:
+            print(f"[coordizer] SCREENED trainer (candidates_per_round={args.candidates_per_round}, "
+                  f"sample_size={args.sample_size})", flush=True)
+            cz = CoordinzerTrainer(target_vocab_size=args.vocab)
+            cz.train(corpus, **common)
         encode = cz.coordize  # CoordinzerTrainer API
         decode = cz.decoordize
         basin_dim = cz.basin_dim
