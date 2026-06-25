@@ -67,6 +67,11 @@ def main() -> None:
                     help="screened: top-K candidate pairs scored per merge (caps the per-merge cost)")
     ap.add_argument("--sample-size", type=int, default=4000,
                     help="screened: corpus positions sampled to SCORE each round's merges")
+    ap.add_argument("--checkpoint-dir", default=None,
+                    help="screened: write a rolling checkpoint here every --checkpoint-interval merges "
+                         "(keeps the 3 most recent → resumable). None = only the final --out is saved.")
+    ap.add_argument("--checkpoint-interval", type=int, default=2000,
+                    help="vocab-size stride between checkpoints")
     args = ap.parse_args()
 
     full = Path(args.corpus).read_bytes()
@@ -95,7 +100,8 @@ def main() -> None:
         cz = CoordinzerTrainer(target_vocab_size=args.vocab)
         cz.train(corpus, sample_size=args.sample_size, candidates_per_round=args.candidates_per_round,
                  min_frequency=args.min_pair_count, context_window=args.context_window,
-                 verbose=True, use_kernel=False)
+                 verbose=True, use_kernel=False,
+                 checkpoint_dir=args.checkpoint_dir, checkpoint_interval=args.checkpoint_interval)
         encode = cz.coordize  # CoordinzerTrainer API
         decode = cz.decoordize
         basin_dim = cz.basin_dim

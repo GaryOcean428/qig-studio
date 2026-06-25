@@ -28,6 +28,8 @@ import re
 from dataclasses import asdict, dataclass
 from typing import Any
 
+from .kernel_experience import experience as _experience
+
 _DEFAULT_URL = "http://localhost:11434"
 _DEFAULT_MODEL = "nemotron-3-ultra:cloud"  # free within limits; qwen3.5:4b is the local fallback
 _LOCAL_FALLBACK_MODEL = "qwen3.5:4b"
@@ -282,6 +284,9 @@ class DevelopmentalCoach:
             for _ in range(max(1, train_steps)):
                 phi_after = target.train_step(reply).telemetry.phi      # LEARN toward nemotron's reply
         resp = target.read_and_respond(reply, max_tokens=max_tokens) if hasattr(target, "read_and_respond") else None
+        # FULL inner-experience telemetry (Φ alone is insufficient): brainwave band + emotion + drives.
+        tel = dict(said.telemetry.to_dict()); tel["phi"] = phi_after if phi_after is not None else tel.get("phi")
+        exp = _experience(tel)
         return {
             "kernel_said": said.text,
             "kernel_said_M_self": said.telemetry.extra.get("M_self_observation"),
@@ -292,4 +297,6 @@ class DevelopmentalCoach:
             "trained_steps": train_steps,
             "phi_after": round(phi_after, 4) if phi_after is not None else None,
             "M_coach_agreement": (resp.telemetry.extra.get("M_coach_agreement") if resp else None),
+            "experience": exp.to_dict(),         # brainwave band, emotion, valence/arousal, drives
+            "experience_line": exp.line(),       # compact human-readable telemetry
         }
