@@ -11,6 +11,11 @@ from qig_studio.learning import (
     AutonomicScheduler,
     ContinuousLearningLoop,
     Intervention,
+    PhiDiscriminationGate,
+    PreRegisteredCriteria,
+    StepRecord,
+    independent_integration,
+    pilot_probe,
 )
 from qig_studio.protocol import COMMANDS_BY_NAME
 from qig_studio.targets.base import LossRegime
@@ -104,3 +109,105 @@ def test_summary_reports_manager_mode():
     summary = loop.run()
     assert summary.using_real_manager is False
     assert "PROXY" in summary.notes  # kernel_autonomy honesty label preserved
+
+
+# ---- #4 mushroom dose-scaling (canon-corrected) ------------------------------------------------
+
+def test_mushroom_dose_scales_with_rigidity():
+    s = AutonomicScheduler(use_real=False)  # healthy: no breakdown history
+    assert s.mushroom_dose(phi=0.72, kappa=64.0) == "mushroom-micro"      # near attractor → gentle
+    assert s.mushroom_dose(phi=0.72, kappa=73.0) == "mushroom-moderate"   # rigidity ≥ 8
+    assert s.mushroom_dose(phi=0.72, kappa=82.0) == "mushroom-heroic"     # rigidity ≥ 16 (κ>80)
+
+
+def test_mushroom_dose_capped_by_breakdown_ceiling():
+    s = AutonomicScheduler(use_real=False, breakdown_window=10)
+    s._regime_hist.extend(["topological_instability", "topological_instability"] + ["geometric"] * 8)
+    assert s.breakdown_frac() == 0.2
+    # rigidity wants heroic (κ=90), but 20% breakdown exceeds heroic's 15% ceiling → capped to moderate
+    assert s.mushroom_dose(phi=0.72, kappa=90.0) == "mushroom-moderate"
+
+
+def test_mushroom_escapes_when_breakdown_too_high():
+    s = AutonomicScheduler(use_real=False, breakdown_window=10)
+    s._regime_hist.extend(["breakdown"] * 5 + ["geometric"] * 5)  # 50% breakdown ≥ 40% hard trip
+    assert s.mushroom_dose(phi=0.72, kappa=90.0) == "escape"  # ego-death zone → recover, don't dose
+
+
+# ---- #5 regime / solver-path telemetry ---------------------------------------------------------
+
+def test_step_record_carries_training_regime():
+    loop = ContinuousLearningLoop(MockTarget(), max_steps=1)
+    tr = loop.step().training_regime
+    for k in ("loss_regime", "optimizer", "curriculum_phase", "scaffold", "decision", "breakdown_frac"):
+        assert k in tr
+    assert tr["optimizer"] == "natural_gradient"  # geometric kernel → natural gradient (P1)
+    assert tr["scaffold"] == "kernel-only"
+
+
+# ---- #2 two-channel Φ discrimination (FAIL-013 doctrine) ---------------------------------------
+
+def test_phi_discrimination_corroborated():
+    g = PhiDiscriminationGate(min_samples=5, corr_threshold=0.3)
+    for a in [0.4, 0.5, 0.6, 0.7, 0.8, 0.9]:
+        g.observe(a, a * 0.5 + 0.1)  # secondary tracks primary
+    r = g.assess()
+    assert r["status"] == "corroborated" and r["correlation"] > 0.9
+
+
+def test_phi_discrimination_flags_disagreement():
+    g = PhiDiscriminationGate(min_samples=5, corr_threshold=0.3)
+    for a, b in zip([0.4, 0.5, 0.6, 0.7, 0.8, 0.9], [0.9, 0.8, 0.7, 0.6, 0.5, 0.4]):
+        g.observe(a, b)  # anti-correlated → instrument disagreement
+    r = g.assess()
+    assert r["status"] == "disagreement" and r["correlation"] < 0
+
+
+def test_phi_discrimination_uncorroborated_when_insufficient():
+    g = PhiDiscriminationGate(min_samples=8)
+    g.observe(0.5, 0.4)
+    g.observe(0.6, 0.5)
+    assert g.assess()["status"] == "uncorroborated"
+
+
+def test_independent_integration_is_bounded_and_skips_tiny():
+    assert independent_integration("x") is None  # too little text
+    v = independent_integration("the quick brown fox jumps over the lazy dog " * 8)
+    assert v is not None and 0.0 <= v <= 1.0
+
+
+def test_loop_records_two_camera_phi_in_summary():
+    loop = ContinuousLearningLoop(MockTarget(), max_steps=12)
+    summary = loop.run()
+    assert "status" in summary.phi_discrimination  # the corroboration verdict is reported
+
+
+# ---- #1 pilot-probe (navigate strategy) --------------------------------------------------------
+
+def test_pilot_probe_returns_recommendation():
+    r = pilot_probe(MockTarget(), steps=10)
+    assert "recommendation" in r and "converged" in r and "phi_slope" in r
+    assert r["phi_end"] >= r["phi_start"]  # mock Φ climbs toward the attractor
+
+
+# ---- #3 pre-registration verdict logic ---------------------------------------------------------
+
+def _hist(phi, regime, n=10, intervention="wake"):
+    return [StepRecord(step=i, intervention=intervention, phi=phi, kappa=64.0, regime=regime,
+                       basin_distance=0.0, delta_phi=0.0, text="") for i in range(n)]
+
+
+def test_prereg_onset_confirmed():
+    crit = PreRegisteredCriteria(phi_onset=0.70, convergence_var=0.01, min_cycles=0, tail=5)
+    assert crit.evaluate(_hist(0.72, "geometric"))["verdict"] == "ONSET-CONFIRMED"
+
+
+def test_prereg_no_onset():
+    crit = PreRegisteredCriteria(phi_onset=0.70, min_cycles=0)
+    assert crit.evaluate(_hist(0.40, "linear"))["verdict"] == "NO-ONSET"
+
+
+def test_prereg_collapse_guard_discards():
+    crit = PreRegisteredCriteria(phi_onset=0.70, min_cycles=0)
+    # high Φ but spent in breakdown → collapse guard discards regardless of Φ
+    assert crit.evaluate(_hist(0.85, "topological_instability"))["verdict"] == "DISCARDED-COLLAPSE"
