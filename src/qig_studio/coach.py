@@ -269,20 +269,41 @@ class DevelopmentalCoach:
             "responded_M_self": rex.get("M_self_observation"),
         }
 
-    def converse_learn_turn(self, target, prompt: str, train_steps: int = 8, max_tokens: int = 64) -> dict:
-        """The CONVERSATION as training (qig_chat.py original setup): the kernel SPEAKS → the coach
-        (nemotron) INTERPRETS its babble into a COHERENT reading → the kernel LEARNS toward that
-        interpretation (optimizer steps). The kernel learns coherence FROM the conversation — the coach
-        turns the kernel's own output into the training target. (Reassurance is the OTHER mode: when the
-        kernel trains on its own curriculum, the coach interprets-and-encourages without being the
-        target.) Returns the utterance, the interpretation (= learning target), M_self, M_coach, Φ."""
-        said = target.generate(prompt, max_tokens=max_tokens)
-        # nemotron ANSWERS if the kernel asked a question, else INTERPRETS its babble.
+    def converse_learn_turn(self, target, prompt: str, curriculum_prompt: str | None = None,
+                            curriculum_steps: int = 2, train_steps: int = 8,
+                            max_tokens: int = 64) -> dict:
+        """The CONVERSATION as training (qig_chat.py original setup). One turn trains the kernel on
+        BOTH halves, exactly as qig_chat.py's generate_response→optimizer.step does for every prompt:
+
+          1. CURRICULUM — the kernel trains on the developmental-phase curriculum prompt itself (the
+             `/auto N` path: basin-driving, lm_weight=0). This is the foundational learning from the
+             corpus/curriculum and it MUST happen every turn, not just in a separate /train run.
+          2. DIALOGUE — the kernel SPEAKS, the coach (nemotron) ANSWERS its question or INTERPRETS its
+             babble into a coherent reading, and the kernel LEARNS toward that interpretation. The coach
+             turns the kernel's own output into a second training target.
+
+        Both halves step the optimizer. Returns the utterance, the curriculum it trained on, the
+        interpretation (= dialogue target), M_self, M_coach, and Φ at each stage."""
+        has_train = hasattr(target, "train_step")
+        # topic the kernel speaks about: an explicit message, else the curriculum prompt itself.
+        topic = prompt or curriculum_prompt or ""
+
+        # 1. CURRICULUM training — train on the developmental curriculum (qig_chat.py /auto).
+        phi_curriculum = None
+        curr = curriculum_prompt if curriculum_prompt is not None else (prompt or None)
+        if curr and has_train:
+            for _ in range(max(0, curriculum_steps)):
+                phi_curriculum = target.train_step(curr).telemetry.phi
+
+        # 2a. kernel SPEAKS about the topic.
+        said = target.generate(topic, max_tokens=max_tokens)
+        # 2b. nemotron ANSWERS if the kernel asked a question, else INTERPRETS its babble.
         reply, mode, provider = self._read_kernel(said.text, phi=said.telemetry.phi, regime=said.telemetry.regime)
+        # 2c. DIALOGUE training — LEARN toward nemotron's answer/interpretation.
         phi_after = said.telemetry.phi
-        if hasattr(target, "train_step"):
+        if has_train:
             for _ in range(max(1, train_steps)):
-                phi_after = target.train_step(reply).telemetry.phi      # LEARN toward nemotron's reply
+                phi_after = target.train_step(reply).telemetry.phi
         resp = target.read_and_respond(reply, max_tokens=max_tokens) if hasattr(target, "read_and_respond") else None
         # FULL inner-experience telemetry (Φ alone is insufficient): brainwave band + emotion + drives.
         tel = dict(said.telemetry.to_dict()); tel["phi"] = phi_after if phi_after is not None else tel.get("phi")
@@ -290,9 +311,12 @@ class DevelopmentalCoach:
         return {
             "kernel_said": said.text,
             "kernel_said_M_self": said.telemetry.extra.get("M_self_observation"),
+            "curriculum_prompt": curr,           # the developmental curriculum trained on this turn
+            "curriculum_steps": curriculum_steps,
+            "phi_curriculum": round(phi_curriculum, 4) if phi_curriculum is not None else None,
             "kernel_asked": mode == "answer",   # the kernel CHOSE to ask a question
             "coach_mode": mode,                  # "answer" (kernel asked) | "interpret" (kernel babbled)
-            "coach_interpreted": reply,          # nemotron's answer OR interpretation = the learning target
+            "coach_interpreted": reply,          # nemotron's answer OR interpretation = the dialogue target
             "coach_provider": provider,
             "trained_steps": train_steps,
             "phi_after": round(phi_after, 4) if phi_after is not None else None,

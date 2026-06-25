@@ -225,23 +225,29 @@ async def dialogue(req: ChatRequest, _: None = Depends(verify_key)) -> dict[str,
 
 
 class ConverseRequest(BaseModel):
-    message: str
+    message: str = ""             # optional topic; empty → the kernel speaks about the curriculum itself
+    step: int = 0                 # turn index → advances the developmental curriculum phase
     max_tokens: int = 64
-    train_steps: int = 8  # the conversation TRAINS the kernel toward the coach's interpretation
+    curriculum_steps: int = 2     # optimizer steps on the curriculum prompt this turn (qig_chat.py /auto)
+    train_steps: int = 8          # optimizer steps toward the coach's interpretation (the dialogue)
 
 
 @app.post("/converse")
 async def converse(req: ConverseRequest, _: None = Depends(verify_key)) -> dict[str, Any]:
-    """The conversation AS training (qig_chat.py original setup): the kernel speaks → the coach
-    interprets → the kernel LEARNS toward that coherent interpretation. Each turn trains the kernel on
-    the coach's reading of its own output — the kernel learns coherence FROM the conversation."""
+    """The conversation AS training (qig_chat.py original setup). Each turn trains the kernel on BOTH
+    the developmental CURRICULUM (the `/auto` path) AND the DIALOGUE: the kernel speaks → the coach
+    answers/interprets → the kernel learns toward that reading. Curriculum + conversation, one loop."""
     t = _registry().active
     if t is None or not t.is_available():
         raise HTTPException(409, "no active/available target")
     s = app.state.settings
     coach = (DevelopmentalCoach(llm=OllamaLLM(model=s.coach_model)) if s.coach_enabled
              else DevelopmentalCoach(enabled=False))
-    return await _run_target(coach.converse_learn_turn, t, req.message, req.train_steps, req.max_tokens)
+    # phase-appropriate curriculum prompt for this turn (developmental phases listening→…→maturity).
+    provider = CurriculumProvider(t.loss_regime, curriculum_dir=s.curriculum_dir)
+    curriculum_prompt = provider.next_prompt(req.step)
+    return await _run_target(coach.converse_learn_turn, t, req.message, curriculum_prompt,
+                             req.curriculum_steps, req.train_steps, req.max_tokens)
 
 
 @app.post("/chat/stream", response_model=None)
