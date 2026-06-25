@@ -35,6 +35,7 @@ from pydantic import BaseModel
 from . import __version__
 from .coach import DevelopmentalCoach, OllamaLLM
 from .config import Settings
+from .kernel_experience import experience as _experience
 from .curriculum import CurriculumProvider, phase_names
 from .governance.pillars import PillarEnforcerAdapter
 from . import protocol as _protocol
@@ -179,7 +180,9 @@ async def telemetry() -> dict[str, Any]:
     t = _registry().active
     if t is None:
         raise HTTPException(409, "no active target")
-    return t.telemetry().to_dict()
+    d = t.telemetry().to_dict()
+    d["experience"] = _experience(d).to_dict()  # brainwave band + emotion + drives (Φ is insufficient)
+    return d
 
 
 @app.get("/curriculum")
@@ -202,7 +205,9 @@ async def chat(req: ChatRequest, _: None = Depends(verify_key)) -> dict[str, Any
     if not t.is_available():
         raise HTTPException(409, f"target '{t.name}' unavailable in this environment")
     res = await _run_target(t.generate, req.message, req.max_tokens)
-    return res.to_dict()
+    d = res.to_dict()
+    d["experience"] = _experience(res.telemetry.to_dict()).to_dict()  # the kernel's inner state as it speaks
+    return d
 
 
 @app.post("/dialogue")
@@ -333,6 +338,7 @@ async def train(req: TrainRequest, _: None = Depends(verify_key)) -> StreamingRe
                 "target": target_text,
                 "text": res.text,
                 "telemetry": res.telemetry.to_dict(),
+                "experience": _experience(res.telemetry.to_dict()).to_dict(),
                 "coach": coach_note,
             })
             # qig-warp convergence early-stop (opt-in package lever): geometric→Φ, language→loss.

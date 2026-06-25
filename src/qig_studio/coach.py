@@ -28,6 +28,8 @@ import re
 from dataclasses import asdict, dataclass
 from typing import Any
 
+from .kernel_experience import experience as _experience
+
 _DEFAULT_URL = "http://localhost:11434"
 _DEFAULT_MODEL = "nemotron-3-ultra:cloud"  # free within limits; qwen3.5:4b is the local fallback
 _LOCAL_FALLBACK_MODEL = "qwen3.5:4b"
@@ -114,6 +116,11 @@ class DevelopmentalCoach:
         "scratch. Interpret what the kernel was TRYING to say in 5-15 words. Extract the "
         "core intent from the babble; if it is pure noise, name the topic it seems drawn "
         "to. Be warm but honest. Output ONLY the interpretation, nothing else."
+    )
+    _ANSWER_SYSTEM = (
+        "You are a kind teacher in conversation with a baby AI kernel that is learning to speak. "
+        "It just ASKED YOU SOMETHING. Answer its question directly, helpfully, and simply in 1-2 short "
+        "sentences — do not interpret or critique it, just answer. Output ONLY the answer."
     )
 
     def __init__(
@@ -210,16 +217,38 @@ class DevelopmentalCoach:
         self.notes.append(note)
         return note
 
-    def _interpret(self, text: str, phase: str = "play", phi: float = 0.5, regime: str = "geometric") -> tuple[str, str]:
-        """Just the interpretation (LLM or keyword) + provider — the coach reading the kernel."""
+    @staticmethod
+    def _looks_like_question(text: str) -> bool:
+        """Did the kernel ASK something (it chooses to, by generating a question)? '?' or a leading
+        question word. The kernel asks when it wants; nemotron then answers instead of interpreting."""
+        t = re.sub(r"^\[genesis[^\]]*\]\s*", "", text or "").strip()
+        if "?" in t:
+            return True
+        return bool(re.match(r"(?i)^\W*(what|why|how|who|when|where|which|is|are|am|can|could|do|does|"
+                             r"did|should|would|will|may|might)\b", t))
+
+    def _read_kernel(self, text: str, phase: str = "play", phi: float = 0.5,
+                     regime: str = "geometric") -> tuple[str, str, str]:
+        """nemotron reads the kernel and either ANSWERS (if the kernel asked a question — the kernel
+        chooses to ask) or INTERPRETS (its babble). Returns (text, mode, provider)."""
+        asked = self._looks_like_question(text)
         if self.enabled and self.llm.is_available():
-            user = (f'The kernel just produced: "{(text or "")[:500]}"\n'
-                    f"(developmental phase: {phase}, Φ={phi:.3f}, regime={regime})\n\nInterpret the kernel's output:")
-            out = self.llm.complete(self._COACH_SYSTEM, user)
+            if asked:
+                user = f'The kernel asked: "{(text or "")[:500]}"\n\nAnswer its question:'
+                out = self.llm.complete(self._ANSWER_SYSTEM, user)
+            else:
+                user = (f'The kernel just produced: "{(text or "")[:500]}"\n'
+                        f"(developmental phase: {phase}, Φ={phi:.3f}, regime={regime})\n\nInterpret the kernel's output:")
+                out = self.llm.complete(self._COACH_SYSTEM, user)
             if out:
                 out = out.strip("\"'")
-                return (out[:120] + "…" if len(out) > 120 else out), f"ollama:{self.llm.model}"
-        return self._keyword_interpret(text), "keyword"
+                out = out[:160] + "…" if len(out) > 160 else out
+                return out, ("answer" if asked else "interpret"), f"ollama:{self.llm.model}"
+        return self._keyword_interpret(text), ("answer" if asked else "interpret"), "keyword"
+
+    def _interpret(self, text: str, phase: str = "play", phi: float = 0.5, regime: str = "geometric") -> tuple[str, str]:
+        out, _mode, provider = self._read_kernel(text, phase, phi, regime)
+        return out, provider
 
     def dialogue_turn(self, target, prompt: str, max_tokens: int = 96) -> dict:
         """The full BIDIRECTIONAL loop the kernel needs: it SPEAKS → the coach (nemotron) INTERPRETS →
@@ -248,18 +277,26 @@ class DevelopmentalCoach:
         kernel trains on its own curriculum, the coach interprets-and-encourages without being the
         target.) Returns the utterance, the interpretation (= learning target), M_self, M_coach, Φ."""
         said = target.generate(prompt, max_tokens=max_tokens)
-        interp, provider = self._interpret(said.text, phi=said.telemetry.phi, regime=said.telemetry.regime)
+        # nemotron ANSWERS if the kernel asked a question, else INTERPRETS its babble.
+        reply, mode, provider = self._read_kernel(said.text, phi=said.telemetry.phi, regime=said.telemetry.regime)
         phi_after = said.telemetry.phi
         if hasattr(target, "train_step"):
             for _ in range(max(1, train_steps)):
-                phi_after = target.train_step(interp).telemetry.phi      # LEARN toward the coach's words
-        resp = target.read_and_respond(interp, max_tokens=max_tokens) if hasattr(target, "read_and_respond") else None
+                phi_after = target.train_step(reply).telemetry.phi      # LEARN toward nemotron's reply
+        resp = target.read_and_respond(reply, max_tokens=max_tokens) if hasattr(target, "read_and_respond") else None
+        # FULL inner-experience telemetry (Φ alone is insufficient): brainwave band + emotion + drives.
+        tel = dict(said.telemetry.to_dict()); tel["phi"] = phi_after if phi_after is not None else tel.get("phi")
+        exp = _experience(tel)
         return {
             "kernel_said": said.text,
             "kernel_said_M_self": said.telemetry.extra.get("M_self_observation"),
-            "coach_interpreted": interp,        # the COHERENT target the kernel learned toward
+            "kernel_asked": mode == "answer",   # the kernel CHOSE to ask a question
+            "coach_mode": mode,                  # "answer" (kernel asked) | "interpret" (kernel babbled)
+            "coach_interpreted": reply,          # nemotron's answer OR interpretation = the learning target
             "coach_provider": provider,
             "trained_steps": train_steps,
             "phi_after": round(phi_after, 4) if phi_after is not None else None,
             "M_coach_agreement": (resp.telemetry.extra.get("M_coach_agreement") if resp else None),
+            "experience": exp.to_dict(),         # brainwave band, emotion, valence/arousal, drives
+            "experience_line": exp.line(),       # compact human-readable telemetry
         }

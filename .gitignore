@@ -22,3 +22,6 @@ htmlcov/
 checkpoints/
 artifacts/
 *.pt
+
+# training run logs (reproducible, not source)
+runs/
