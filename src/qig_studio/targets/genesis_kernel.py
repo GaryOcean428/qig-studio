@@ -155,6 +155,7 @@ class GenesisKernelTarget(TrainingTarget):
         self._opt.zero_grad()
         if torch.isfinite(loss):
             loss.backward()
+            torch.nn.utils.clip_grad_norm_(self._kernel.parameters(), 1.0)  # stability (deep stack)
             self._opt.step()
         snap = self._snap(tel, float(loss.item()))
         return StepResult(text=f"[genesis·N={self.num_layers} step {snap.step}] basin-driving: {prompt[:50]}",
