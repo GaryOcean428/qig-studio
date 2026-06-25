@@ -15,7 +15,11 @@ from .learning import (
     ContinuousLearningLoop,
     Intervention,
     LoopSummary,
+    PhiDiscriminationGate,
+    PreRegisteredCriteria,
     StepRecord,
+    independent_integration,
+    pilot_probe,
 )
 
 __version__ = "0.1.0"
@@ -27,4 +31,8 @@ __all__ = [
     "Intervention",
     "StepRecord",
     "LoopSummary",
+    "PhiDiscriminationGate",
+    "PreRegisteredCriteria",
+    "pilot_probe",
+    "independent_integration",
 ]
