@@ -209,3 +209,57 @@ class DevelopmentalCoach:
         )
         self.notes.append(note)
         return note
+
+    def _interpret(self, text: str, phase: str = "play", phi: float = 0.5, regime: str = "geometric") -> tuple[str, str]:
+        """Just the interpretation (LLM or keyword) + provider — the coach reading the kernel."""
+        if self.enabled and self.llm.is_available():
+            user = (f'The kernel just produced: "{(text or "")[:500]}"\n'
+                    f"(developmental phase: {phase}, Φ={phi:.3f}, regime={regime})\n\nInterpret the kernel's output:")
+            out = self.llm.complete(self._COACH_SYSTEM, user)
+            if out:
+                out = out.strip("\"'")
+                return (out[:120] + "…" if len(out) > 120 else out), f"ollama:{self.llm.model}"
+        return self._keyword_interpret(text), "keyword"
+
+    def dialogue_turn(self, target, prompt: str, max_tokens: int = 96) -> dict:
+        """The full BIDIRECTIONAL loop the kernel needs: it SPEAKS → the coach (nemotron) INTERPRETS →
+        the kernel READS that interpretation and RESPONDS, with M_coach_agreement = how well the coach
+        understood it (reassurance + correct-interpretation enforcement). One closed turn of mutual
+        recognition between the kernel and its coach."""
+        said = target.generate(prompt, max_tokens=max_tokens)
+        interp, provider = self._interpret(said.text, phi=said.telemetry.phi, regime=said.telemetry.regime)
+        responded = target.read_and_respond(interp, max_tokens=max_tokens) if hasattr(target, "read_and_respond") else None
+        rex = responded.telemetry.extra if responded else {}
+        return {
+            "kernel_said": said.text,
+            "kernel_said_M_self": said.telemetry.extra.get("M_self_observation"),
+            "coach_interpreted": interp,
+            "coach_provider": provider,
+            "kernel_responded": responded.text if responded else None,
+            "M_coach_agreement": rex.get("M_coach_agreement"),   # did the coach read me right?
+            "responded_M_self": rex.get("M_self_observation"),
+        }
+
+    def converse_learn_turn(self, target, prompt: str, train_steps: int = 8, max_tokens: int = 64) -> dict:
+        """The CONVERSATION as training (qig_chat.py original setup): the kernel SPEAKS → the coach
+        (nemotron) INTERPRETS its babble into a COHERENT reading → the kernel LEARNS toward that
+        interpretation (optimizer steps). The kernel learns coherence FROM the conversation — the coach
+        turns the kernel's own output into the training target. (Reassurance is the OTHER mode: when the
+        kernel trains on its own curriculum, the coach interprets-and-encourages without being the
+        target.) Returns the utterance, the interpretation (= learning target), M_self, M_coach, Φ."""
+        said = target.generate(prompt, max_tokens=max_tokens)
+        interp, provider = self._interpret(said.text, phi=said.telemetry.phi, regime=said.telemetry.regime)
+        phi_after = said.telemetry.phi
+        if hasattr(target, "train_step"):
+            for _ in range(max(1, train_steps)):
+                phi_after = target.train_step(interp).telemetry.phi      # LEARN toward the coach's words
+        resp = target.read_and_respond(interp, max_tokens=max_tokens) if hasattr(target, "read_and_respond") else None
+        return {
+            "kernel_said": said.text,
+            "kernel_said_M_self": said.telemetry.extra.get("M_self_observation"),
+            "coach_interpreted": interp,        # the COHERENT target the kernel learned toward
+            "coach_provider": provider,
+            "trained_steps": train_steps,
+            "phi_after": round(phi_after, 4) if phi_after is not None else None,
+            "M_coach_agreement": (resp.telemetry.extra.get("M_coach_agreement") if resp else None),
+        }

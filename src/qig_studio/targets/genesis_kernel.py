@@ -81,6 +81,7 @@ class GenesisKernelTarget(TrainingTarget):
         self._kernel = None
         self._opt = None
         self._step = 0
+        self._last_gen_basin = None  # WHAT IT MEANT (last output basin) — for coach-agreement recognition
         self._last = TelemetrySnapshot(regime="unknown", extra={"target": "genesis", "num_layers": num_layers})
 
     def is_available(self) -> bool:
@@ -231,6 +232,9 @@ class GenesisKernelTarget(TrainingTarget):
         else:
             text = bytes(b for b in out_bytes if 9 <= b < 256).decode("utf-8", errors="replace")
         m = self._self_observe(out_bytes, gen_basins)
+        if gen_basins:  # remember WHAT IT MEANT (mean output basin) for coach-agreement (read_and_respond)
+            gm = torch.stack(gen_basins).mean(0)
+            self._last_gen_basin = (gm / gm.sum()).detach()
         snap = self._snap(last_tel, None)
         snap.extra.update({
             "M_self_observation": round(m, 3),                    # observes ITSELF
@@ -239,6 +243,39 @@ class GenesisKernelTarget(TrainingTarget):
             "mean_token_confidence": round(sum(out_probs) / max(1, len(out_probs)), 3),  # observes its OUTPUT
         })
         return StepResult(text=f"[genesis·N={self.num_layers}{' ⏹' if chose_to_stop else ''}] {text}", telemetry=snap)
+
+    def read_and_respond(self, coach_text: str, max_tokens: int = 128) -> StepResult:
+        """The kernel READS the coach's interpretation and RESPONDS — closing the loop (intersubjective
+        recognition, brain-doc §). It coordizes the coach's words, forwards them to form its OWN
+        representation of what the coach said, then measures M_coach_agreement = Fisher-Rao recognition
+        between WHAT IT MEANT (its last output basin) and WHAT THE COACH UNDERSTOOD (this reading):
+        HIGH = the coach interpreted it correctly (mutual understanding / reassurance); LOW = a
+        mismatch the response can push against (enforcing correct interpretation). It then generates a
+        reply conditioned on the coach's words — it HEARS the coach and answers."""
+        self.ensure_loaded()
+        import math
+
+        import torch
+        import torch.nn.functional as F
+        from qig_core.geometry_simplex import fisher_rao_distance_simplex
+
+        # READ: the kernel's mean output distribution while taking in the coach's interpretation.
+        ids, coords = self._encode(coach_text or " ")
+        with torch.no_grad():
+            logits, _ = self._kernel(ids, return_telemetry=True, coords=coords)
+            coach_read = F.softmax(logits[0], dim=-1).mean(0)
+            coach_read = coach_read / coach_read.sum()
+        m_coach = None
+        if self._last_gen_basin is not None:
+            d = float(fisher_rao_distance_simplex(self._last_gen_basin[None], coach_read[None]).item())
+            m_coach = max(0.0, 1.0 - d / (math.pi / 2))           # 1 = the coach read me correctly
+        # RESPOND: generate conditioned on the coach's words (the kernel answers the coach).
+        resp = self.generate(coach_text, max_tokens=max_tokens)
+        resp.telemetry.extra.update({
+            "M_coach_agreement": round(m_coach, 3) if m_coach is not None else None,
+            "read_coach": (coach_text or "")[:100],
+        })
+        return resp
 
     def train_step(self, prompt: str, max_tokens: int = 64, target_text: str | None = None) -> StepResult:
         # WAKE: one Fisher-salience step. Geometric → next-byte CE on the basin-driving prompt

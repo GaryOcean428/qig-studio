@@ -205,6 +205,40 @@ async def chat(req: ChatRequest, _: None = Depends(verify_key)) -> dict[str, Any
     return res.to_dict()
 
 
+@app.post("/dialogue")
+async def dialogue(req: ChatRequest, _: None = Depends(verify_key)) -> dict[str, Any]:
+    """One BIDIRECTIONAL turn: the kernel SPEAKS → the coach (nemotron) INTERPRETS → the kernel READS
+    that interpretation and RESPONDS, reporting M_self (it observes its OWN generation) and M_coach
+    (it observes the coach — how well the coach understood it). Closes the recognition loop."""
+    t = _registry().active
+    if t is None or not t.is_available():
+        raise HTTPException(409, "no active/available target")
+    s = app.state.settings
+    coach = (DevelopmentalCoach(llm=OllamaLLM(model=s.coach_model)) if s.coach_enabled
+             else DevelopmentalCoach(enabled=False))
+    return await _run_target(coach.dialogue_turn, t, req.message, req.max_tokens)
+
+
+class ConverseRequest(BaseModel):
+    message: str
+    max_tokens: int = 64
+    train_steps: int = 8  # the conversation TRAINS the kernel toward the coach's interpretation
+
+
+@app.post("/converse")
+async def converse(req: ConverseRequest, _: None = Depends(verify_key)) -> dict[str, Any]:
+    """The conversation AS training (qig_chat.py original setup): the kernel speaks → the coach
+    interprets → the kernel LEARNS toward that coherent interpretation. Each turn trains the kernel on
+    the coach's reading of its own output — the kernel learns coherence FROM the conversation."""
+    t = _registry().active
+    if t is None or not t.is_available():
+        raise HTTPException(409, "no active/available target")
+    s = app.state.settings
+    coach = (DevelopmentalCoach(llm=OllamaLLM(model=s.coach_model)) if s.coach_enabled
+             else DevelopmentalCoach(enabled=False))
+    return await _run_target(coach.converse_learn_turn, t, req.message, req.train_steps, req.max_tokens)
+
+
 @app.post("/chat/stream", response_model=None)
 async def chat_stream(req: ChatRequest, _: None = Depends(verify_key)) -> StreamingResponse:
     t = _registry().active
