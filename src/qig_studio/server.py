@@ -33,6 +33,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from . import __version__
+from .coach import DevelopmentalCoach, OllamaLLM
 from .config import Settings
 from .curriculum import CurriculumProvider, phase_names
 from .governance.pillars import PillarEnforcerAdapter
@@ -84,6 +85,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         default_target=settings.default_target,
         kernel_checkpoint=settings.kernel_checkpoint,
         constellation_checkpoint=settings.constellation_checkpoint,
+        genesis_num_layers=settings.genesis_num_layers,
+        genesis_coordizer_checkpoint=settings.genesis_coordizer_checkpoint,
         device=settings.device,
     )
     app.state.pillars = PillarEnforcerAdapter()
@@ -237,6 +240,12 @@ async def train(req: TrainRequest, _: None = Depends(verify_key)) -> StreamingRe
             return
         provider = CurriculumProvider(t.loss_regime, curriculum_dir=app.state.settings.curriculum_dir)
         is_language = t.loss_regime == LossRegime.LANGUAGE
+        # Warm developmental coach (geometric path only): interprets the kernel, encourages, and
+        # OFFERS a push on stagnation (autonomy-preserving). None-safe → keyword if no Ollama.
+        s = app.state.settings
+        coach = (DevelopmentalCoach(llm=OllamaLLM(model=s.coach_model), cadence=s.coach_cadence)
+                 if (s.coach_enabled and not is_language) else None)
+        dphi_hist: list[float] = []
         # P0-F3: a LANGUAGE "step" triggers a remote async training job (e.g. Modal A100),
         # NOT an SGD step — cap to 1 and require explicit confirmation before spawning.
         if is_language:
@@ -252,6 +261,8 @@ async def train(req: TrainRequest, _: None = Depends(verify_key)) -> StreamingRe
             "loss_regime": t.loss_regime.value,
             "curriculum": provider.mode(),
             "steps": req.steps,
+            "coach": (coach.provider if coach is not None else None),
+            "input": ((t.architecture() or {}).get("input") if hasattr(t, "architecture") else None),
             "early_stop": req.early_stop and _WARP_AVAILABLE,
             "early_stop_min_steps": (req.early_stop_window + 1) if (req.early_stop and _WARP_AVAILABLE) else None,
         })
@@ -269,14 +280,26 @@ async def train(req: TrainRequest, _: None = Depends(verify_key)) -> StreamingRe
             except Exception as exc:
                 yield _sse({"type": "error", "error": str(exc), "step": step})
                 return
+            phase = "paired" if is_language else CurriculumProvider.phase_for(step)
+            coach_note = None
+            if coach is not None:
+                dphi_hist.append(abs(res.telemetry.delta_phi))
+                stagnating = len(dphi_hist) >= 8 and all(d < 5e-3 for d in dphi_hist[-8:])
+                note = coach.observe(
+                    step=step, text=res.text, phi=res.telemetry.phi, kappa=res.telemetry.kappa,
+                    regime=res.telemetry.regime, delta_phi=res.telemetry.delta_phi,
+                    phase=phase, stagnating=stagnating,
+                )
+                coach_note = note.to_dict() if note is not None else None
             yield _sse({
                 "type": "step",
                 "step": step,
-                "phase": ("paired" if is_language else CurriculumProvider.phase_for(step)),
+                "phase": phase,
                 "prompt": prompt,
                 "target": target_text,
                 "text": res.text,
                 "telemetry": res.telemetry.to_dict(),
+                "coach": coach_note,
             })
             # qig-warp convergence early-stop (opt-in package lever): geometric→Φ, language→loss.
             # COR-2: never early-stop on an UNMEASURED metric — skip the append when None

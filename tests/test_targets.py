@@ -84,6 +84,58 @@ def test_genesis_target_is_geometric_and_none_safe():
     assert t.is_available() in (True, False)
 
 
+def test_genesis_coords_path_wires_coordizer():
+    """Coords path: a trained FisherCoordizer drives the kernel's enable_coords/CoordAdapter.
+    Gated on the heavy stack (torch + qig_coordizer) — runs in the kernel venv, skipped in the
+    light app shell."""
+    import pytest
+
+    pytest.importorskip("torch")
+    pytest.importorskip("qig_coordizer")
+    pytest.importorskip("qigkernels")
+    import numpy as np
+    from qig_coordizer import FisherCoordizer
+
+    from qig_studio.targets.genesis_kernel import GenesisKernelTarget
+
+    cz = FisherCoordizer(target_vocab_size=300)
+    cz.train(b"the geometry is the truth; patterns flow through basins integrating space. " * 200,
+             context_window=3, min_pair_count=2, verbose=False)
+
+    t = GenesisKernelTarget(num_layers=2, hidden_dim=64, coordizer=cz)
+    t.ensure_loaded()
+    # coords path took: kernel built with enable_coords, vocab from the coordizer, coord_dim=64
+    assert t._kernel.enable_coords is True
+    assert t.vocab_size == len(cz.vocab)
+    assert t.coord_dim == 64
+    assert t.architecture()["input"] == "coords"
+
+    # train_step runs with coords, CE finite (no arccos NaN through the CoordAdapter path)
+    r = t.train_step("patterns flow through basins")
+    assert r.telemetry.loss is not None and np.isfinite(r.telemetry.loss)
+    assert np.isfinite(r.telemetry.phi)
+
+    # speak: decode goes through the coordizer; self-observation + own-output telemetry present
+    g = t.generate("hello", max_tokens=24)
+    assert np.isfinite(g.telemetry.phi)
+    for k in ("M_self_observation", "chose_to_stop", "generated_len", "mean_token_confidence"):
+        assert k in g.telemetry.extra
+
+
+def test_genesis_byte_path_unchanged_when_no_coordizer():
+    import pytest
+
+    pytest.importorskip("torch")
+    pytest.importorskip("qigkernels")
+    from qig_studio.targets.genesis_kernel import GenesisKernelTarget
+
+    t = GenesisKernelTarget(num_layers=2, hidden_dim=64)
+    t.ensure_loaded()
+    assert t._kernel.enable_coords is False
+    assert t.architecture()["input"] == "bytes"
+    assert t.vocab_size == 256
+
+
 def test_qwen_targets_are_language_and_none_safe():
     from qig_studio.targets import QwenLocalTarget, QwenModalTarget
 
