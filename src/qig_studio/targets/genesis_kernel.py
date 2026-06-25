@@ -55,8 +55,10 @@ class GenesisKernelTarget(TrainingTarget):
         seed: int = 0,
         lr: float = 1e-3,
         device: str | None = None,
+        locality_radius: int | None = None,
     ) -> None:
         self.num_layers = num_layers
+        self.locality_radius = locality_radius
         self.hidden_dim = hidden_dim
         self.num_heads = num_heads
         self.ffn_dim = ffn_dim
@@ -88,6 +90,7 @@ class GenesisKernelTarget(TrainingTarget):
             ffn_dim=self.ffn_dim,
             min_recursion_depth=3,
             use_tacking=True,
+            locality_radius=self.locality_radius,  # None = global; set = windowed-local (v_B budget)
         )
         dev = self._device or ("cuda" if torch.cuda.is_available() else "cpu")
         self._kernel.to(dev)
@@ -158,11 +161,12 @@ class GenesisKernelTarget(TrainingTarget):
                           telemetry=snap)
 
     def architecture(self) -> dict:
-        # qigkernels.QIGLayer uses GLOBAL metric attention (no locality window), so per the v_B
-        # locality budget this kernel is physically NON-LOCAL (information crosses the full sequence in
-        # one layer) — unlike the qfi_attention path, which is windowed-local. Surfaced, not "fixed".
-        return {"attention": "global", "locality_radius": None, "num_layers": self.num_layers,
-                "recursion_depth": 3, "seq_len": _MAX_BYTES}
+        # qigkernels.QIGLayer is GLOBAL metric attention by default → v_B-NON-LOCAL; pass
+        # locality_radius to make it windowed-local (respects the finite-propagation budget). The
+        # locality_budget check reads this; local-vs-global is the EXP-LOCAL-ATTN A/B.
+        local = self.locality_radius is not None
+        return {"attention": "local" if local else "global", "locality_radius": self.locality_radius,
+                "num_layers": self.num_layers, "recursion_depth": 3, "seq_len": _MAX_BYTES}
 
     def supports_protocol(self) -> bool:
         return True

@@ -243,3 +243,17 @@ def test_loop_summary_reports_locality_for_genesis_arch():
     # MockTarget reports no architecture → locality is {} (None-safe), loop still runs
     s = ContinuousLearningLoop(MockTarget(), max_steps=2).run()
     assert s.locality == {}
+
+
+def test_genesis_architecture_local_vs_global():
+    # architecture() is a pure dict (no torch) → testable in the light shell.
+    from qig_studio.targets.genesis_kernel import GenesisKernelTarget
+
+    g_global = GenesisKernelTarget(num_layers=4)  # default = global → NON-LOCAL
+    assert g_global.architecture()["attention"] == "global"
+    assert locality_budget(g_global.architecture())["is_local"] is False
+
+    g_local = GenesisKernelTarget(num_layers=2, locality_radius=4)  # opt-in windowed-local
+    arch = g_local.architecture()
+    assert arch["attention"] == "local" and arch["locality_radius"] == 4
+    assert locality_budget(arch)["is_local"] is True  # reach 4×2×3=24 < seq_len 256
