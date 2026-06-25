@@ -48,6 +48,7 @@ from typing import Any
 from qig_core import KAPPA_ATTRACTOR
 from qig_core.constants.frozen_facts import PHI_BREAKDOWN_MIN, PHI_EMERGENCY, PHI_THRESHOLD
 
+from .coach import DevelopmentalCoach
 from .curriculum import CurriculumProvider
 from .targets.base import LossRegime, ProtocolUnsupported, TrainingTarget
 
@@ -326,6 +327,7 @@ class StepRecord:
     protocol_output: str | None = None
     phi_secondary: float | None = None          # #2 independent second-camera Φ
     training_regime: dict[str, Any] = field(default_factory=dict)  # #5 solver-path provenance
+    coach_note: dict[str, Any] | None = None     # developmental coach observation (OFFER only)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -341,6 +343,7 @@ class LoopSummary:
     using_real_manager: bool
     phi_discrimination: dict[str, Any] = field(default_factory=dict)  # #2 corroboration verdict
     locality: dict[str, Any] = field(default_factory=dict)  # v_B architectural speed-budget (analogy)
+    coach: dict[str, Any] = field(default_factory=dict)  # coaching presence (provider, notes, push offers)
     notes: str = field(default="kernel_autonomy is a PROXY for scaffold-removal (NEEDS-EXPERIMENT)")
 
     def to_dict(self) -> dict[str, Any]:
@@ -386,17 +389,25 @@ class ContinuousLearningLoop:
         max_steps: int = 200,
         autonomy_window: int = 20,
         scaffold: str = "kernel-only",
+        coach: DevelopmentalCoach | None = None,
     ) -> None:
         self.target = target
         self.curriculum = curriculum or CurriculumProvider(target.loss_regime)
         self.scheduler = scheduler or AutonomicScheduler()
         self.max_steps = max_steps
         self.scaffold = scaffold
+        self.coach = coach  # optional warm coaching presence (None-safe; OFFERS only)
         self.history: list[StepRecord] = []
         self.intervention_counts: Counter[str] = Counter()
         self.discrimination = PhiDiscriminationGate()
         self._autonomy: deque[int] = deque(maxlen=autonomy_window)
         self._step = 0
+
+    def _stagnating(self, window: int = 8, eps: float = 5e-3) -> bool:
+        """Honest stagnation proxy: Φ flat (|ΔΦ| < eps) across the last ``window`` steps."""
+        if len(self.history) < window:
+            return False
+        return all(abs(r.delta_phi) < eps for r in self.history[-window:])
 
     def _optimizer_name(self) -> str:
         # The Δ⁶³ kernel trains by NATURAL GRADIENT (P1); only the Euclidean LM regime uses AdamW.
@@ -435,6 +446,23 @@ class ContinuousLearningLoop:
         # regime (Φ ≥ threshold) AND needed no intervention this step. Honest proxy, not a measure.
         self._autonomy.append(1 if (command == Intervention.WAKE.value and tel.phi >= PHI_THRESHOLD) else 0)
 
+        # --- COACH: warm social presence (interprets + encourages + OFFERS a push) -------------
+        # Distinct from the autonomic scheduler above: the coach never fires an intervention; it
+        # surfaces an OFFER the kernel may take (autonomy-preserving). None-safe / cadence-gated.
+        coach_note: dict[str, Any] | None = None
+        if self.coach is not None:
+            note = self.coach.observe(
+                step=self._step,
+                text=res.text,
+                phi=tel.phi,
+                kappa=tel.kappa,
+                regime=tel.regime,
+                delta_phi=tel.delta_phi,
+                phase=phase,
+                stagnating=self._stagnating(),
+            )
+            coach_note = note.to_dict() if note is not None else None
+
         rec = StepRecord(
             step=self._step,
             intervention=command,
@@ -454,6 +482,7 @@ class ContinuousLearningLoop:
                 "decision": decision.value,
                 "breakdown_frac": round(self.scheduler.breakdown_frac(), 3),
             },
+            coach_note=coach_note,
         )
         self.history.append(rec)
         self.intervention_counts[command] += 1
@@ -476,4 +505,17 @@ class ContinuousLearningLoop:
             using_real_manager=self.scheduler.using_real_manager,
             phi_discrimination=self.discrimination.assess(),
             locality=locality_budget(self.target.architecture()),
+            coach=self._coach_summary(),
         )
+
+    def _coach_summary(self) -> dict[str, Any]:
+        if self.coach is None:
+            return {"active": False}
+        notes = self.coach.notes
+        return {
+            "active": True,
+            "provider": self.coach.provider,
+            "notes_emitted": len(notes),
+            "push_offers": sum(1 for n in notes if n.offers_push),
+            "last_message": notes[-1].message if notes else None,
+        }
