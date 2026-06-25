@@ -157,6 +157,13 @@ class GenesisKernelTarget(TrainingTarget):
         return StepResult(text=f"[genesis·N={self.num_layers} step {snap.step}] basin-driving: {prompt[:50]}",
                           telemetry=snap)
 
+    def architecture(self) -> dict:
+        # qigkernels.QIGLayer uses GLOBAL metric attention (no locality window), so per the v_B
+        # locality budget this kernel is physically NON-LOCAL (information crosses the full sequence in
+        # one layer) — unlike the qfi_attention path, which is windowed-local. Surfaced, not "fixed".
+        return {"attention": "global", "locality_radius": None, "num_layers": self.num_layers,
+                "recursion_depth": 3, "seq_len": _MAX_BYTES}
+
     def supports_protocol(self) -> bool:
         return True
 

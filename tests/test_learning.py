@@ -15,6 +15,7 @@ from qig_studio.learning import (
     PreRegisteredCriteria,
     StepRecord,
     independent_integration,
+    locality_budget,
     pilot_probe,
 )
 from qig_studio.protocol import COMMANDS_BY_NAME
@@ -211,3 +212,34 @@ def test_prereg_collapse_guard_discards():
     crit = PreRegisteredCriteria(phi_onset=0.70, min_cycles=0)
     # high Φ but spent in breakdown → collapse guard discards regardless of Φ
     assert crit.evaluate(_hist(0.85, "topological_instability"))["verdict"] == "DISCARDED-COLLAPSE"
+
+
+# ---- v_B architectural speed budget (Devin transfer #3 — analogy) ------------------------------
+
+def test_locality_budget_flags_global_attention():
+    # genesis kernel uses GLOBAL attention (locality_radius=None) → physically NON-LOCAL
+    arch = {"attention": "global", "locality_radius": None, "num_layers": 4, "recursion_depth": 3, "seq_len": 256}
+    b = locality_budget(arch)
+    assert b["is_local"] is False and b["attention"] == "global" and "ANALOGY" in b["note"]
+
+
+def test_locality_budget_local_within_budget():
+    # small window, shallow → reach (2×2×3=12) < seq_len 256 → LOCAL (bounded propagation)
+    b = locality_budget({"locality_radius": 2, "num_layers": 2, "recursion_depth": 3, "seq_len": 256})
+    assert b["is_local"] is True and b["effective_reach"] == 12 and b["ratio"] < 1.0
+
+
+def test_locality_budget_local_but_exceeds_sequence():
+    # wide window × many layers → reach ≥ seq_len → effectively global (flagged non-local)
+    b = locality_budget({"locality_radius": 32, "num_layers": 8, "recursion_depth": 3, "seq_len": 64})
+    assert b["is_local"] is False and b["effective_reach"] >= 64
+
+
+def test_locality_budget_none_safe():
+    assert locality_budget(None) == {}  # target reports no architecture → skipped
+
+
+def test_loop_summary_reports_locality_for_genesis_arch():
+    # MockTarget reports no architecture → locality is {} (None-safe), loop still runs
+    s = ContinuousLearningLoop(MockTarget(), max_steps=2).run()
+    assert s.locality == {}

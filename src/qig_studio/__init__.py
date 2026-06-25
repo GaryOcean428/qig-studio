@@ -19,6 +19,7 @@ from .learning import (
     PreRegisteredCriteria,
     StepRecord,
     independent_integration,
+    locality_budget,
     pilot_probe,
 )
 
@@ -35,4 +36,5 @@ __all__ = [
     "PreRegisteredCriteria",
     "pilot_probe",
     "independent_integration",
+    "locality_budget",
 ]

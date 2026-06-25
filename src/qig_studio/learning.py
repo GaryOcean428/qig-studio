@@ -113,6 +113,38 @@ def independent_integration(text: str) -> float | None:
     return max(0.0, min(1.0, 1.0 - ratio))
 
 
+def locality_budget(arch: dict | None, seq_len: int | None = None) -> dict[str, Any]:
+    """v_B ARCHITECTURAL SPEED-BUDGET check (Devin transfer #3) — **CATEGORY-3 ANALOGY, NOT a
+    measurement of v_B≈1.13**. On the lattice, information propagates at a bounded butterfly velocity
+    (finite-speed causality). The architectural analog: per forward pass, information should NOT cross
+    the whole sequence instantly. GLOBAL all-to-all attention does (reach = full sequence in one layer)
+    — the 'superluminal-shaped' case; WINDOWED/local attention bounds the per-pass reach (physical).
+    This FLAGS the design choice — it does NOT claim global attention is wrong for ML. Returns {} when
+    the target doesn't report an architecture (None-safe)."""
+    if not arch:
+        return {}
+    n = seq_len if seq_len is not None else arch.get("seq_len")
+    r = arch.get("locality_radius")
+    layers = int(arch.get("num_layers", 1) or 1)
+    depth = int(arch.get("recursion_depth", 1) or 1)
+    if r is None:  # global all-to-all attention — no finite-propagation budget
+        return {
+            "attention": arch.get("attention", "global"), "is_local": False,
+            "effective_reach": None, "seq_len": n, "ratio": None,
+            "note": ("GLOBAL attention — information crosses the full sequence in ONE layer (v_B-analogy "
+                     "NON-LOCAL; no finite-propagation budget). Windowed/local attention would bound it. "
+                     "ANALOGY only — not a claim that global attention is wrong for ML."),
+        }
+    reach = r * layers * depth  # receptive field upper bound per forward pass
+    is_local = (n is None) or (reach < n)
+    return {
+        "attention": "local", "is_local": bool(is_local), "effective_reach": reach, "seq_len": n,
+        "ratio": (round(reach / n, 3) if n else None),
+        "note": ("v_B-analogy: per-pass reach = locality_radius×num_layers×recursion_depth; is_local = "
+                 "reach < seq_len (bounded propagation). CATEGORY-3 ANALOGY, not a v_B measurement."),
+    }
+
+
 class PhiDiscriminationGate:
     """#2 Two-channel Φ corroboration (FAIL-013 doctrine). Collects (primary, secondary) Φ pairs from
     two INDEPENDENT cameras and reports whether they agree over the trajectory. Corroboration is not
@@ -308,6 +340,7 @@ class LoopSummary:
     kernel_autonomy: float
     using_real_manager: bool
     phi_discrimination: dict[str, Any] = field(default_factory=dict)  # #2 corroboration verdict
+    locality: dict[str, Any] = field(default_factory=dict)  # v_B architectural speed-budget (analogy)
     notes: str = field(default="kernel_autonomy is a PROXY for scaffold-removal (NEEDS-EXPERIMENT)")
 
     def to_dict(self) -> dict[str, Any]:
@@ -442,4 +475,5 @@ class ContinuousLearningLoop:
             kernel_autonomy=autonomy,
             using_real_manager=self.scheduler.using_real_manager,
             phi_discrimination=self.discrimination.assess(),
+            locality=locality_budget(self.target.architecture()),
         )
