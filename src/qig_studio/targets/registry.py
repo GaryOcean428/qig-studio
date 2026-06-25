@@ -39,19 +39,36 @@ class TargetRegistry:
         return self._targets[name]
 
 
+def _load_coordizer(path: str | None):
+    """Load a trained FisherCoordizer for the genesis coords path; None-safe (a missing/broken
+    checkpoint or absent package falls back to the byte path — never crash the app shell)."""
+    if not path:
+        return None
+    try:
+        from qig_coordizer import FisherCoordizer
+
+        return FisherCoordizer.load(path)
+    except Exception as exc:  # noqa: BLE001 — app shell must boot regardless
+        print(f"⚠️  genesis coordizer '{path}' not loaded ({exc}); genesis uses the byte path")
+        return None
+
+
 def default_registry(
     *,
     default_target: str = "mock",
     kernel_checkpoint: str | None = None,
     constellation_checkpoint: str | None = None,
     genesis_num_layers: int = 4,
+    genesis_coordizer_checkpoint: str | None = None,
     device: str | None = None,
 ) -> TargetRegistry:
-    """Build the registry: mock (always) + genesis (fresh qigkernels.Kernel) + geometric
-    kernel/constellation + language qwen-local/qwen-modal (all None-safe on their backends)."""
+    """Build the registry: mock (always) + genesis (fresh qigkernels.Kernel; coords path when a
+    trained coordizer checkpoint is given, else byte path) + geometric kernel/constellation +
+    language qwen-local/qwen-modal (all None-safe on their backends)."""
     r = TargetRegistry()
     r.register(MockTarget())
-    r.register(GenesisKernelTarget(num_layers=genesis_num_layers, device=device))
+    r.register(GenesisKernelTarget(num_layers=genesis_num_layers, device=device,
+                                   coordizer=_load_coordizer(genesis_coordizer_checkpoint)))
     r.register(KernelTarget(checkpoint=kernel_checkpoint, device=device))
     r.register(ConstellationTarget(checkpoint=constellation_checkpoint, device=device))
     r.register(QwenLocalTarget())
