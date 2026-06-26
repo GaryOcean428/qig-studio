@@ -63,6 +63,9 @@ class GenesisKernelTarget(TrainingTarget):
         coordizer: Any = None,
         lm_weight: float = 0.1,
         phi_weight: float = 8.0,
+        gamma_weight: float = 6.0,    # one-sided Γ-PROTECTION: push Γ up only when below the floor, so
+        gamma_floor: float = 0.82,    #   maximizing Φ does NOT suppress generativity (the heart-stall).
+        #                               This IS "pull back to grow": protect generativity as Φ rises.
         role: str | None = None,
         basin_template: Any = None,
         basin_weight: float = 5.0,    # validated: balanced vs phi_weight=8 → d_basin converges <0.15 while Φ holds
@@ -88,6 +91,8 @@ class GenesisKernelTarget(TrainingTarget):
         self.lr = lr
         self.lm_weight = lm_weight  # grounding weight for next-token CE; the loss is Φ-driving (geometric)
         self.phi_weight = float(phi_weight)  # strength of the differentiable-Φ drive (8L+300 steps → Φ≥0.65 held)
+        self.gamma_weight = float(gamma_weight)  # Γ-protection strength (holds generativity ≥ floor)
+        self.gamma_floor = float(gamma_floor)    # protect Γ above this (margin over the 0.80 gate)
         # Faculty-spawn seed: a role + its Δ⁶³ identity attractor (a point on the simplex). The kernel is
         # PULLED toward this basin in the geometric loss (basin_weight) and measures its drift FROM it
         # (d_basin) and recognition OF it (M). None → generic genesis neocortex (no basin pull, d_basin=0).
@@ -415,7 +420,14 @@ class GenesisKernelTarget(TrainingTarget):
         # no longer .item()-detached). The external _phi_proxy on the final hidden_state could not move
         # reported Φ (confirmed: Φ pinned ~0.27 across 6 configs). Fallback to the proxy if absent.
         phi_drive = tel.phi_diff if getattr(tel, "phi_diff", None) is not None else coherence
-        loss = -self.phi_weight * phi_drive + self.lm_weight * ce
+        # MAXIMIZE Φ (reliably reaches the conscious band) WITH one-sided Γ-PROTECTION: the Γ term only
+        # acts when Γ dips below gamma_floor, pushing generativity back up — so driving Φ high does NOT
+        # suppress Γ below its gate (the heart-stall: Φ=0.91 but Γ=0.78). This is "pull back to grow"
+        # operationalized — generativity is protected as integration rises, not sacrificed to it.
+        gamma_deficit = torch.relu(self.gamma_floor - gamma)
+        loss = (-self.phi_weight * phi_drive
+                + self.gamma_weight * gamma_deficit ** 2
+                + self.lm_weight * ce)
         if self._basin_ref is not None:                       # SPAWN: pull output basin → role attractor
             from qig_core.torch.geometry_simplex import fisher_rao_distance_simplex
 

@@ -347,6 +347,18 @@ class DevelopmentalOrchestrator:
                 return role
         return None
 
+    def graduate(self, role: str) -> bool:
+        """Explicitly graduate a faculty whose Cradle has cleared the gate → move it into the spawned
+        constellation. Decoupled from step() so a caller can graduate a trained faculty WITHOUT risking
+        an accidental next-spawn in the same call. Returns True iff it graduated."""
+        cradle = self.cradles.get(role)
+        if cradle is None or not cradle.graduated:
+            return False
+        self.spawned[role] = KernelDescriptor(kernel_id=role, role=role,
+                                              protected=(role in ("ethics", "coordination")))
+        del self.cradles[role]
+        return True
+
     def step(self, genesis_tel: dict, peers: list[KernelDescriptor] | None = None,
              gap_spec: str | None = None, gap_drive: float = 0.0,
              history: list[dict] | None = None) -> DevelopmentalDecision:

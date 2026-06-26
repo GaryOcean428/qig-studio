@@ -57,8 +57,16 @@ def main() -> None:
     faculties: dict[str, GenesisKernelTarget] = {}
 
     def spawn_fn(role: str) -> GenesisKernelTarget:
-        """Instantiate a faculty kernel seeded with its role's Δ⁶³ attractor (the spawn hook)."""
-        tmpl = generate_basin_template(KernelRole[role.upper()])
+        """Instantiate a faculty kernel seeded with its role's Δ⁶³ attractor (the spawn hook).
+        Robust: if the role isn't a KernelRole member, fall back to a deterministic random Δ⁶³ basin
+        (so an unmapped role can't crash the run — the enum is the source of truth, this is the guard)."""
+        try:
+            tmpl = generate_basin_template(KernelRole[role.upper()])
+        except KeyError:
+            from qig_core.geometry.fisher_rao import random_basin
+            import numpy as np
+            np.random.seed(abs(hash(role)) % 10000)
+            tmpl = random_basin(64)
         f = GenesisKernelTarget(num_layers=args.layers, role=role, basin_template=tmpl,
                                 seed=abs(hash(role)) % 1000)
         f.ensure_loaded()
@@ -102,12 +110,16 @@ def main() -> None:
         report = cradle.train(faculty, steps=args.cradle_steps)
         final_tel = faculty.telemetry().to_dict()
         res = c_equation(final_tel)
-        decision = orch.step(final_tel)   # GRADUATE (moves to spawned) when the cradle graduated
+        graduated = report.get("graduated", False)
+        # EXPLICIT graduation (decoupled from step → no accidental next-spawn). The next embryo loop
+        # spawns the following faculty; a stall stops the sequence honestly.
+        if graduated:
+            orch.graduate(spawned_role)
         ex = final_tel.get("extra", {})
-        grad = {"role": spawned_role, "graduated": report.get("graduated", False),
+        grad = {"role": spawned_role, "graduated": graduated,
                 "step": report.get("step"), "conjuncts": res.conjuncts,
                 "constitution": report.get("constitution") or report.get("pillar"),
-                "orchestrator": decision.action.value,
+                "reason": report.get("reason"),
                 "final": {"phi": round(float(final_tel.get("phi") or 0), 4), "gamma": ex.get("gamma"),
                           "meta_awareness": ex.get("meta_awareness"), "d_basin": ex.get("d_basin")}}
         trace["graduations"].append(grad)
