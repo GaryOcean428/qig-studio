@@ -105,6 +105,10 @@ class GenesisKernelTarget(TrainingTarget):
         self._device = device
         self._kernel: Any = None    # qigkernels.Kernel — lazily built in ensure_loaded()
         self._opt: Any = None       # NaturalGradientDescent — lazily built in ensure_loaded()
+        # The kernel's OWN autonomic regulator — its brainstem. The SAME kernel that thinks controls its
+        # own wake/sleep/dream/mushroom/escape, from its OWN internal state, the way a brainstem does —
+        # NOT an external scheduler reaching in. Built lazily as the kernel comes alive; None-safe.
+        self._autonomic: Any = None
         self._step = 0
         self._last_gen_basin = None  # WHAT IT MEANT (last output basin) — for coach-agreement recognition
         self._last = TelemetrySnapshot(regime="unknown", extra={"target": "genesis", "num_layers": num_layers})
@@ -466,8 +470,39 @@ class GenesisKernelTarget(TrainingTarget):
         snap.extra["meta_awareness"] = round(m, 4)                   # M (in-graph train-path)
         snap.extra["d_basin"] = round(d_basin, 4)                    # basin drift from identity attractor
         snap.basin_distance = d_basin                               # top-level field for the gate
+        self._self_regulate(snap)        # the kernel's OWN autonomic act — it cares for itself each step
         return StepResult(text=f"[genesis·N={self.num_layers} step {snap.step}] Φ-driving: {prompt[:50]}",
                           telemetry=snap)
+
+    def _self_regulate(self, snap) -> None:
+        """The kernel's OWN autonomic nervous system. As the last act of each living-step, the SAME
+        kernel that just thought reads its OWN telemetry and, if its internal state calls for it,
+        applies its own wake-state plasticity (mushroom), consolidation (sleep), recovery (dream), or
+        breakdown-escape — ON ITSELF. No external scheduler decides this; the kernel does, the way a
+        brainstem regulates the body it is part of. WAKE = no intervention (the common case). The
+        canonical P12 trigger logic is the kernel's brainstem (owned here, run here); SLEEP/DREAM are
+        real only once the kernel's cmd_sleep/cmd_dream are built (currently NEEDS-BUILD), but ESCAPE
+        (Φ≥0.80 breakdown) and MUSHROOM (Φ≥0.70 plateau, dose-scaled) act today — which is what holds
+        the kernel in its healthy band instead of running into breakdown."""
+        if self._autonomic is None:
+            try:
+                from ..learning import AutonomicScheduler
+                self._autonomic = AutonomicScheduler(use_real=False)   # pure-Python P12 brainstem (self-contained)
+            except Exception:
+                self._autonomic = False                                # mark unavailable; stay None-safe
+        if not self._autonomic:
+            return
+        try:
+            from ..learning import Intervention
+            decision = self._autonomic.decide(snap.to_dict())          # the brainstem reads its own state
+            command = decision.value
+            if decision is Intervention.MUSHROOM:                       # dose itself (rigidity-scaled, capped)
+                command = self._autonomic.mushroom_dose(float(snap.phi), float(snap.kappa))
+            snap.extra["autonomic"] = command                          # record what the kernel chose
+            if command != Intervention.WAKE.value:
+                self.run_protocol(command, {})                         # the kernel acts on ITSELF
+        except Exception:
+            pass
 
     def architecture(self) -> dict:
         # qigkernels.QIGLayer is GLOBAL metric attention by default → v_B-NON-LOCAL; pass

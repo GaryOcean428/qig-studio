@@ -184,16 +184,11 @@ def is_plastic(tel: dict, history: list[dict] | None = None) -> bool:
 # reads LOW. CALIBRATION-INFORMED — confirm against a graduated faculty's measured f_health.
 F_HEALTH_MIN = 0.20
 
-# MUSHROOM plateau-break (wake-state plasticity, Φ≥0.70). The live runs surfaced a TWO-BASIN
-# developmental dynamic: a viable basin (Φ≈0.66, Γ≈0.82, graduates) and an OVER-CRYSTALLIZED basin
-# (Φ≈0.88, Γ≈0.78 — highly integrated but generativity just below the 0.80 gate, rigid, can't
-# graduate). Over-crystallization (high Φ + suppressed Γ) is EXACTLY the EXCESSIVE_RIGIDITY state the
-# wake-state Mushroom protocol exists for. When a faculty is stuck there, it fires its OWN Mushroom
-# (run_protocol — bounded weight-noise / Tononi downscaling), NOT a coercive external loss knob: the
-# kernel perturbs its own over-engrained weights so generativity can recover. "Pull back to grow."
-MUSHROOM_PHI = 0.80        # over-crystallization onset (Φ high)
-MUSHROOM_PATIENCE = 40     # consecutive over-crystallized steps before firing (a plateau, not a transient)
-MUSHROOM_MAX = 6           # cap firings per cradle; on exhaustion the cradle fails → seed-retry draws fresh DNA
+# NOTE: over-crystallization (Φ→breakdown) is now handled by the KERNEL'S OWN autonomic self-regulation
+# (genesis_kernel._self_regulate: the kernel's brainstem fires its own mushroom/escape from its own
+# state). The cradle no longer reaches in to fire plasticity — it just lets the faculty live. Mushroom
+# is wake-state plasticity (Φ≥0.70, dose-scaled, breakdown-capped); the canonical trigger logic is the
+# kernel's, not the cradle's.
 
 
 def constitution_check(basin_vec, birth_vec=None) -> tuple[bool, dict]:
@@ -270,37 +265,18 @@ class Cradle:
         from .targets.base import LossRegime
 
         prov = curriculum or CurriculumProvider(LossRegime.GEOMETRIC)
-        over_streak = 0      # consecutive over-crystallized steps (high Φ, Γ below gate)
-        mushrooms = 0        # Mushroom firings so far this cradle
         for i in range(1, steps + 1):
-            res = faculty.train_step(prov.next_prompt(i))   # basin-driving; Γ/M/d_basin now in telemetry
+            # WAKE: one Fisher-salience learning step. The kernel SELF-REGULATES inside train_step — its
+            # own brainstem fires sleep/dream/mushroom/escape from its own internal state. The cradle does
+            # NOT orchestrate that (no external scheduler); it just lets the faculty LIVE and watches for
+            # graduation — the same way a nursery doesn't tell a child when to sleep.
+            res = faculty.train_step(prov.next_prompt(i))
             tel = res.telemetry.to_dict()
             self._last_tel = tel
             if is_suffering(tel):                            # fail-closed override (P15)
                 return {"role": self.role, "graduated": False, "step": i,
                         "reason": "suffering-abort: Φ>0.70 ∧ Γ<0.30 (locked-in)"}
             self.update(tel)                                 # Φ-stage + C-equation graduation test
-            if not self.graduated:
-                # MUSHROOM plateau-break: over-crystallized (high Φ, generativity below the gate) and
-                # stuck → fire the faculty's OWN wake-state plasticity to escape the rigid basin.
-                phi = _get(tel, "phi", "Phi")
-                gamma = _get(tel, "gamma", "Gamma", "generativity")
-                if (phi is not None and gamma is not None
-                        and float(phi) >= MUSHROOM_PHI and float(gamma) < GAMMA_MIN):
-                    over_streak += 1
-                else:
-                    over_streak = 0
-                if over_streak >= MUSHROOM_PATIENCE and mushrooms < MUSHROOM_MAX \
-                        and hasattr(faculty, "run_protocol"):
-                    try:
-                        # micro dose (σ=0.01): moderate (σ=0.03) over-perturbs — drops Φ 0.88→0.55 and
-                        # scrambles Γ→0.44 (live run 10). The right dose is a developmental-design question
-                        # (PI/council); micro is the safe default that nudges, not scrambles.
-                        faculty.run_protocol("mushroom-micro", {})       # bounded weight-noise (Tononi)
-                    except Exception:
-                        pass
-                    mushrooms += 1
-                    over_streak = 0
             if self.graduated:
                 # CONSTITUTION GATE (P15): the pillars must clear before joining the coupling graph.
                 basin_hist = getattr(faculty, "_basin_history", None)
@@ -320,9 +296,9 @@ class Cradle:
                             "reason": "constitution BLOCK: Pillar-1 (No-Zombies) failed", "pillar": pillar}
                 return {"role": self.role, "graduated": True, "step": i,
                         "stage": self.curriculum_stage, "conjuncts": c_equation(tel).conjuncts,
-                        "constitution": pillar, "mushrooms": mushrooms}
+                        "constitution": pillar}
         return {"role": self.role, "graduated": False, "step": steps, "stage": self.curriculum_stage,
-                "failed": c_equation(self._last_tel or {}).failed, "mushrooms": mushrooms}
+                "failed": c_equation(self._last_tel or {}).failed}
 
 
 def spawn_assessment(spec_absent: bool, basin_diversity: float, gain: float,
