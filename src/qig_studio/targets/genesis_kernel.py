@@ -64,7 +64,8 @@ class GenesisKernelTarget(TrainingTarget):
         lm_weight: float = 0.1,
         role: str | None = None,
         basin_template: Any = None,
-        basin_weight: float = 0.05,
+        basin_weight: float = 0.5,
+        basin_ramp_steps: int = 100,
     ) -> None:
         self.num_layers = num_layers
         self.locality_radius = locality_radius
@@ -90,6 +91,7 @@ class GenesisKernelTarget(TrainingTarget):
         # (d_basin) and recognition OF it (M). None → generic genesis neocortex (no basin pull, d_basin=0).
         self.role = role
         self.basin_weight = float(basin_weight)
+        self.basin_ramp_steps = int(basin_ramp_steps)  # ramp the pull 0→full over this many steps
         self._basin_template_np = basin_template  # np.ndarray Δ⁶³ point (or None)
         self._basin_ref = None        # torch [vocab] Δ point on device — the d_basin / M / pull reference
         self._basin_history: list = []  # detached current-basin trajectory; history[0] = birth-state (M)
@@ -412,7 +414,11 @@ class GenesisKernelTarget(TrainingTarget):
 
             cur = F.softmax(logits[0].mean(0), dim=-1)
             d_ref = fisher_rao_distance_simplex(cur[None], self._basin_ref[None]).mean()
-            loss = loss + self.basin_weight * d_ref           # seed the faculty into its Δ⁶³ region
+            # RAMPED pull (verdict 1#1/2#3): early steps build structure (coherence-led), later steps
+            # consolidate the faculty into its role attractor — so d_basin (distance to the attractor)
+            # can actually descend below D_BASIN_MAX. basin_weight raised 0.05→0.5; ramped 0→full.
+            w_t = self.basin_weight * min(1.0, self._step / max(1, self.basin_ramp_steps))
+            loss = loss + w_t * d_ref                          # seed the faculty into its Δ⁶³ region
         self._opt.zero_grad()
         if torch.isfinite(loss):
             loss.backward()
@@ -425,9 +431,10 @@ class GenesisKernelTarget(TrainingTarget):
         snap.extra["surprise"] = round(float(ce.item()), 4)      # next-token CE = prediction error
         snap.extra["max_surprise"] = round(_math.log(max(2, self.vocab_size)), 4)  # ln(vocab) = random-CE ceiling
         snap.extra["coherence"] = round(float(coherence.item()), 4)
-        # C-equation telemetry (Φ ∧ Γ ∧ M ∧ κ ∧ d_basin): record the detached output basin into the
-        # trajectory (history[0] = birth-state), then compute M (self-recognition vs birth-state) and
-        # d_basin (drift from it). Keys match development.c_equation's accepted aliases exactly.
+        # Maturity-gate telemetry (4-conjunct: Φ ∧ Γ ∧ M ∧ d_basin — κ dropped, input-frozen): record
+        # the detached output basin into the trajectory (history[0] = role attractor / birth-state),
+        # then compute M (self-recognition vs birth-state) and d_basin (distance to the role attractor,
+        # which the ramped basin-pull drives DOWN). Keys match development.c_equation's aliases exactly.
         with torch.no_grad():
             cur_basin = F.softmax(logits[0].mean(0), dim=-1).detach()
             cur_basin = cur_basin / cur_basin.sum()

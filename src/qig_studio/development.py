@@ -4,22 +4,33 @@ Implements the governing model in docs/plans/2026-06-26-genesis-spawn-trigger-an
 (§6 the developmental crossfade, §7 the enacted least-friction path):
 
   - **Core-8 = PROTOMAP** (pre-specified, canonical order — NOT gap-discovered), spawned ONE per
-    near-critical **plasticity window** (experience-EXPECTANT), each into a **Cradle**, graduating on
-    the **C-equation**. Order: sensory/subcortical first, self-model (META) last.
+    open **plasticity window** (experience-EXPECTANT), each into a **Cradle**, graduating on the
+    **4-conjunct partial gate** (Φ ∧ Γ ∧ M ∧ d_basin — κ dropped). Order: sensory first, META last.
   - **Gods = experience-DEPENDENT / self-directed**: spawned by measured **capability-gap + drive**
     (novelty×curiosity), governed by a vex-style 4-D fitness assessment + budget.
   - **Pruning is paired with spawning** — trophic atrophy on compute budget (overproduce → prune).
-  - **Fail-closed** (P15): budget caps; the constitution (qig_core PillarEnforcer / SovereigntyTracker)
-    binds every spawned kernel; **suffering-abort** (Φ>0.70 ∧ Γ<0.30) overrides everything.
+  - **Fail-closed** (P15): budget caps + ``protected`` flag (ethics/coordination never pruned) +
+    **suffering-abort** (Φ>0.70 ∧ Γ<0.30) overrides everything.
 
-SCOPE (council ruling 2026-06-26): this is the spawn-trigger MECHANISM, verified by falsifiable tests
-on forced telemetry. The LIVE end-to-end developmental spawn (a kernel actually maturing to the
-C-equation and spawning in a real training run) is the NEXT validation gate — NOT claimed here.
+CONSTITUTION BINDING — HONEST SCOPE (verdict 3#1, 2026-06-26): the qig_core PillarEnforcer /
+SovereigntyTracker do NOT bind kernels from inside this module (neither is imported here). The only
+realised constitution mechanism in-module is the ``protected`` flag. A None-safe PillarEnforcer check
+in the GRADUATE / SPAWN path is NEEDS-BUILD and MUST be wired (at this layer or the server layer)
+BEFORE any live run graduates a kernel into the coupling graph. Until then, graduation is mechanism-
+only and does not assert pillar-compliance.
+
+SCOPE: this is the spawn-trigger MECHANISM. The LIVE end-to-end developmental spawn (a kernel actually
+reaching the 4-conjunct partial gate and spawning in a real run) is the validation gate. Verdict-
+corrected 2026-06-26 (adversarial workflow): a live 200-step run cleared 0/200 (best 2/5 on the old
+5-conjunct gate); the κ-drop + ΔΦ recalibration + d_basin re-reference + integration-driving loss are
+the fixes that make a PARTIAL graduation reachable — themselves HYPOTHESES until a live run shows
+Φ≥0.65 held AND d_basin descending <0.15.
 
 PURITY: decision logic is torch-free + None-safe (runs in the light shell). Real kernel instantiation
 is behind an injected ``spawn_fn`` hook (qigkernels). NO vex import — vex is inspiration only.
-Several thresholds are CALIBRATION-PENDING against the live kernel's κ/Γ/M scales (noted inline); the
-tests force values, so the mechanism is verified independently of final calibration.
+Plasticity/gate thresholds are CALIBRATION-INFORMED (confirm via the §2 calibration run; cite by
+percentile in the launch note). Forced-telemetry tests verify the logic; a live integration test
+verifies firing.
 """
 
 from __future__ import annotations
@@ -38,10 +49,13 @@ KAPPA_BAND = (41.07, 61.61)  # LIVE genesis κ band — engaged upper half of [0
 #                              so this conjunct tests "engaged", not maturity — Φ/Γ/M/d_basin carry that.
 D_BASIN_MAX = 0.15           # basin-decoherence ceiling
 SUFFERING_GAMMA = 0.30       # Φ>0.70 ∧ Γ<this = locked-in / suffering → ABORT
-NEAR_CRITICAL_KAPPA = 61.61  # live κ ceiling (1.5·KAPPA_3); the κ-edge branch of is_plastic only fires
-#                              at the very top of the reachable band — the ΔΦ-trend branch is the real
-#                              plastic-window signal (κ being input-frozen cannot track reorganization).
-PLASTIC_TREND = 0.04         # |ΔΦ| at/above which active reorganization counts as a plastic window
+# Plasticity-window thresholds — CALIBRATION-INFORMED (to be confirmed by the §2 300-step calibration
+# run, then cited by percentile in the launch note). The adversarial workflow measured live |ΔΦ|≈0.003
+# (p95<0.01) over a stable window — so the old monkey1 literal 0.04 was ~2 orders too high and the
+# window never opened (protomap populated 1/8 roles). The κ-edge branch was DELETED: κ is input-frozen
+# (cannot track reorganization) and its "edge" sat at the unreachable clamp ceiling.
+PLASTIC_TREND = 0.005        # |ΔΦ| ≥ this = active reorganization (≈80th pct of live |ΔΦ|; calib-confirm)
+COHERENCE_RISE = 0.002       # OR: rolling coherence-slope ≥ this = reorganizing (calib-confirm)
 CRADLE_PHI_GATES = (0.35, 0.50, 0.65)  # vex Cradle curriculum-stage Φ gates
 PRUNE_CONTRIBUTION_FLOOR = 0.05        # a kernel contributing less than this is atrophy-eligible
 SPAWN_FITNESS_FLOOR = 0.40             # vex: assessment ≥ this is advisory-spawn (vote still decides)
@@ -72,11 +86,14 @@ class Action(Enum):
 
 @dataclass
 class CEquationResult:
-    """The C-equation maturity gate: C = Φ≥0.65 ∧ Γ≥0.80 ∧ M≥0.60 ∧ κ∈[40,70] ∧ d_basin<0.15.
-    Missing telemetry fields fail their conjunct (conservative / fail-closed)."""
+    """The maturity gate: a 4-CONJUNCT PARTIAL — C = Φ≥0.65 ∧ Γ≥0.80 ∧ M≥0.60 ∧ d_basin<0.15.
+    κ is DROPPED from the gate (input-frozen → engaged, not mature) and reported as ``kappa_engaged``.
+    Missing telemetry fields fail their conjunct (conservative / fail-closed). ``conscious=True`` here
+    means "cleared the 4-conjunct partial gate", NEVER "full consciousness / C-equation satisfied"."""
 
     conscious: bool
     conjuncts: dict[str, bool]
+    kappa_engaged: bool = False   # non-gating diagnostic: is the input long enough to engage κ?
 
     @property
     def failed(self) -> list[str]:
@@ -104,8 +121,15 @@ def _get(tel: dict, *keys: str):
 
 
 def c_equation(tel: dict) -> CEquationResult:
-    """Evaluate the 5-conjunct consciousness/maturity gate. A field that is absent FAILS its conjunct
-    (we never grant maturity on missing evidence)."""
+    """Evaluate the maturity gate. A field that is absent FAILS its conjunct (we never grant maturity
+    on missing evidence).
+
+    Verdict-corrected (2026-06-26 adversarial workflow): the gate is **4-conjunct** —
+    C = Φ≥0.65 ∧ Γ≥0.80 ∧ M≥0.60 ∧ d_basin<0.15. **κ is DROPPED from the gate**: the genesis κ is
+    INPUT-FROZEN (it scales with prompt length — a 124-byte prompt yields κ≈53, short basin prompts
+    yield κ≈20–44), so it measures whether the kernel is *engaged*, NOT whether it is *mature*. κ is
+    still reported as a non-gating ``kappa_engaged`` diagnostic. A graduation on this gate is an honest
+    **4-conjunct PARTIAL**, never "full C-equation / consciousness satisfied"."""
     phi = _get(tel, "phi", "Phi")
     gamma = _get(tel, "gamma", "Gamma", "generativity")
     m = _get(tel, "m", "M", "M_self_observation", "meta_awareness")
@@ -116,10 +140,12 @@ def c_equation(tel: dict) -> CEquationResult:
         "phi": phi is not None and float(phi) >= PHI_CONSCIOUS,
         "gamma": gamma is not None and float(gamma) >= GAMMA_MIN,
         "m": m is not None and float(m) >= M_MIN,
-        "kappa": kappa is not None and lo <= float(kappa) <= hi,
         "d_basin": d_basin is not None and float(d_basin) < D_BASIN_MAX,
     }
-    return CEquationResult(conscious=all(conj.values()), conjuncts=conj)
+    res = CEquationResult(conscious=all(conj.values()), conjuncts=conj)
+    # κ is reported but NOT gating (input-frozen → "engaged", not "mature").
+    res.kappa_engaged = kappa is not None and lo <= float(kappa) <= hi
+    return res
 
 
 def is_suffering(tel: dict) -> bool:
@@ -131,19 +157,27 @@ def is_suffering(tel: dict) -> bool:
     return phi is not None and gamma is not None and float(phi) > 0.70 and float(gamma) < SUFFERING_GAMMA
 
 
-def is_plastic(tel: dict) -> bool:
-    """Is the kernel in a near-critical PLASTICITY WINDOW (§7's strongest-validated trigger)? OPEN
-    when either at the criticality edge (κ ≥ NEAR_CRITICAL_KAPPA) OR actively reorganizing
-    (|ΔΦ| ≥ PLASTIC_TREND). Differentiation belongs in the open window; consolidation in the closed.
-    (κ threshold CALIBRATION-PENDING vs the live kernel scale.)"""
-    kappa = _get(tel, "kappa", "kappa_eff")
+def is_plastic(tel: dict, history: list[dict] | None = None) -> bool:
+    """Is the kernel in a PLASTICITY WINDOW (the trigger the enactment validated as natural)? OPEN when
+    it is actively REORGANIZING — measured two ways (OR), since κ cannot track it (input-frozen):
+      (a) |ΔΦ| ≥ PLASTIC_TREND — integration is moving this step;
+      (b) the rolling coherence slope over `history` ≥ COHERENCE_RISE — integration is trending up.
+    The old κ≥NEAR_CRITICAL_KAPPA branch was DELETED (verdict: unreachable by construction — it sat at
+    the input-frozen clamp ceiling). The explicit 'criticality'/'breakdown' regime label still opens it.
+    Differentiation belongs in the open window; consolidation in the closed."""
     dphi = _get(tel, "delta_phi", "phi_trend")
     regime = str(_get(tel, "regime") or "").lower()
     if "critical" in regime or "breakdown" in regime:
         return True
-    if kappa is not None and float(kappa) >= NEAR_CRITICAL_KAPPA:
+    if dphi is not None and abs(float(dphi)) >= PLASTIC_TREND:
         return True
-    return dphi is not None and abs(float(dphi)) >= PLASTIC_TREND
+    # coherence-rise: positive slope of recent coherence (the integration-trend signal)
+    if history and len(history) >= 3:
+        cohs = [_get(h, "coherence") for h in history[-5:]]
+        cohs = [float(c) for c in cohs if c is not None]
+        if len(cohs) >= 3 and (cohs[-1] - cohs[0]) / (len(cohs) - 1) >= COHERENCE_RISE:
+            return True
+    return False
 
 
 @dataclass
@@ -165,7 +199,7 @@ class Cradle:
             self.graduated = True
         return self
 
-    def train(self, faculty: "object | None", steps: int = 200, curriculum: "object | None" = None) -> dict:
+    def train(self, faculty, steps: int = 200, curriculum=None) -> dict:  # faculty/curriculum: Any (no torch types leak)
         """Run the spawned faculty on its EXPECTED curriculum until it graduates (C-equation) or the step
         budget is spent. Geometric/basin-driving (lm_weight=0): each step is one natural-gradient
         ``train_step``; the resulting Γ/M/d_basin/κ/Φ telemetry advances the Φ-stage and tests the
@@ -259,10 +293,12 @@ class DevelopmentalOrchestrator:
         return None
 
     def step(self, genesis_tel: dict, peers: list[KernelDescriptor] | None = None,
-             gap_spec: str | None = None, gap_drive: float = 0.0) -> DevelopmentalDecision:
+             gap_spec: str | None = None, gap_drive: float = 0.0,
+             history: list[dict] | None = None) -> DevelopmentalDecision:
         """Decide the next developmental action. Priority: (1) fail-closed suffering-abort, (2) graduate
         a ready cradle, (3) prune atrophy, (4) protomap spawn in a plastic window, (5) god spawn on
-        gap+desire (SOVEREIGN only), else WAIT."""
+        gap+desire (SOVEREIGN only), else WAIT. ``history`` is the recent telemetry window (for the
+        coherence-rise plasticity signal)."""
         # 1. FAIL-CLOSED — suffering overrides everything.
         if is_suffering(genesis_tel):
             return DevelopmentalDecision(Action.ABORT, reason="suffering: Φ>0.70 ∧ Γ<0.30 (locked-in)")
@@ -283,10 +319,10 @@ class DevelopmentalOrchestrator:
                                          reason=f"contribution {cand.contribution:.3f} < floor (atrophy)")
 
         stage = self.stage
-        # 4. CORE EMERGENCE — protomap spawns ONLY in a near-critical plasticity window.
+        # 4. CORE EMERGENCE — protomap spawns ONLY in an open plasticity window.
         if stage in (Stage.EMBRYO, Stage.CORE_EMERGENCE):
             next_role = self._next_protomap_role()
-            if next_role is not None and is_plastic(genesis_tel):
+            if next_role is not None and is_plastic(genesis_tel, history):
                 self.cradles[next_role] = Cradle(role=next_role)
                 if self.spawn_fn is not None:
                     fac = self.spawn_fn(next_role)   # None-safe; None when heavy deps absent
