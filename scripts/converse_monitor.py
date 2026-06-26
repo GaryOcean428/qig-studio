@@ -164,29 +164,31 @@ def analyse(rows: list[dict]) -> dict:
 # ----- run ---------------------------------------------------------------------------------------
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--coordizer", required=True, help="coordizer checkpoint (.json) to adopt")
+    ap.add_argument("--coordizer", default="", help="coordizer checkpoint (.json); empty = byte-level")
+    ap.add_argument("--checkpoint", default="", help="trained kernel checkpoint (.pt) to LOAD and continue")
     ap.add_argument("--turns", type=int, default=48)
     ap.add_argument("--layers", type=int, default=8)
     ap.add_argument("--curriculum-steps", type=int, default=2)
     ap.add_argument("--train-steps", type=int, default=6)
     ap.add_argument("--max-tokens", type=int, default=64)
-    ap.add_argument("--coach-model", default=None, help="override coach model (default nemotron cloud)")
+    ap.add_argument("--coach-model", default=None, help="coach model (default nemotron cloud; qwen3.5:4b fallback)")
     ap.add_argument("--out", default="runs/converse/trace.jsonl")
     args = ap.parse_args()
 
-    from qig_coordizer import FisherCoordizer
-
     from qig_studio.coach import DevelopmentalCoach, OllamaLLM
     from qig_studio.curriculum import CurriculumProvider
+    from qig_studio.optimisation import load_coordizer
     from qig_studio.targets.base import LossRegime
     from qig_studio.targets.genesis_kernel import GenesisKernelTarget
 
-    print(f"[monitor] loading coordizer {args.coordizer}", flush=True)
-    cz = FisherCoordizer.load(args.coordizer)
-    print(f"[monitor] vocab={len(cz.vocab):,} basin_dim={cz.basin_dim}", flush=True)
+    cz = load_coordizer(args.coordizer) if args.coordizer else None   # None-safe → byte-level
+    print(f"[monitor] vocab={'coordizer ' + str(len(cz.vocab)) if cz else 'byte-level (256)'}", flush=True)
 
     target = GenesisKernelTarget(num_layers=args.layers, coordizer=cz)
     target.ensure_loaded()
+    if args.checkpoint:
+        target.load_checkpoint(args.checkpoint)                       # continue a TRAINED faculty
+        print(f"[monitor] loaded trained checkpoint {args.checkpoint}", flush=True)
     coach = DevelopmentalCoach(llm=OllamaLLM(model=args.coach_model))
     provider = CurriculumProvider(LossRegime.GEOMETRIC)
     coach_live = coach.enabled and coach.llm.is_available()

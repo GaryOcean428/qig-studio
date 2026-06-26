@@ -34,11 +34,17 @@ from typing import Any
 
 def load_coordizer(path: str | None) -> Any:
     """qig-coordizer: load a pre-fit FisherCoordizer for a richer Δ⁶³ vocab (kernel ``coordizer``
-    ctor arg). None-safe — missing path / missing package / missing artifact → None → byte-level."""
-    if not path or not Path(path).exists():
-        return None
-    try:
-        from qig_coordizer import FisherCoordizer  # type: ignore[import-untyped]
-        return FisherCoordizer.load(path)
-    except Exception:
-        return None
+    ctor arg).
+
+    FAIL-LOUD, not silent-fallback: an EMPTY path means "byte-level requested" → None. But a
+    NON-empty path that can't be loaded (missing file, qig_coordizer not installed in this venv,
+    corrupt artifact) RAISES — the caller asked for a coordizer and must not be silently downgraded
+    to byte-level (that was a real bug: the CUDA venv lacked qig_coordizer and trained byte-level
+    while reporting success)."""
+    if not path:
+        return None                                  # no coordizer requested → byte-level (intentional)
+    p = Path(path)
+    if not p.exists():
+        raise FileNotFoundError(f"coordizer artifact not found: {path}")
+    from qig_coordizer import FisherCoordizer  # type: ignore[import-untyped]  # let ImportError surface
+    return FisherCoordizer.load(path)
