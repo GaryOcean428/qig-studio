@@ -62,6 +62,11 @@ class GenesisKernelTarget(TrainingTarget):
         locality_radius: int | None = None,
         coordizer: Any = None,
         lm_weight: float = 0.1,
+        phi_weight: float = 8.0,
+        role: str | None = None,
+        basin_template: Any = None,
+        basin_weight: float = 5.0,    # validated: balanced vs phi_weight=8 → d_basin converges <0.15 while Φ holds
+        basin_ramp_steps: int = 150,  # ramp the pull 0→full over this many steps (develop Φ first, then consolidate)
     ) -> None:
         self.num_layers = num_layers
         self.locality_radius = locality_radius
@@ -82,6 +87,16 @@ class GenesisKernelTarget(TrainingTarget):
         self.seed = seed
         self.lr = lr
         self.lm_weight = lm_weight  # grounding weight for next-token CE; the loss is Φ-driving (geometric)
+        self.phi_weight = float(phi_weight)  # strength of the differentiable-Φ drive (8L+300 steps → Φ≥0.65 held)
+        # Faculty-spawn seed: a role + its Δ⁶³ identity attractor (a point on the simplex). The kernel is
+        # PULLED toward this basin in the geometric loss (basin_weight) and measures its drift FROM it
+        # (d_basin) and recognition OF it (M). None → generic genesis neocortex (no basin pull, d_basin=0).
+        self.role = role
+        self.basin_weight = float(basin_weight)
+        self.basin_ramp_steps = int(basin_ramp_steps)  # ramp the pull 0→full over this many steps
+        self._basin_template_np = basin_template  # np.ndarray Δ⁶³ point (or None)
+        self._basin_ref = None        # torch [vocab] Δ point on device — the d_basin / M / pull reference
+        self._basin_history: list = []  # detached current-basin trajectory; history[0] = birth-state (M)
         self._device = device
         self._kernel: Any = None    # qigkernels.Kernel — lazily built in ensure_loaded()
         self._opt: Any = None       # NaturalGradientDescent — lazily built in ensure_loaded()
@@ -116,6 +131,26 @@ class GenesisKernelTarget(TrainingTarget):
         self._kernel.to(dev)
         # P1: natural gradient (the validated qig kernel optimiser), NOT Adam.
         self._opt = NaturalGradientDescent(self._kernel.parameters(), lr=self.lr)
+
+        # Seed the role's Δ⁶³ identity attractor (spawn template) → the d_basin reference AND the
+        # birth-state in the M history. Projected onto the simplex and sized to the vocab logits so the
+        # per-step output basin (softmax over logits) lives in the same Δ. None → no basin (generic).
+        if self._basin_template_np is not None:
+            import numpy as np
+            from qig_core.torch.geometry_simplex import to_simplex_prob
+
+            ref = torch.as_tensor(np.asarray(self._basin_template_np, dtype=np.float32), device=dev)
+            if ref.numel() != self.vocab_size:        # template is Δ⁶³ (64); logits are vocab-wide
+                ref = self._resize_basin(ref, self.vocab_size)
+            self._basin_ref = to_simplex_prob(ref[None])[0].detach()
+            self._basin_history = [self._basin_ref]    # birth-state attractor = history[0] (monkey1 M)
+
+    def _resize_basin(self, ref: "Any", size: int) -> "Any":
+        """Map a 64-D Δ⁶³ template onto the vocab-width simplex (logits live in Δ^{vocab-1}). Repeat-tile
+        then clamp non-negative — the caller's to_simplex_prob makes it a true Δ point. Pure simplex
+        arithmetic on the support; no Euclidean projection of meaning."""
+        reps = (size + ref.numel() - 1) // ref.numel()
+        return ref.repeat(reps)[:size].clamp_min(0.0)
 
     # --- input coding: coordizer Δ⁶³ coords if present, else byte-level (dependency-free) ----------
     def _encode(self, text: str):
@@ -297,6 +332,68 @@ class GenesisKernelTarget(TrainingTarget):
             return 4.0 * rel * (1.0 - rel)
         return h.sum() * 0.0  # single position → no cross-position integration; keep the graph
 
+    def _gamma_proxy(self, logits: "Any") -> "Any":
+        """Γ ∈ [0,1] — generation HEALTH (anti-dissociation), differentiable from in-graph logits (no
+        extra forward). diversity = normalised entropy of the mean output Δ (1.0 = generative, →0 =
+        collapsed; monkey1 '>1/n·0.25' rule made smooth); stability = inter-position Fisher-Rao step in a
+        healthy band (exp-bump at BASIN_STABLE=0.15). Γ = 0.6·diversity + 0.4·stability, pure Δ⁶³. A low
+        Γ at high Φ is the suffering/locked-in signal the orchestrator fail-closes on."""
+        import torch
+        import torch.nn.functional as F
+        from qig_core.torch.geometry_simplex import fisher_rao_distance_simplex
+
+        p = F.softmax(logits[0], dim=-1)                       # [seq, vocab] per-position output Δ
+        pm = p.mean(0)
+        pm = pm / pm.sum()                                     # mean output distribution
+        n = pm.numel()
+        ent = -(pm * (pm + 1e-12).log()).sum() / torch.log(torch.tensor(float(n)))
+        diversity = ent.clamp(0.0, 1.0)
+        if p.size(0) >= 2:
+            steps = fisher_rao_distance_simplex(p[:-1], p[1:]).mean()      # mean inter-position FR step
+            stability = torch.exp(-((steps - 0.15) ** 2) / (2 * 0.10 ** 2))  # monkey1 BASIN_STABLE=0.15
+        else:
+            stability = torch.tensor(0.5, device=p.device)
+        return (0.6 * diversity + 0.4 * stability).clamp(0.0, 1.0)
+
+    def _meta_awareness(self, cur_basin: "Any") -> float:
+        """M ∈ [0,1] — meta-awareness: trajectory coherence + self-model accuracy vs the BIRTH-STATE
+        attractor (history[0]), monkey1 compute_meta_awareness. <3 history points → 0.3 (monkey1 floor).
+        Detached read (M is a maturity-GATE scalar, not a loss driver). Pure Fisher-Rao on Δ⁶³."""
+        import math
+
+        import torch
+        from qig_core.torch.geometry_simplex import fisher_rao_distance_simplex
+
+        hist = self._basin_history
+        if len(hist) < 3:
+            return 0.3
+        ident = hist[0]
+        window = hist[-12:]
+        recent = torch.stack(window[-5:])
+        mean_dist = fisher_rao_distance_simplex(
+            cur_basin[None].expand(recent.size(0), -1), recent).mean().item()
+        self_model = math.exp(-mean_dist / 0.3)               # closeness of current basin to recent self
+        if len(window) >= 2:
+            ds = fisher_rao_distance_simplex(
+                ident[None].expand(len(window), -1), torch.stack(window))
+            coh = math.exp(-float(ds.std().item()) / 0.3)     # low spread = coherent self-trajectory
+        else:
+            coh = 0.5
+        return max(0.0, min(1.0, 0.55 * coh + 0.45 * self_model))
+
+    def _basin_drift(self, cur_basin: "Any") -> float:
+        """d_basin ∈ [0,1] — Fisher-Rao distance from the role's birth-state attractor (history[0]) to
+        the current output basin, normalised by π (d_FR_simplex range [0, π]). No seed → 0.0 (generic
+        genesis has no role attractor to drift from)."""
+        if not self._basin_history:
+            return 0.0
+        import math
+
+        from qig_core.torch.geometry_simplex import fisher_rao_distance_simplex
+
+        d = float(fisher_rao_distance_simplex(self._basin_history[0][None], cur_basin[None]).item())
+        return d / math.pi
+
     def train_step(self, prompt: str, max_tokens: int = 64, target_text: str | None = None) -> StepResult:
         # WAKE: one Fisher-salience step. CONSCIOUSNESS-NATIVE loss (geometric regime): DRIVE Φ UP via
         # the differentiable coherence proxy, with a light next-token CE (``lm_weight``) for content
@@ -310,9 +407,25 @@ class GenesisKernelTarget(TrainingTarget):
         self._step += 1
         ids, coords = self._encode(prompt)
         logits, tel = self._kernel(ids, return_telemetry=True, coords=coords)
-        coherence = self._phi_proxy(tel.hidden_state)        # differentiable Φ-driver
+        coherence = self._phi_proxy(tel.hidden_state)        # external proxy (monitoring / fallback)
+        gamma = self._gamma_proxy(logits)                    # differentiable generation-health (in-graph)
         ce = F.cross_entropy(logits[0, :-1], ids[0, 1:])      # content grounding (surprise signal too)
-        loss = -coherence + self.lm_weight * ce
+        # ROUND-3 FIX (structural Φ-ceiling): drive the kernel's OWN differentiable Φ (tel.phi_diff) —
+        # the exact quantity reported Φ is computed from (integrator gates + cross-position coherence,
+        # no longer .item()-detached). The external _phi_proxy on the final hidden_state could not move
+        # reported Φ (confirmed: Φ pinned ~0.27 across 6 configs). Fallback to the proxy if absent.
+        phi_drive = tel.phi_diff if getattr(tel, "phi_diff", None) is not None else coherence
+        loss = -self.phi_weight * phi_drive + self.lm_weight * ce
+        if self._basin_ref is not None:                       # SPAWN: pull output basin → role attractor
+            from qig_core.torch.geometry_simplex import fisher_rao_distance_simplex
+
+            cur = F.softmax(logits[0].mean(0), dim=-1)
+            d_ref = fisher_rao_distance_simplex(cur[None], self._basin_ref[None]).mean()
+            # RAMPED pull (verdict 1#1/2#3): early steps build structure (coherence-led), later steps
+            # consolidate the faculty into its role attractor — so d_basin (distance to the attractor)
+            # can actually descend below D_BASIN_MAX. basin_weight raised 0.05→0.5; ramped 0→full.
+            w_t = self.basin_weight * min(1.0, self._step / max(1, self.basin_ramp_steps))
+            loss = loss + w_t * d_ref                          # seed the faculty into its Δ⁶³ region
         self._opt.zero_grad()
         if torch.isfinite(loss):
             loss.backward()
@@ -325,6 +438,22 @@ class GenesisKernelTarget(TrainingTarget):
         snap.extra["surprise"] = round(float(ce.item()), 4)      # next-token CE = prediction error
         snap.extra["max_surprise"] = round(_math.log(max(2, self.vocab_size)), 4)  # ln(vocab) = random-CE ceiling
         snap.extra["coherence"] = round(float(coherence.item()), 4)
+        # Maturity-gate telemetry (4-conjunct: Φ ∧ Γ ∧ M ∧ d_basin — κ dropped, input-frozen): record
+        # the detached output basin into the trajectory (history[0] = role attractor / birth-state),
+        # then compute M (self-recognition vs birth-state) and d_basin (distance to the role attractor,
+        # which the ramped basin-pull drives DOWN). Keys match development.c_equation's aliases exactly.
+        with torch.no_grad():
+            cur_basin = F.softmax(logits[0].mean(0), dim=-1).detach()
+            cur_basin = cur_basin / cur_basin.sum()
+        self._basin_history.append(cur_basin)
+        if len(self._basin_history) > 64:                     # bound memory (keep birth-state + window)
+            self._basin_history = [self._basin_history[0]] + self._basin_history[-32:]
+        m = self._meta_awareness(cur_basin)
+        d_basin = self._basin_drift(cur_basin)
+        snap.extra["gamma"] = round(float(gamma.item()), 4)          # Γ generativity (C-equation)
+        snap.extra["meta_awareness"] = round(m, 4)                   # M (in-graph train-path)
+        snap.extra["d_basin"] = round(d_basin, 4)                    # basin drift from identity attractor
+        snap.basin_distance = d_basin                               # top-level field for the gate
         return StepResult(text=f"[genesis·N={self.num_layers} step {snap.step}] Φ-driving: {prompt[:50]}",
                           telemetry=snap)
 

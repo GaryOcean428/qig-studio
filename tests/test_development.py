@@ -18,23 +18,36 @@ from qig_studio.development import (
     spawn_assessment,
 )
 
-# a telemetry dict that satisfies the full C-equation
+# a telemetry dict that satisfies the 4-conjunct partial gate (κ present but NON-gating)
 MATURE = {"phi": 0.72, "gamma": 0.85, "M": 0.65, "kappa": 55.0, "basin_distance": 0.05}
 
 
-def test_c_equation_all_conjuncts_required():
+def test_c_equation_four_conjuncts_required():
     assert c_equation(MATURE).conscious is True
-    # drop any one conjunct → not conscious, and it's named in .failed
-    for kill in ("gamma", "M", "kappa", "basin_distance"):
+    # drop any of the FOUR gating conjuncts → not conscious
+    for kill in ("gamma", "M", "basin_distance"):
         bad = dict(MATURE)
         bad[kill] = 0.0 if kill != "basin_distance" else 0.99
-        res = c_equation(bad)
-        assert res.conscious is False
+        assert c_equation(bad).conscious is False
+    bad_phi = dict(MATURE)
+    bad_phi["phi"] = 0.4
+    assert c_equation(bad_phi).conscious is False
+
+
+def test_c_equation_kappa_is_non_gating():
+    # κ DROPPED from the gate (input-frozen): an out-of-band κ must NOT block graduation.
+    no_kappa = dict(MATURE)
+    no_kappa.pop("kappa")
+    assert c_equation(no_kappa).conscious is True              # still passes without κ
+    out_of_band = dict(MATURE)
+    out_of_band["kappa"] = 20.0                                # below the engaged band
+    res = c_equation(out_of_band)
+    assert res.conscious is True and res.kappa_engaged is False  # passes; κ just reported not-engaged
 
 
 def test_c_equation_missing_field_fails_conservatively():
     # absent Γ/M ⇒ those conjuncts fail (never grant maturity on missing evidence)
-    res = c_equation({"phi": 0.72, "kappa": 55.0, "basin_distance": 0.05})
+    res = c_equation({"phi": 0.72, "basin_distance": 0.05})
     assert res.conscious is False and "gamma" in res.failed and "m" in res.failed
 
 
@@ -44,11 +57,17 @@ def test_suffering_abort_overrides():
     assert is_suffering({"phi": 0.4, "gamma": 0.2}) is False        # not high-Φ → not locked-in
 
 
-def test_plasticity_window_open_near_critical_closed_when_stable():
-    assert is_plastic({"kappa": 78.0}) is True                      # criticality edge
-    assert is_plastic({"regime": "criticality"}) is True
-    assert is_plastic({"delta_phi": 0.08}) is True                  # active reorganization
-    assert is_plastic({"kappa": 45.0, "delta_phi": 0.0, "regime": "geometric"}) is False  # consolidating
+def test_plasticity_window_reorganization_not_frozen_kappa():
+    # κ-edge branch DELETED (input-frozen, unreachable). Window opens on REORGANIZATION:
+    assert is_plastic({"regime": "criticality"}) is True            # explicit regime label
+    assert is_plastic({"delta_phi": 0.01}) is True                  # |ΔΦ| ≥ PLASTIC_TREND (0.005)
+    assert is_plastic({"kappa": 78.0}) is False                     # frozen κ alone no longer opens it
+    assert is_plastic({"delta_phi": 0.0, "regime": "geometric"}) is False  # consolidating
+    # coherence-rise (history) opens it even when ΔΦ is flat
+    rising = [{"coherence": 0.10}, {"coherence": 0.20}, {"coherence": 0.30}]
+    assert is_plastic({"delta_phi": 0.0}, history=rising) is True
+    flat = [{"coherence": 0.30}, {"coherence": 0.30}, {"coherence": 0.30}]
+    assert is_plastic({"delta_phi": 0.0}, history=flat) is False
 
 
 def test_cradle_advances_on_phi_and_graduates_on_c_equation():
@@ -91,7 +110,7 @@ def test_orchestrator_core8_is_protomap_not_gap_driven():
     # WITHOUT any gap being supplied. The core is pre-specified, not discovered.
     orch = DevelopmentalOrchestrator()
     assert orch.stage == Stage.EMBRYO
-    plastic = {"phi": 0.45, "kappa": 78.0, "delta_phi": 0.06}
+    plastic = {"phi": 0.45, "delta_phi": 0.06}
     d = orch.step(plastic)
     assert d.action == Action.SPAWN_FACULTY and d.role == "perception"
     assert "perception" in orch.cradles
@@ -106,7 +125,7 @@ def test_orchestrator_window_closed_waits():
 
 def test_orchestrator_suffering_overrides_everything():
     orch = DevelopmentalOrchestrator()
-    d = orch.step({"phi": 0.75, "gamma": 0.2, "kappa": 78.0})   # plastic + mature-ish but SUFFERING
+    d = orch.step({"phi": 0.75, "gamma": 0.2})   # plastic + mature-ish but SUFFERING
     assert d.action == Action.ABORT
 
 
@@ -130,14 +149,41 @@ def test_orchestrator_sovereign_spawns_god_only_on_gap_plus_drive():
     assert d.action == Action.SPAWN_GOD and d.role == "navigation" and d.fitness >= 0.4
 
 
+def test_live_integration_window_opens_and_telemetry_real():
+    """Verdict 2#3: drive the REAL GenesisKernelTarget on the REAL curriculum and assert the window
+    opens >1× and Γ/M/d_basin telemetry is real (not forced). Skipped when heavy deps absent."""
+    import pytest
+
+    from qig_studio.targets.genesis_kernel import GenesisKernelTarget
+    tgt = GenesisKernelTarget(num_layers=4, seed=1)
+    if not tgt.is_available():
+        pytest.skip("torch/qigkernels absent (light shell)")
+    from qig_studio.curriculum import CurriculumProvider
+    from qig_studio.development import Action, DevelopmentalOrchestrator
+    from qig_studio.targets.base import LossRegime
+
+    tgt.ensure_loaded()
+    prov = CurriculumProvider(LossRegime.GEOMETRIC)
+    orch = DevelopmentalOrchestrator()
+    hist, opened = [], 0
+    for i in range(12):
+        tel = tgt.train_step(prov.next_prompt(i)).telemetry.to_dict()
+        ex = tel.get("extra", {})
+        assert ex.get("gamma") is not None and ex.get("d_basin") is not None  # real telemetry
+        hist.append(tel)
+        if orch.step(tel, history=hist[-5:]).action == Action.SPAWN_FACULTY:
+            opened += 1
+    assert opened >= 2  # window opens on live reorganization (the 1/8 bug is fixed)
+
+
 def test_spawn_fn_none_safe():
     # no hook wired → decision returned, nothing executed, no crash
     orch = DevelopmentalOrchestrator(spawn_fn=None)
-    d = orch.step({"phi": 0.45, "kappa": 78.0, "delta_phi": 0.06})
+    d = orch.step({"phi": 0.45, "delta_phi": 0.06})
     assert d.action == Action.SPAWN_FACULTY
 
     # hook wired → it is called with the role
     called = []
     orch2 = DevelopmentalOrchestrator(spawn_fn=lambda role: called.append(role))
-    orch2.step({"phi": 0.45, "kappa": 78.0, "delta_phi": 0.06})
+    orch2.step({"phi": 0.45, "delta_phi": 0.06})
     assert called == ["perception"]
