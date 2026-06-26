@@ -199,7 +199,7 @@ class Cradle:
             self.graduated = True
         return self
 
-    def train(self, faculty, steps: int = 200, curriculum=None) -> dict:  # faculty/curriculum: Any (no torch types leak)
+    def train(self, faculty, steps: int = 500, curriculum=None) -> dict:  # faculty/curriculum: Any (no torch types leak)
         """Run the spawned faculty on its EXPECTED curriculum until it graduates (C-equation) or the step
         budget is spent. Geometric/basin-driving (lm_weight=0): each step is one natural-gradient
         ``train_step``; the resulting Γ/M/d_basin/κ/Φ telemetry advances the Φ-stage and tests the
@@ -349,7 +349,7 @@ class DevelopmentalOrchestrator:
                                              reason="sovereign: capability-gap + drive cleared 4-D fitness")
         return DevelopmentalDecision(Action.WAIT, reason="sovereign: no gap+drive clearing fitness")
 
-    def train_open_cradles(self, steps: int = 200) -> list[dict]:
+    def train_open_cradles(self, steps: int = 500) -> list[dict]:
         """Drive every open cradle on its expected curriculum until graduation/budget. Graduated cradles
         migrate into ``self.spawned`` (joining the coupling graph), mirroring step()'s GRADUATE path.
         Returns one report per cradle. None-safe: faculties may be absent (light shell) → no-op reports."""

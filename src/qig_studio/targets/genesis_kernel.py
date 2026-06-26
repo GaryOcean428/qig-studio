@@ -62,10 +62,11 @@ class GenesisKernelTarget(TrainingTarget):
         locality_radius: int | None = None,
         coordizer: Any = None,
         lm_weight: float = 0.1,
+        phi_weight: float = 8.0,
         role: str | None = None,
         basin_template: Any = None,
-        basin_weight: float = 0.5,
-        basin_ramp_steps: int = 100,
+        basin_weight: float = 5.0,    # validated: balanced vs phi_weight=8 → d_basin converges <0.15 while Φ holds
+        basin_ramp_steps: int = 150,  # ramp the pull 0→full over this many steps (develop Φ first, then consolidate)
     ) -> None:
         self.num_layers = num_layers
         self.locality_radius = locality_radius
@@ -86,6 +87,7 @@ class GenesisKernelTarget(TrainingTarget):
         self.seed = seed
         self.lr = lr
         self.lm_weight = lm_weight  # grounding weight for next-token CE; the loss is Φ-driving (geometric)
+        self.phi_weight = float(phi_weight)  # strength of the differentiable-Φ drive (8L+300 steps → Φ≥0.65 held)
         # Faculty-spawn seed: a role + its Δ⁶³ identity attractor (a point on the simplex). The kernel is
         # PULLED toward this basin in the geometric loss (basin_weight) and measures its drift FROM it
         # (d_basin) and recognition OF it (M). None → generic genesis neocortex (no basin pull, d_basin=0).
@@ -405,10 +407,15 @@ class GenesisKernelTarget(TrainingTarget):
         self._step += 1
         ids, coords = self._encode(prompt)
         logits, tel = self._kernel(ids, return_telemetry=True, coords=coords)
-        coherence = self._phi_proxy(tel.hidden_state)        # differentiable Φ-driver
+        coherence = self._phi_proxy(tel.hidden_state)        # external proxy (monitoring / fallback)
         gamma = self._gamma_proxy(logits)                    # differentiable generation-health (in-graph)
         ce = F.cross_entropy(logits[0, :-1], ids[0, 1:])      # content grounding (surprise signal too)
-        loss = -coherence + self.lm_weight * ce
+        # ROUND-3 FIX (structural Φ-ceiling): drive the kernel's OWN differentiable Φ (tel.phi_diff) —
+        # the exact quantity reported Φ is computed from (integrator gates + cross-position coherence,
+        # no longer .item()-detached). The external _phi_proxy on the final hidden_state could not move
+        # reported Φ (confirmed: Φ pinned ~0.27 across 6 configs). Fallback to the proxy if absent.
+        phi_drive = tel.phi_diff if getattr(tel, "phi_diff", None) is not None else coherence
+        loss = -self.phi_weight * phi_drive + self.lm_weight * ce
         if self._basin_ref is not None:                       # SPAWN: pull output basin → role attractor
             from qig_core.torch.geometry_simplex import fisher_rao_distance_simplex
 
