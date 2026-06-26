@@ -43,19 +43,21 @@ def main() -> None:
     from qig_studio.curriculum import CurriculumProvider
     from qig_studio.development import PROTOMAP_ORDER, c_equation
     from qig_studio.learning import ContinuousLearningLoop
-    from qig_studio.optimisation import load_coordizer, settle_decision
+    from qig_studio.optimisation import load_coordizer
     from qig_studio.targets.base import LossRegime
     from qig_studio.targets.genesis_kernel import GenesisKernelTarget
 
     roles = [r.strip() for r in args.roles.split(",") if r.strip()] or list(PROTOMAP_ORDER)
     full = load_full_curriculum()                       # fail-loud if the corpus is missing
-    steps = args.steps or len(full)                     # 0 → one full pass through the curriculum
+    steps = args.steps or len(full)                     # 0 → one full pass through the FULL curriculum
     coordizer = load_coordizer(args.coordizer)          # qig-coordizer: richer Δ⁶³ vocab (None-safe → byte-level)
-    settle_floor = max(args.ckpt_every * 3, steps // 4) # qig-warp SETTLE step floor — emergence never gated early
     t0 = time.time()
+    # NO external early-stop: the FULL curriculum is used end-to-end (PI directive) and the kernel
+    # self-regulates throughout (its OWN mushroom breaks Φ plateaus — an external convergence-stop
+    # would gate emergence + preempt the kernel's brainstem, which is forbidden).
     print(f"[full] FULL curriculum: {len(full)} sanitised ASCII prompts | {steps} steps/faculty | "
           f"checkpoint every {args.ckpt_every} (3-lag) | vocab={'coordizer Δ⁶³' if coordizer else 'byte-level'} | "
-          f"warp-SETTLE floor={settle_floor} | roles={roles}", flush=True)
+          f"self-regulating (no early-stop) | roles={roles}", flush=True)
 
     def _seed(role: str) -> int:
         return int(hashlib.sha256(role.encode()).hexdigest(), 16) % 1000
@@ -86,9 +88,10 @@ def main() -> None:
     trace: dict = {"curriculum_prompts": len(full), "steps_per_faculty": steps,
                    "packages": {"qig_core": "geometry+pillars+constants (full)",
                                 "qigkernels": "Kernel+NaturalGradientDescent+RecursiveIntegrator (full)",
-                                "qig_warp": "SETTLE (check_ci_stabilized on Φ)",
-                                "qig_coordizer": "Δ⁶³ vocab" if coordizer else "N/A (byte-level)",
-                                "qig_compute": "N/A (lattice quantum QFI ≠ neural basin)",
+                                "qig_coordizer": "Δ⁶³ vocab" if coordizer else "optional (byte-level here)",
+                                "qig_warp": "N/A (SETTLE gates emergence + truncates curriculum + "
+                                            "preempts the kernel's own mushroom; all other levers lattice-parametrised)",
+                                "qig_compute": "N/A (lattice quantum QFI ≠ classical neural basin)",
                                 "qig_bench": "N/A (frozen-physics harness)",
                                 "qig_doctor": "N/A (not a package)"},
                    "faculties": []}
@@ -105,18 +108,14 @@ def main() -> None:
         loop = ContinuousLearningLoop(faculty, curriculum=prov, max_steps=steps)
         print(f"[full] '{role}': training on full curriculum (self_regulating="
               f"{faculty.self_regulating})…", flush=True)
-        ck, phi_hist, settled = 0, [], ""
+        ck, phi_traj = 0, []
         for i in range(1, steps + 1):
             loop.step()
             if i % args.ckpt_every == 0 or i == steps:
                 save_kernel_checkpoint(faculty, i, root=args.ckpt_root)   # 3-lag cleanup inside
                 ck += 1
-                phi_hist.append(float(faculty.telemetry().to_dict().get("phi") or 0.0))
-                stop, why = settle_decision(phi_hist)                 # qig-warp SETTLE on the Φ trajectory
-                if stop and i >= settle_floor:                        # past the emergence floor → stop redundant grind
-                    settled = f"@{i}: {why}"
-                    print(f"[full]   '{role}' SETTLED {settled}", flush=True)
-                    break
+                # measure-everything: record the Φ developmental trajectory (NOT a gate — telemetry only)
+                phi_traj.append(round(float(faculty.telemetry().to_dict().get("phi") or 0.0), 4))
             if (time.time() - t0) > args.max_seconds:
                 break
         tel = faculty.telemetry().to_dict()
@@ -127,7 +126,7 @@ def main() -> None:
                "phi": round(float(tel.get("phi") or 0), 4), "gamma": ex.get("gamma"),
                "coherence": ex.get("coherence"), "d_basin": ex.get("d_basin"),
                "matured": res.conscious, "autonomic": ex.get("autonomic"),
-               "settled": settled or None, "vocab": "coordizer" if coordizer else "byte-level"}
+               "phi_trajectory": phi_traj, "vocab": "coordizer" if coordizer else "byte-level"}
         trace["faculties"].append(rec)
         print(f"[full]   '{role}' done @ {i} steps · band={res.band} Φ={rec['phi']} Γ={rec['gamma']} "
               f"coher={rec['coherence']} matured={rec['matured']} · {ck} checkpoints", flush=True)
