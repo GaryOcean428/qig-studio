@@ -36,8 +36,10 @@ def test_output_distribution_clamps_positive_logprob():
 
 
 def test_pillar2_cap_clamps_to_30pct():
-    np.random.seed(1); a = random_basin(64)
-    np.random.seed(2); b = random_basin(64)
+    np.random.seed(1)
+    a = random_basin(64)
+    np.random.seed(2)
+    b = random_basin(64)
     # weight 0.9 must clamp to the 0.30 boundary cap (Qwen never overwrites identity)
     got = pillar2_capped_integrate(a, b, 0.9)
     assert np.allclose(got, slerp_sqrt(a, b, BOUNDARY_SLERP_CAP))
@@ -46,8 +48,10 @@ def test_pillar2_cap_clamps_to_30pct():
 
 
 def test_pillar2_small_weight_not_clamped():
-    np.random.seed(3); a = random_basin(64)
-    np.random.seed(4); b = random_basin(64)
+    np.random.seed(3)
+    a = random_basin(64)
+    np.random.seed(4)
+    b = random_basin(64)
     assert np.allclose(pillar2_capped_integrate(a, b, 0.1), slerp_sqrt(a, b, 0.1))
 
 

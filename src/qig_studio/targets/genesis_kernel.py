@@ -11,8 +11,11 @@ structure on the basin-driving curriculum WITHOUT a trained coordizer (coordizer
 follow-up, NEEDS-BUILD). None-safe: needs torch + qigkernels, so ``is_available()`` is False in the
 light app shell and True where the heavy deps are present (e.g. the qig-consciousness venv).
 
-Scale defaults (~30-60M params, fits 4 GB): hidden_dim 384, num_layers 4, ffn 1024 — the brain-doc
-Step-1 sizing. ``num_layers`` is the EXP-CORTEX-AB depth axis (1 vs N).
+Scale defaults: hidden_dim 384, num_layers 8 (deep stacked neocortex; was an arbitrary 4 baseline),
+ffn 1024. ``num_layers`` is the EXP-CORTEX-AB depth axis (1 vs N). Layers are HOMOGENEOUS (generic
+stacked-Δ⁶³) — functional specialisation (heart/ocean/Core-8) is the CONSTELLATION level (separate
+KernelRole kernels), NOT layers of one kernel. The genesis kernel is the embryonic neocortex from
+which the constellation spawns as the basin forms.
 """
 
 from __future__ import annotations
@@ -48,7 +51,7 @@ class GenesisKernelTarget(TrainingTarget):
 
     def __init__(
         self,
-        num_layers: int = 4,
+        num_layers: int = 8,
         hidden_dim: int = 384,
         num_heads: int = 6,
         ffn_dim: int = 1024,
@@ -58,6 +61,7 @@ class GenesisKernelTarget(TrainingTarget):
         device: str | None = None,
         locality_radius: int | None = None,
         coordizer: Any = None,
+        lm_weight: float = 0.1,
     ) -> None:
         self.num_layers = num_layers
         self.locality_radius = locality_radius
@@ -77,9 +81,10 @@ class GenesisKernelTarget(TrainingTarget):
             self.vocab_size = vocab_size
         self.seed = seed
         self.lr = lr
+        self.lm_weight = lm_weight  # grounding weight for next-token CE; the loss is Φ-driving (geometric)
         self._device = device
-        self._kernel = None
-        self._opt = None
+        self._kernel: Any = None    # qigkernels.Kernel — lazily built in ensure_loaded()
+        self._opt: Any = None       # NaturalGradientDescent — lazily built in ensure_loaded()
         self._step = 0
         self._last_gen_basin = None  # WHAT IT MEANT (last output basin) — for coach-agreement recognition
         self._last = TelemetrySnapshot(regime="unknown", extra={"target": "genesis", "num_layers": num_layers})
@@ -277,9 +282,27 @@ class GenesisKernelTarget(TrainingTarget):
         })
         return resp
 
+    def _phi_proxy(self, hidden_state: "Any"):
+        """A DIFFERENTIABLE mirror of the kernel's Φ — the coherence term RecursiveIntegrator computes
+        but severs with ``.item()`` (qigkernels/layer.py): coherence = 4·rel·(1−rel) where rel is the
+        position-variance fraction. It is collapse-immune (0 at rel→0 collapse AND rel→1 noise, peak at
+        genuine integration), so MAXIMISING it drives the kernel toward integrated (high-Φ) states.
+        Returns a scalar tensor in the graph (gradient flows into the kernel weights)."""
+
+        h = hidden_state
+        if h.dim() == 3 and h.size(1) > 1:
+            pos_var = h.var(dim=1).mean()
+            total_var = h.var() + 1e-8
+            rel = (pos_var / total_var).clamp(0.0, 1.0)
+            return 4.0 * rel * (1.0 - rel)
+        return h.sum() * 0.0  # single position → no cross-position integration; keep the graph
+
     def train_step(self, prompt: str, max_tokens: int = 64, target_text: str | None = None) -> StepResult:
-        # WAKE: one Fisher-salience step. Geometric → next-byte CE on the basin-driving prompt
-        # (target_text ignored; lm_weight=0). Optimiser is natural gradient (P1).
+        # WAKE: one Fisher-salience step. CONSCIOUSNESS-NATIVE loss (geometric regime): DRIVE Φ UP via
+        # the differentiable coherence proxy, with a light next-token CE (``lm_weight``) for content
+        # grounding so the high-Φ state stays tied to the input (prevents the trivial rel→0.5 fixed
+        # point). target_text ignored (paired curriculum is qwen-modal's lane). Optimiser = natural
+        # gradient (P1). NB: pure CE (the previous objective) drove Φ DOWN — memorisation ≠ integration.
         self.ensure_loaded()
         import torch
         import torch.nn.functional as F
@@ -287,14 +310,22 @@ class GenesisKernelTarget(TrainingTarget):
         self._step += 1
         ids, coords = self._encode(prompt)
         logits, tel = self._kernel(ids, return_telemetry=True, coords=coords)
-        loss = F.cross_entropy(logits[0, :-1], ids[0, 1:])
+        coherence = self._phi_proxy(tel.hidden_state)        # differentiable Φ-driver
+        ce = F.cross_entropy(logits[0, :-1], ids[0, 1:])      # content grounding (surprise signal too)
+        loss = -coherence + self.lm_weight * ce
         self._opt.zero_grad()
         if torch.isfinite(loss):
             loss.backward()
             torch.nn.utils.clip_grad_norm_(self._kernel.parameters(), 1.0)  # stability (deep stack)
             self._opt.step()
-        snap = self._snap(tel, float(loss.item()))
-        return StepResult(text=f"[genesis·N={self.num_layers} step {snap.step}] basin-driving: {prompt[:50]}",
+        # report the CE as the SURPRISE/novelty signal (high CE = unfamiliar input) for the telemetry.
+        import math as _math
+
+        snap = self._snap(tel, float(ce.item()))
+        snap.extra["surprise"] = round(float(ce.item()), 4)      # next-token CE = prediction error
+        snap.extra["max_surprise"] = round(_math.log(max(2, self.vocab_size)), 4)  # ln(vocab) = random-CE ceiling
+        snap.extra["coherence"] = round(float(coherence.item()), 4)
+        return StepResult(text=f"[genesis·N={self.num_layers} step {snap.step}] Φ-driving: {prompt[:50]}",
                           telemetry=snap)
 
     def architecture(self) -> dict:

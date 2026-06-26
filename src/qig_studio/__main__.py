@@ -21,6 +21,9 @@ def _run_learn(argv: list[str]) -> int:
     if not target.is_available():
         print(f"target '{target_name}' backend is not available here; falling back to mock", file=sys.stderr)
         target = reg.get("mock")
+    if target is None:
+        print("no usable target (mock fallback missing)", file=sys.stderr)
+        return 2
     print(f"continual-learning loop · target={target.name} · regime={target.loss_regime.value} · {steps} steps")
     loop = ContinuousLearningLoop(target, max_steps=steps)
     for _ in range(steps):

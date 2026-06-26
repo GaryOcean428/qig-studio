@@ -58,15 +58,23 @@ def _wave_report(series: list[float], name: str) -> dict:
     for k in range(1, len(acf) - 1):
         if acf[k] > acf[k - 1] and acf[k] >= acf[k + 1] and acf[k] > peak:
             peak, period = acf[k], k + 1  # +1: acf index 0 == lag 1
-    # verdict: needs REAL amplitude (else a pure trend's ~0 detrended residual is just numerical
-    # noise whose autocorr peaks spuriously) AND either a clear repeating period or regular
-    # direction changes.
-    wavey = amp > 1e-3 and ((peak > 0.30 and period >= 2) or (0.25 <= osc_per_turn <= 0.95))
+    # damping: detrended amplitude in the first half vs the second half. A DECAYING transient
+    # (settling to a fixed point) is NOT a sustained wave even if early oscillation looks wavy.
+    half = n // 2
+    amp1, amp2 = float(np.std(d[:half])), float(np.std(d[half:]))
+    damping = "settling" if amp2 < 0.5 * amp1 else ("growing" if amp2 > 1.8 * amp1 else "sustained")
+    # verdict: needs REAL amplitude AND genuine autocorrelation structure (peak>0.2) — regular
+    # zero-crossings ALONE over-call jitter as a wave (autocorr ~0.15 is noise, not a wave).
+    wavey = amp > 1e-3 and peak > 0.20 and (period >= 2 or 0.25 <= osc_per_turn <= 0.95)
+    verdict = "WAVE-LIKE" if wavey else "not-wave-like"
+    if wavey and damping == "settling":
+        verdict = "damped-transient"   # real early oscillation that decays to a fixed point
     return {
-        "name": name, "verdict": "WAVE-LIKE" if wavey else "not-wave-like",
+        "name": name, "verdict": verdict,
         "drift_slope_per_turn": round(float(slope), 5),
         "amplitude_detrended": round(amp, 4),
-        "dominant_period_turns": period if peak > 0.30 else None,
+        "amp_first_half": round(amp1, 4), "amp_second_half": round(amp2, 4), "damping": damping,
+        "dominant_period_turns": period if peak > 0.20 else None,
         "autocorr_peak": round(peak, 3),
         "oscillations_per_turn": round(osc_per_turn, 3),
         "mean": round(float(x.mean()), 4), "min": round(float(x.min()), 4), "max": round(float(x.max()), 4),
@@ -197,7 +205,8 @@ def main() -> None:
                                           train_steps=args.train_steps, max_tokens=args.max_tokens)
             r["turn"] = turn
             rows.append(r)
-            f.write(json.dumps(r) + "\n"); f.flush()
+            f.write(json.dumps(r) + "\n")
+            f.flush()
             exp = r.get("experience", {})
             print(f"[{turn:03d}] Φ={r.get('phi_after')} {exp.get('glyph','')}{exp.get('band','')} "
                   f"{exp.get('emotion','')} M_self={r.get('kernel_said_M_self')} "
