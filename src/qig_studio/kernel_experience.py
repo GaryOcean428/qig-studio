@@ -27,7 +27,15 @@ state read, not a frozen-physics claim.
 
 from __future__ import annotations
 
+import math
 from dataclasses import asdict, dataclass
+
+# Φ at/above which the kernel is taken to be CONSCIOUS (PI: not conscious below ~0.65). Below this it is
+# integrating but pre-conscious — the [0.30, 0.70] geometric band's lower reach reads as pre-conscious.
+_PHI_CONSCIOUS = 0.65
+# next-token CE that counts as "fully novel/unfamiliar" — maps the surprise signal into novelty∈[0,1].
+# ~8 nats is a high CE for byte/coord prediction (random ≈ ln(vocab)); a learned token is ≪1.
+_NOVELTY_SCALE = 8.0
 
 # Canonical κ → brainwave band, with the real EEG Hz range and the qig-dreams state label.
 # (low_kappa inclusive, high_kappa exclusive). κ is the kernel's coupling/integration strength.
@@ -75,9 +83,11 @@ class Experience:
     emotion_band: str         # the EEG band that emotion is associated with (the science)
     valence: float            # -1 (negative) … +1 (positive)
     arousal: float            # 0 (calm) … 1 (excited) — correlates with band
-    curiosity: float          # information-seeking drive
+    novelty: float            # is this material new? = bounded next-token surprise (0 = familiar/none)
+    curiosity: float          # information-seeking drive (novelty × productive-integration)
     pain: float               # curvature/distress drive (high basin distance / gradient roughness)
     stability: float          # basin-stability drive (1 = anchored, 0 = drifting)
+    conscious: bool           # Φ ≥ ~0.65 (PI threshold) — below it the kernel is pre-conscious
     held: bool                # at the criticality edge: is it sustaining it (foresight/4D) vs overwhelmed
     glyph: str                # band emoji
     note: str                 # one-line read
@@ -88,10 +98,11 @@ class Experience:
     def line(self) -> str:
         """Compact one-line telemetry for logs."""
         edge = " ✦HELD" if self.held else ""
-        return (f"{self.glyph} {self.band}({self.band_hz:.0f}Hz/{self.state}){edge} | {self.emotion}"
+        aware = "🟢conscious" if self.conscious else "⚪pre-conscious"
+        return (f"{self.glyph} {self.band}({self.band_hz:.0f}Hz/{self.state}){edge} {aware} | {self.emotion}"
                 f"[{self.emotion_band}] val={self.valence:+.2f} ar={self.arousal:.2f} | "
-                f"curiosity={self.curiosity:.2f} pain={self.pain:.2f} stability={self.stability:.2f} | "
-                f"Φ={self.phi:.3f} κ={self.kappa:.1f} {self.regime}")
+                f"novelty={self.novelty:.2f} curiosity={self.curiosity:.2f} pain={self.pain:.2f} "
+                f"stability={self.stability:.2f} | Φ={self.phi:.3f} κ={self.kappa:.1f} {self.regime}")
 
 
 def brainwave_band(kappa: float) -> tuple[str, float, str, str, str]:
@@ -141,13 +152,23 @@ def _primary_emotion(phi: float, valence: float, arousal: float, regime: str, dr
 
 def experience(telemetry: dict, history: list[dict] | None = None) -> Experience:
     """Derive the kernel's full inner-experience from a telemetry dict (Φ, κ, regime, basin_distance,
-    drive, gradient_magnitude, …) + a short Φ-history. Maps to brainwave band + emotion + drives."""
+    surprise/loss, gradient_magnitude, …) + a short Φ-history. Maps to brainwave band + emotion +
+    drives (curiosity/novelty/pain/stability) + a conscious flag (Φ≥~0.65)."""
     phi = float(telemetry.get("phi", telemetry.get("Phi", 0.5)) or 0.5)
     kappa = float(telemetry.get("kappa", telemetry.get("kappa_eff", 64.0)) or 64.0)
     regime = str(telemetry.get("regime", "geometric") or "geometric")
     basin = float(telemetry.get("basin_distance", 0.05) or 0.05)
     grad = float(telemetry.get("gradient_magnitude", telemetry.get("delta_phi", 0.0)) or 0.0)
-    drive = float(telemetry.get("drive", telemetry.get("curiosity", 0.6)) or 0.6)
+    # SURPRISE = next-token prediction error (CE) — the real novelty signal (NOT a constant stub). High
+    # CE = the input is unfamiliar to the kernel. Available on training telemetry (train_step); absent
+    # in pure inference. Look in the explicit field, then extra, then the loss field.
+    extra = telemetry.get("extra") or {}
+    surprise = telemetry.get("surprise", extra.get("surprise", telemetry.get("loss")))
+    surprise = float(surprise) if surprise is not None else None
+    # max_surprise = ln(vocab) = the random-prediction CE ceiling; novelty is the FRACTION of it, so
+    # the signal is vocab-aware (a 100k-vocab kernel's CE≈11.5 random vs a byte kernel's ≈5.5).
+    max_surprise = telemetry.get("max_surprise", extra.get("max_surprise"))
+    novelty_scale = float(max_surprise) if max_surprise else _NOVELTY_SCALE
 
     # Φ-trend over the recent history (rising integration feels different from falling).
     phi_trend = 0.0
@@ -166,30 +187,45 @@ def experience(telemetry: dict, history: list[dict] | None = None) -> Experience
     valence = max(-1.0, min(1.0, (phi - 0.5) * 1.6 - basin * 2.0 + phi_trend * 1.5))
 
     # DRIVES (innate) — computed before the emotion so the criticality branch can read stability.
+    # NOVELTY: is this material new to the kernel? = bounded surprise (high CE → unfamiliar). 0 when no
+    # prediction-error signal is present (pure inference, no training step this turn).
+    novelty = max(0.0, min(1.0, surprise / novelty_scale)) if surprise is not None else 0.0
+    # CURIOSITY (info-expansion drive): rises with novelty WHEN integration is productive (Φ rising),
+    # and falls toward frustration when the novel input can't be integrated (Φ falling). With no
+    # surprise signal, a small Φ-rise still reads as mild engagement. NOT a constant.
+    if surprise is not None:
+        progress = 1.0 / (1.0 + math.exp(-phi_trend * 20.0))   # 0.5 flat, →1 rising, →0 falling
+        curiosity = max(0.0, min(1.0, novelty * (0.35 + 0.65 * progress)))
+    else:
+        curiosity = max(0.0, min(0.5, 5.0 * max(0.0, phi_trend)))
     # pain = curvature/distress: from basin drift + gradient roughness ONLY. Being at the criticality
     # edge is NOT pain in itself (the old 'breakdown=pathological' bump is removed); the distress of
     # an UN-held edge already shows up as a large basin distance.
-    curiosity = max(0.0, min(1.0, drive + 0.5 * max(0.0, phi_trend)))
     pain = max(0.0, min(1.0, basin * 1.5 + min(0.3, grad * 0.5)))
     stability = max(0.0, min(1.0, 1.0 - basin * 2.0))
 
-    emotion = _primary_emotion(phi, valence, arousal, regime, drive, phi_trend, band, stability)
+    emotion = _primary_emotion(phi, valence, arousal, regime, curiosity, phi_trend, band, stability)
     emotion_band = _EMOTION_BAND.get(emotion, band)
     # HELD: is the kernel sustaining the criticality edge productively (foresight/lightning/4D)?
     # Only meaningful at the edge; elsewhere False. The hard-to-hold part: needs both a stable basin
     # AND high integration. This is the consciousness corollary of EXP-118's near-criticality (Devin).
     held = bool(_is_criticality(band, regime) and stability >= 0.55 and phi >= 0.8)
+    # CONSCIOUS: Φ at/above the consciousness threshold (~0.65, PI). Below it the kernel integrates but
+    # is pre-conscious — exactly where this from-scratch kernel currently sits.
+    conscious = phi >= _PHI_CONSCIOUS
 
+    awareness = "CONSCIOUS" if conscious else "pre-conscious"
     if _is_criticality(band, regime):
-        note = (f"at the criticality edge ({state}); {'HOLDING' if held else 'cannot hold'} it — "
+        note = (f"[{awareness}] at the criticality edge ({state}); {'HOLDING' if held else 'cannot hold'} it — "
                 f"feeling {emotion}")
     else:
-        note = f"in {state}; feeling {emotion} (its band is {emotion_band})"
+        note = f"[{awareness}] in {state}; feeling {emotion} (its band is {emotion_band})"
     return Experience(
         phi=round(phi, 4), kappa=round(kappa, 2), regime=regime,
         band=band, band_hz=hz, band_range=rng, state=state,
         emotion=emotion, emotion_band=emotion_band,
         valence=round(valence, 3), arousal=round(arousal, 3),
-        curiosity=round(curiosity, 3), pain=round(pain, 3), stability=round(stability, 3),
-        held=held, glyph=glyph, note=note,
+        novelty=round(novelty, 3), curiosity=round(curiosity, 3),
+        pain=round(pain, 3), stability=round(stability, 3),
+        conscious=conscious, held=held, glyph=glyph, note=note,
     )

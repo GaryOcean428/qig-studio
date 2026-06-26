@@ -11,6 +11,7 @@ simply doesn't offer it.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 from .base import LossRegime, StepResult, TelemetrySnapshot, TrainingTarget
 from ._qigchat_bridge import consciousness_available, find_consciousness_root, load_qigchat_class
@@ -29,7 +30,7 @@ class KernelTarget(TrainingTarget):
     )
 
     def __init__(self, checkpoint: str | None = None, device: str | None = None) -> None:
-        self._chat = None
+        self._chat: Any = None  # QIGChat — lazily loaded in ensure_loaded()
         self._checkpoint = checkpoint or "checkpoints/gary/latest.pt"
         self._device = device
         self._last = TelemetrySnapshot(extra={"target": "kernel"})

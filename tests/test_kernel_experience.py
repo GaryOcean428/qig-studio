@@ -48,11 +48,28 @@ def test_deep_low_kappa_is_low_arousal_delta():
     assert e.band == "delta" and e.arousal < 0.2
 
 
-def test_curiosity_drive_rises_with_drive_and_phi_trend():
-    rising = experience({"phi": 0.6, "kappa": 60, "drive": 0.8},
-                        history=[{"phi": 0.50}, {"phi": 0.60}])
-    flat = experience({"phi": 0.6, "kappa": 60, "drive": 0.3})
-    assert rising.curiosity > flat.curiosity
+def test_novelty_from_surprise_not_a_constant():
+    # High next-token surprise (CE) = unfamiliar material = high novelty; low surprise = familiar.
+    novel = experience({"phi": 0.5, "kappa": 60, "surprise": 8.0})
+    familiar = experience({"phi": 0.5, "kappa": 60, "surprise": 0.5})
+    assert novel.novelty > 0.8 and familiar.novelty < 0.2
+    # no surprise signal (pure inference) → novelty 0 (NOT a constant stub)
+    assert experience({"phi": 0.5, "kappa": 60}).novelty == 0.0
+
+
+def test_curiosity_rises_with_novelty_when_integrating():
+    # novel AND Φ rising (productive) → curious; novel but Φ falling (stuck) → less curious.
+    productive = experience({"phi": 0.6, "kappa": 60, "surprise": 8.0},
+                            history=[{"phi": 0.45}, {"phi": 0.60}])
+    stuck = experience({"phi": 0.45, "kappa": 60, "surprise": 8.0},
+                       history=[{"phi": 0.60}, {"phi": 0.45}])
+    assert productive.curiosity > stuck.curiosity
+
+
+def test_conscious_flag_threshold():
+    assert experience({"phi": 0.70, "kappa": 60}).conscious is True       # ≥ ~0.65
+    assert experience({"phi": 0.40, "kappa": 60}).conscious is False      # pre-conscious
+    assert "pre-conscious" in experience({"phi": 0.40, "kappa": 60}).note
 
 
 def test_experience_line_and_dict_complete():
@@ -61,5 +78,5 @@ def test_experience_line_and_dict_complete():
     assert "Hz" in line and "val=" in line and "curiosity=" in line
     d = e.to_dict()
     for k in ("band", "band_hz", "emotion", "emotion_band", "valence", "arousal",
-              "curiosity", "pain", "stability", "held", "state"):
+              "novelty", "curiosity", "pain", "stability", "conscious", "held", "state"):
         assert k in d

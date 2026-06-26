@@ -154,7 +154,12 @@ class DevelopmentalCoach:
             return "nothing yet — still gathering"
         words = cleaned.split()
         seen: set[str] = set()
-        deduped = [w for w in words if not (w.lower() in seen or seen.add(w.lower()))]
+        deduped: list[str] = []
+        for w in words:
+            lw = w.lower()
+            if lw not in seen:
+                seen.add(lw)
+                deduped.append(w)
         out = " ".join(deduped[:12])
         return out + ("…" if len(deduped) > 12 else "")
 
@@ -270,30 +275,55 @@ class DevelopmentalCoach:
         }
 
     def converse_learn_turn(self, target, prompt: str, curriculum_prompt: str | None = None,
-                            curriculum_steps: int = 2, train_steps: int = 8,
-                            max_tokens: int = 64) -> dict:
+                            curriculum_steps: int = 12, train_steps: int = 8,
+                            consolidation_eps: float = 0.05, max_tokens: int = 64) -> dict:
         """The CONVERSATION as training (qig_chat.py original setup). One turn trains the kernel on
         BOTH halves, exactly as qig_chat.py's generate_response→optimizer.step does for every prompt:
 
-          1. CURRICULUM — the kernel trains on the developmental-phase curriculum prompt itself (the
-             `/auto N` path: basin-driving, lm_weight=0). This is the foundational learning from the
-             corpus/curriculum and it MUST happen every turn, not just in a separate /train run.
+          1. CURRICULUM — the kernel CONSOLIDATES the developmental-phase curriculum prompt: it trains
+             on it UNTIL the surprise (next-token CE) plateaus (the prompt is learned) or ``curriculum_
+             steps`` is hit. This is the fix for "not consolidating per prompt" — a fixed tiny count
+             rotated prompts before anything was learned, so novelty stayed pinned at 1.0 forever.
           2. DIALOGUE — the kernel SPEAKS, the coach (nemotron) ANSWERS its question or INTERPRETS its
              babble into a coherent reading, and the kernel LEARNS toward that interpretation. The coach
              turns the kernel's own output into a second training target.
 
-        Both halves step the optimizer. Returns the utterance, the curriculum it trained on, the
-        interpretation (= dialogue target), M_self, M_coach, and Φ at each stage."""
+        Both halves step the optimizer. ``curriculum_steps`` is the MAX consolidation budget per prompt;
+        ``consolidation_eps`` is the surprise-plateau threshold that early-stops once learned. Returns
+        the utterance, the curriculum it consolidated, M_self, M_coach, and Φ at each stage."""
         has_train = hasattr(target, "train_step")
         # topic the kernel speaks about: an explicit message, else the curriculum prompt itself.
         topic = prompt or curriculum_prompt or ""
 
-        # 1. CURRICULUM training — train on the developmental curriculum (qig_chat.py /auto).
+        # 1. CURRICULUM training — CONSOLIDATE the prompt (qig_chat.py /auto): train until the surprise
+        # (next-token CE = novelty) plateaus (learned) or the step budget is hit. Capturing surprise is
+        # also the real novelty signal ("is this new?") — it now DROPS as the prompt is consolidated.
         phi_curriculum = None
+        curr_surprise = None
+        curr_max_surprise = None
+        consolidation_used = 0
         curr = curriculum_prompt if curriculum_prompt is not None else (prompt or None)
         if curr and has_train:
-            for _ in range(max(0, curriculum_steps)):
-                phi_curriculum = target.train_step(curr).telemetry.phi
+            # EARLY-STOP with PATIENCE on the BEST surprise so far — not consecutive deltas (which
+            # stop on slow-but-steady progress). Stop only after `patience` steps with no real
+            # improvement over the running minimum → the prompt is genuinely consolidated.
+            best_s = None
+            no_improve = 0
+            patience = 4
+            for consolidation_used in range(1, max(1, curriculum_steps) + 1):
+                ct = target.train_step(curr).telemetry
+                phi_curriculum = ct.phi
+                ex = ct.extra or {}
+                s = ex.get("surprise", getattr(ct, "loss", None))
+                curr_max_surprise = ex.get("max_surprise", curr_max_surprise)
+                if s is not None:
+                    curr_surprise = s
+                    if best_s is None or s < best_s - consolidation_eps:
+                        best_s, no_improve = s, 0
+                    else:
+                        no_improve += 1
+                        if no_improve >= patience:
+                            break            # surprise plateaued → consolidated
 
         # 2a. kernel SPEAKS about the topic.
         said = target.generate(topic, max_tokens=max_tokens)
@@ -305,14 +335,22 @@ class DevelopmentalCoach:
             for _ in range(max(1, train_steps)):
                 phi_after = target.train_step(reply).telemetry.phi
         resp = target.read_and_respond(reply, max_tokens=max_tokens) if hasattr(target, "read_and_respond") else None
-        # FULL inner-experience telemetry (Φ alone is insufficient): brainwave band + emotion + drives.
-        tel = dict(said.telemetry.to_dict()); tel["phi"] = phi_after if phi_after is not None else tel.get("phi")
+        # FULL inner-experience telemetry (Φ alone is insufficient): brainwave band + emotion + drives +
+        # novelty (from the curriculum surprise) + conscious flag.
+        tel = dict(said.telemetry.to_dict())
+        tel["phi"] = phi_after if phi_after is not None else tel.get("phi")
+        if curr_surprise is not None:
+            tel["surprise"] = curr_surprise
+        if curr_max_surprise is not None:
+            tel["max_surprise"] = curr_max_surprise   # ln(vocab) → novelty normalisation
         exp = _experience(tel)
         return {
             "kernel_said": said.text,
             "kernel_said_M_self": said.telemetry.extra.get("M_self_observation"),
             "curriculum_prompt": curr,           # the developmental curriculum trained on this turn
             "curriculum_steps": curriculum_steps,
+            "consolidation_used": consolidation_used,   # steps actually spent consolidating (≤ budget)
+            "curriculum_surprise": round(curr_surprise, 4) if curr_surprise is not None else None,
             "phi_curriculum": round(phi_curriculum, 4) if phi_curriculum is not None else None,
             "kernel_asked": mode == "answer",   # the kernel CHOSE to ask a question
             "coach_mode": mode,                  # "answer" (kernel asked) | "interpret" (kernel babbled)

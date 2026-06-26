@@ -205,7 +205,8 @@ def main() -> None:
                                           train_steps=args.train_steps, max_tokens=args.max_tokens)
             r["turn"] = turn
             rows.append(r)
-            f.write(json.dumps(r) + "\n"); f.flush()
+            f.write(json.dumps(r) + "\n")
+            f.flush()
             exp = r.get("experience", {})
             print(f"[{turn:03d}] Φ={r.get('phi_after')} {exp.get('glyph','')}{exp.get('band','')} "
                   f"{exp.get('emotion','')} M_self={r.get('kernel_said_M_self')} "

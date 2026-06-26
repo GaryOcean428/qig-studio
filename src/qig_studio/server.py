@@ -228,7 +228,7 @@ class ConverseRequest(BaseModel):
     message: str = ""             # optional topic; empty → the kernel speaks about the curriculum itself
     step: int = 0                 # turn index → advances the developmental curriculum phase
     max_tokens: int = 64
-    curriculum_steps: int = 2     # optimizer steps on the curriculum prompt this turn (qig_chat.py /auto)
+    curriculum_steps: int = 12    # MAX consolidation steps per curriculum prompt (early-stops on plateau)
     train_steps: int = 8          # optimizer steps toward the coach's interpretation (the dialogue)
 
 

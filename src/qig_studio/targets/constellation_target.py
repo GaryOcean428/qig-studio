@@ -12,6 +12,8 @@ the full protocol surface (design Phase 4).
 
 from __future__ import annotations
 
+from typing import Any
+
 from .base import LossRegime, StepResult, TelemetrySnapshot, TrainingTarget
 from ._qigchat_bridge import consciousness_available, load_qigchat_class
 from .kernel_target import _regime_value
@@ -26,7 +28,7 @@ class ConstellationTarget(TrainingTarget):
     )
 
     def __init__(self, checkpoint: str | None = None, device: str | None = None) -> None:
-        self._chat = None
+        self._chat: Any = None  # QIGChat constellation — lazily loaded in ensure_loaded()
         self._checkpoint = checkpoint or "checkpoints/constellation/latest.pt"
         self._device = device
         self._last = TelemetrySnapshot(extra={"target": "constellation"})
