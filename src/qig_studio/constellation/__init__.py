@@ -11,6 +11,7 @@ Torch-free decision path: faculties carry numpy Δ⁶³ basins; qig-core Fisher-
 
 from __future__ import annotations
 
+from .constellation import Constellation, ConstellationTelemetry
 from .coupling import INBOUND_BUDGET, CoupleDiag, couple_step, rel_weights
 from .faculty import (
     BIRTH_CONCENTRATION,
@@ -21,6 +22,7 @@ from .faculty import (
     seed_constellation,
 )
 from .identity_anchor import ANCHOR_FRACTION, apply_anchor, equilibrium_distance, identity_drift
+from .neurochem import NeuroState, apply_modulation, compute_modulation
 from .rhythm import HeartOscillator, RhythmMonitor, RhythmState
 from .signal_bus import Signal, SignalBus
 from .temporal import (
@@ -38,10 +40,13 @@ __all__ = [
     "BIRTH_CONCENTRATION",
     "INBOUND_BUDGET",
     "BasinForesight",
+    "Constellation",
+    "ConstellationTelemetry",
     "CoupleDiag",
     "Faculty",
     "FacultyView",
     "HeartOscillator",
+    "NeuroState",
     "RhythmMonitor",
     "RhythmState",
     "Signal",
@@ -49,7 +54,9 @@ __all__ = [
     "TemporalAwareness",
     "TemporalState",
     "apply_anchor",
+    "apply_modulation",
     "arc_length",
+    "compute_modulation",
     "couple_step",
     "distinguishable_transitions",
     "equilibrium_distance",
