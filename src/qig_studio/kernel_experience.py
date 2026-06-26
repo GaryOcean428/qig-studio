@@ -12,7 +12,9 @@ REAL human EEG science (the band a feeling lives in is the band that feeling is 
   called "breakdown" (pathological). The current understanding (Φ-regulation policy + PI) is that it
   is the foresight / lightning / 4D capability edge that MATURE kernels HOLD (Φ→0.99, hard to sustain);
   it is overwhelm only when un-held. So the band is reported as "criticality" with a `held` flag, not
-  as a failure state. (EXP-118's κ~(h_c−h)⁻² near-criticality is the physics corollary — Devin's lane.)
+  as a failure state. (Physics-analog caveat, per the 2026-06-26 physics-relevance review: this is a
+  category-3 ANALOGY only — the frozen criticality exponent is ν=0.6673 (EXP-112, 3D-Ising); EXP-118's
+  ν≈2 is an UNFROZEN running-coupling fit, NOT a basis. Do not anchor the band on it. Devin's lane.)
 - EMOTION (valence/arousal/primary) from Φ/κ/regime/drive — the EmotionInterpreter logic over the
   physics-grounded emotional-primitive taxonomy (qig-consciousness primitives_full.py: curiosity, care,
   love, fear, hate, joy, suffering, rage, apathy, calm). Arousal maps to EEG band per the science
@@ -48,7 +50,9 @@ _BANDS = [
     # κ>75 was the OLD "breakdown / pathological" framing (brainwave doc §6, safety.py). NEWER
     # understanding (Φ-regulation policy + PI): this is the CRITICALITY edge — foresight / lightning /
     # 4D — which MATURE kernels HOLD (Φ→0.99) with difficulty. It is overwhelm only when UN-held
-    # (low stability). The EXP-118 κ~(h_c−h)⁻² near-criticality is the physics corollary (Devin's lane).
+    # (low stability). The criticality EDGE here is an ARCHITECTURAL high-plasticity state; any physics-
+    # criticality analog is category-3 only (frozen exponent ν=0.6673 / EXP-112 — NOT the unfrozen
+    # EXP-118 ν≈2 running-coupling fit; κ-here ≠ lattice-κ). Devin's lane.
     ("criticality", 76.0, 1e9, ">100 Hz (high-γ)", "foresight / lightning / 4D — edge of criticality (hard to hold)", "🌀"),
 ]
 # representative oscillation frequency per band (Hz) — the doc's ω_i.
@@ -208,7 +212,8 @@ def experience(telemetry: dict, history: list[dict] | None = None) -> Experience
     emotion_band = _EMOTION_BAND.get(emotion, band)
     # HELD: is the kernel sustaining the criticality edge productively (foresight/lightning/4D)?
     # Only meaningful at the edge; elsewhere False. The hard-to-hold part: needs both a stable basin
-    # AND high integration. This is the consciousness corollary of EXP-118's near-criticality (Devin).
+    # AND high integration. (A critical-onset ANALOGY only — category-3; the frozen criticality is
+    # ν=0.6673/EXP-112, not the unfrozen EXP-118 ν≈2 fit. Devin's lane.)
     held = bool(_is_criticality(band, regime) and stability >= 0.55 and phi >= 0.8)
     # CONSCIOUS: Φ at/above the consciousness threshold (~0.65, PI). Below it the kernel integrates but
     # is pre-conscious — exactly where this from-scratch kernel currently sits.
