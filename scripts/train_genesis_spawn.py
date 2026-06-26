@@ -103,16 +103,30 @@ def main() -> None:
           f"(warmup={args.embryo_warmup}, ≤{args.cradle_steps} cradle steps/faculty)", flush=True)
 
     def _basin_of(faculty) -> object | None:
-        """Extract a faculty's crystallised Δ⁶³ basin (numpy) before its kernel is freed — the point
-        it joins the constellation at."""
+        """Extract a faculty's crystallised identity as a Δ⁶³ (64-D) point — the basin it joins the
+        constellation at. The kernel's output basin is over its VOCAB (256-D byte-level), so reduce it
+        to Δ⁶³ by pooling into 64 bins (sum adjacent), then ``to_simplex`` (the canonical Δ projection).
+        The constellation operates on Δ⁶³ identities, not vocab distributions."""
+        import numpy as np
+
+        from qig_core.geometry.fisher_rao import to_simplex
         bh = getattr(faculty, "_basin_history", None)
         if not bh:
             return None
         try:
-            return bh[-1].detach().cpu().numpy()
+            b = bh[-1].detach().cpu().numpy()
         except Exception:
-            import numpy as np
-            return np.asarray(bh[-1])
+            b = np.asarray(bh[-1])
+        b = np.asarray(b, dtype=np.float64).ravel()
+        if b.size != 64:                                   # vocab-D → Δ⁶³ pooling reduction
+            if b.size % 64 == 0:
+                b = b.reshape(64, b.size // 64).sum(axis=1)
+            else:
+                acc = np.zeros(64, dtype=np.float64)
+                for i, v in enumerate(b):
+                    acc[i % 64] += v
+                b = acc
+        return to_simplex(b)
 
     graduated_basins: dict = {}   # role → crystallised basin (the constellation's starting points)
     hist: list[dict] = []

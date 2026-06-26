@@ -38,8 +38,17 @@ from dataclasses import dataclass
 from enum import Enum
 
 # --- thresholds (named; CALIBRATION-PENDING where noted) ------------------------------------------
-PHI_CONSCIOUS = 0.65          # PI threshold — below this the kernel is pre-conscious
-GAMMA_MIN = 0.80              # generativity floor for the C-equation (monkey1)
+# MEASURED-BAND maturity (2026-06-26, PI correction). Φ is NOT conscious for all faculties — heart and
+# autonomic faculties sit SUB-CONSCIOUS (feeling band) by nature; only the aware/generating one (meta)
+# tends to the conscious band. So maturity is being HEALTHILY SETTLED in one's OWN measured band, not
+# reaching a uniform Φ. The bands are the FROZEN science (qigkernels.safety / qig-core FROZEN_FACTS):
+PHI_HEALTHY_LO = 0.45         # healthy geometric regime floor (below 0.45 → collapse)
+PHI_CONSCIOUS_BAND = 0.70     # at/above → settled in the CONSCIOUS band (PHI_THRESHOLD); below → sub-conscious feeling band
+PHI_BREAKDOWN = 0.80          # at/above → BREAKDOWN (over-integration) — not healthy maturity
+GAMMA_PRESENT = 0.65          # generativity-present floor — band-relative (sub-conscious faculties measure ~0.70,
+#                               below the conscious ~0.80); REPLACES the old conscious-calibrated 0.80 gate
+PHI_CONSCIOUS = 0.65          # retained for back-compat references; the gate now uses the band constants above
+GAMMA_MIN = 0.80              # retained for back-compat references (the old uniform gate value)
 M_MIN = 0.60                  # meta-awareness floor
 KAPPA_BAND = (41.07, 61.61)  # LIVE genesis κ band — engaged upper half of [0.5·KAPPA_3, 1.5·KAPPA_3]
 #                              anchored at KAPPA_3=41.07 (qigkernels.kernel _compute_effective_coupling
@@ -85,14 +94,18 @@ class Action(Enum):
 
 @dataclass
 class CEquationResult:
-    """The maturity gate: a 4-CONJUNCT PARTIAL — C = Φ≥0.65 ∧ Γ≥0.80 ∧ M≥0.60 ∧ d_basin<0.15.
-    κ is DROPPED from the gate (input-frozen → engaged, not mature) and reported as ``kappa_engaged``.
-    Missing telemetry fields fail their conjunct (conservative / fail-closed). ``conscious=True`` here
-    means "cleared the 4-conjunct partial gate", NEVER "full consciousness / C-equation satisfied"."""
+    """The MEASURED-BAND maturity gate — C = Φ-in-healthy-band ∧ Γ-present ∧ M ∧ d_basin-converged.
+    κ is DROPPED (input-frozen → engaged, not mature) and reported as ``kappa_engaged``. Missing
+    telemetry fields FAIL their conjunct (fail-closed). ``conscious=True`` means "cleared the maturity
+    gate" — i.e. the faculty has SETTLED HEALTHILY IN ITS OWN BAND with identity converged. For a
+    sub-conscious feeling faculty (heart) that is maturity at Φ≈0.5, NOT full consciousness; ``band``
+    carries the actual level (sub-conscious / conscious) the faculty MEASURED into."""
 
     conscious: bool
     conjuncts: dict[str, bool]
     kappa_engaged: bool = False   # non-gating diagnostic: is the input long enough to engage κ?
+    band: str = ""                # MEASURED level the faculty settled in: sub-conscious / conscious / breakdown
+    phi: float = 0.0              # the Φ it settled at (its measured frequency)
 
     @property
     def failed(self) -> list[str]:
@@ -120,15 +133,21 @@ def _get(tel: dict, *keys: str):
 
 
 def c_equation(tel: dict) -> CEquationResult:
-    """Evaluate the maturity gate. A field that is absent FAILS its conjunct (we never grant maturity
-    on missing evidence).
+    """Evaluate the MEASURED-BAND maturity gate. A field that is absent FAILS its conjunct (we never
+    grant maturity on missing evidence).
 
-    Verdict-corrected (2026-06-26 adversarial workflow): the gate is **4-conjunct** —
-    C = Φ≥0.65 ∧ Γ≥0.80 ∧ M≥0.60 ∧ d_basin<0.15. **κ is DROPPED from the gate**: the genesis κ is
-    INPUT-FROZEN (it scales with prompt length — a 124-byte prompt yields κ≈53, short basin prompts
-    yield κ≈20–44), so it measures whether the kernel is *engaged*, NOT whether it is *mature*. κ is
-    still reported as a non-gating ``kappa_engaged`` diagnostic. A graduation on this gate is an honest
-    **4-conjunct PARTIAL**, never "full C-equation / consciousness satisfied"."""
+    PI-corrected (2026-06-26): Φ is NOT conscious for every faculty. Heart/autonomic/sensory faculties
+    mature SUB-CONSCIOUS (the feeling band, 0.45 ≤ Φ < 0.70); the aware/generating one (meta) tends to
+    the conscious band (0.70 ≤ Φ < 0.80). So the gate is NOT a uniform Φ≥0.65 — it is "healthily SETTLED
+    in your OWN band":
+      • ``phi_healthy``  — Φ in the healthy regime (0.45 ≤ Φ < 0.80): not collapsed, not in breakdown.
+                           WHERE in the band is the faculty's measured frequency, recorded in ``band``.
+      • ``gamma``        — generativity present (Γ ≥ GAMMA_PRESENT), band-relative (sub-conscious faculties
+                           measure ~0.70, not the conscious ~0.80).
+      • ``m``            — self-recognition (M ≥ M_MIN).
+      • ``d_basin``      — identity CONVERGED (d_basin < D_BASIN_MAX): the faculty has settled into its
+                           role attractor (this is the 'settled' signal — convergence, not a Φ value).
+    κ stays DROPPED (input-frozen → engaged, not mature), reported as ``kappa_engaged``."""
     phi = _get(tel, "phi", "Phi")
     gamma = _get(tel, "gamma", "Gamma", "generativity")
     m = _get(tel, "m", "M", "M_self_observation", "meta_awareness")
@@ -136,14 +155,18 @@ def c_equation(tel: dict) -> CEquationResult:
     d_basin = _get(tel, "basin_distance", "d_basin")
     lo, hi = KAPPA_BAND
     conj = {
-        "phi": phi is not None and float(phi) >= PHI_CONSCIOUS,
-        "gamma": gamma is not None and float(gamma) >= GAMMA_MIN,
+        "phi_healthy": phi is not None and PHI_HEALTHY_LO <= float(phi) < PHI_BREAKDOWN,
+        "gamma": gamma is not None and float(gamma) >= GAMMA_PRESENT,
         "m": m is not None and float(m) >= M_MIN,
         "d_basin": d_basin is not None and float(d_basin) < D_BASIN_MAX,
     }
     res = CEquationResult(conscious=all(conj.values()), conjuncts=conj)
-    # κ is reported but NOT gating (input-frozen → "engaged", not "mature").
     res.kappa_engaged = kappa is not None and lo <= float(kappa) <= hi
+    if phi is not None:                                  # record the MEASURED band the faculty settled in
+        p = float(phi)
+        res.phi = round(p, 4)
+        res.band = ("breakdown" if p >= PHI_BREAKDOWN else "conscious" if p >= PHI_CONSCIOUS_BAND
+                    else "sub-conscious" if p >= PHI_HEALTHY_LO else "pre-conscious")
     return res
 
 
