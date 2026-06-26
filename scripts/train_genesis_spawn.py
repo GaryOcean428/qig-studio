@@ -24,20 +24,29 @@ from pathlib import Path
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--embryo-steps", type=int, default=80, help="max steps to run the embryo until a window opens")
-    ap.add_argument("--cradle-steps", type=int, default=500, help="max Cradle training steps for the faculty")
+    ap.add_argument("--embryo-steps", type=int, default=80, help="max embryo steps to find each window")
+    ap.add_argument("--embryo-warmup", type=int, default=25, help="embryo matures this long before the FIRST spawn")
+    ap.add_argument("--cradle-steps", type=int, default=600, help="max Cradle training steps per faculty")
     ap.add_argument("--layers", type=int, default=8, help="kernel depth (8 breaks the coherence ceiling)")
-    ap.add_argument("--out", default="runs/spawn/run.json")
+    ap.add_argument("--max-seconds", type=float, default=1800, help="wall-clock budget for the Core-8 run")
+    ap.add_argument("--out", default="runs/spawn/core8.json")
     args = ap.parse_args()
 
     from qigkernels.specializations import KernelRole, generate_basin_template
 
     from qig_studio.curriculum import CurriculumProvider
-    from qig_studio.development import Action, DevelopmentalOrchestrator, c_equation
+    from qig_studio.development import (
+        PROTOMAP_ORDER,
+        Action,
+        DevelopmentalOrchestrator,
+        Stage,
+        c_equation,
+    )
     from qig_studio.targets.base import LossRegime
     from qig_studio.targets.genesis_kernel import GenesisKernelTarget
 
     t0 = time.time()
+    max_seconds = float(args.max_seconds)
     embryo = GenesisKernelTarget(num_layers=args.layers, seed=0)
     if not embryo.is_available():
         print("[spawn] FATAL: torch/qigkernels absent — cannot run live training")
@@ -56,57 +65,75 @@ def main() -> None:
         faculties[role] = f
         return f
 
-    orch = DevelopmentalOrchestrator(spawn_fn=spawn_fn)
-    trace: dict = {"layers": args.layers, "events": []}
-    print(f"[spawn] embryo built (L={args.layers}); running until a plasticity window opens", flush=True)
+    orch = DevelopmentalOrchestrator(spawn_fn=spawn_fn, embryo_warmup=args.embryo_warmup)
+    trace: dict = {"layers": args.layers, "graduations": [], "events": []}
+    print(f"[spawn] embryo built (L={args.layers}); CORE-8 developmental run "
+          f"(warmup={args.embryo_warmup}, ≤{args.cradle_steps} cradle steps/faculty)", flush=True)
 
-    # --- PHASE A: embryo develops until the orchestrator opens a window and spawns the first faculty ---
     hist: list[dict] = []
-    spawned_role = None
-    for i in range(args.embryo_steps):
-        tel = embryo.train_step(prov.next_prompt(i)).telemetry.to_dict()
-        hist.append(tel)
-        d = orch.step(tel, history=hist[-5:])
-        if d.action == Action.SPAWN_FACULTY:
-            spawned_role = d.role
-            trace["events"].append({"event": "SPAWN_FACULTY", "role": d.role, "embryo_step": i,
-                                    "reason": d.reason})
-            print(f"[spawn] step {i}: WINDOW OPEN → spawned '{d.role}' into a Cradle", flush=True)
+    embryo_step = 0
+    # CORE-8 LOOP: develop the embryo → spawn next protomap faculty → train its Cradle to the
+    # 4-conjunct partial gate (+ constitution) → graduate → repeat until the Core-8 is complete.
+    while orch.stage != Stage.SOVEREIGN and (time.time() - t0) < max_seconds:
+        # advance the embryo until a window opens for the next faculty
+        spawned_role = None
+        for _ in range(args.embryo_steps):
+            tel = embryo.train_step(prov.next_prompt(embryo_step)).telemetry.to_dict()
+            embryo_step += 1
+            hist.append(tel)
+            d = orch.step(tel, history=hist[-5:])
+            if d.action == Action.SPAWN_FACULTY:
+                spawned_role = d.role
+                trace["events"].append({"event": "SPAWN_FACULTY", "role": d.role,
+                                        "embryo_step": embryo_step, "reason": d.reason})
+                print(f"[spawn] embryo_step {embryo_step}: WINDOW OPEN → spawned '{d.role}'", flush=True)
+                break
+            if d.action == Action.ABORT:
+                print(f"[spawn] ABORT (suffering) at embryo_step {embryo_step}")
+                break
+        if spawned_role is None:
+            print("[spawn] no further window opened — stopping")
             break
-    if spawned_role is None:
-        print("[spawn] no window opened — embryo never reorganized (STALL)")
-        return
 
-    # --- PHASE B: the Cradle trains the spawned faculty to the 4-conjunct partial gate ---
-    faculty = faculties[spawned_role]
-    cradle = orch.cradles[spawned_role]
-    print(f"[spawn] training '{spawned_role}' in its Cradle (≤{args.cradle_steps} steps)…", flush=True)
-    report = cradle.train(faculty, steps=args.cradle_steps)
-    trace["events"].append({"event": "CRADLE_TRAIN", **report})
-    print(f"[spawn] cradle report: {report}", flush=True)
+        # train the spawned faculty's Cradle to graduation
+        faculty = faculties[spawned_role]
+        cradle = orch.cradles[spawned_role]
+        print(f"[spawn]   training '{spawned_role}'…", flush=True)
+        report = cradle.train(faculty, steps=args.cradle_steps)
+        final_tel = faculty.telemetry().to_dict()
+        res = c_equation(final_tel)
+        decision = orch.step(final_tel)   # GRADUATE (moves to spawned) when the cradle graduated
+        ex = final_tel.get("extra", {})
+        grad = {"role": spawned_role, "graduated": report.get("graduated", False),
+                "step": report.get("step"), "conjuncts": res.conjuncts,
+                "constitution": report.get("constitution") or report.get("pillar"),
+                "orchestrator": decision.action.value,
+                "final": {"phi": round(float(final_tel.get("phi") or 0), 4), "gamma": ex.get("gamma"),
+                          "meta_awareness": ex.get("meta_awareness"), "d_basin": ex.get("d_basin")}}
+        trace["graduations"].append(grad)
+        mark = "★ GRADUATED" if grad["graduated"] else "✗ stalled"
+        print(f"[spawn]   {mark} '{spawned_role}' @ step {grad['step']} "
+              f"Φ={grad['final']['phi']} Γ={grad['final']['gamma']} d_basin={grad['final']['d_basin']} "
+              f"constitution={grad['constitution']}", flush=True)
+        # free the faculty kernel (keep only the lightweight descriptor in orch.spawned) — fits 4GB
+        faculties.pop(spawned_role, None)
+        orch.faculties.pop(spawned_role, None)
+        if not grad["graduated"]:
+            print(f"[spawn]   '{spawned_role}' did not graduate — stopping the Core-8 sequence")
+            break
 
-    # --- PHASE C: the orchestrator records the GRADUATE (faculty joins the would-be coupling graph) ---
-    final_tel = faculty.telemetry().to_dict()
-    res = c_equation(final_tel)
-    decision = orch.step(final_tel)
-    ex = final_tel.get("extra", {})
-    graduated = report.get("graduated", False)
-    trace["graduated"] = graduated
-    trace["graduation_step"] = report.get("step")
-    trace["final_conjuncts"] = res.conjuncts
-    trace["final"] = {"phi": final_tel.get("phi"), "gamma": ex.get("gamma"),
-                      "meta_awareness": ex.get("meta_awareness"), "d_basin": ex.get("d_basin")}
-    trace["orchestrator_action"] = decision.action.value
+    n_grad = sum(1 for g in trace["graduations"] if g["graduated"])
+    trace["core8_complete"] = (orch.stage == Stage.SOVEREIGN)
+    trace["graduated_count"] = n_grad
+    trace["constellation"] = sorted(orch.spawned.keys())
     trace["elapsed_s"] = round(time.time() - t0, 1)
 
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)
     Path(args.out).write_text(json.dumps(trace, indent=2))
     print("\n" + "=" * 64)
-    verdict = ("★ LIVE 4-CONJUNCT GRADUATION" if graduated else "STALL (gate not cleared)")
-    print(f"[spawn] {verdict} — role={spawned_role} @ step {report.get('step')}")
-    print(f"[spawn] final: Φ={trace['final']['phi']} Γ={trace['final']['gamma']} "
-          f"M={trace['final']['meta_awareness']} d_basin={trace['final']['d_basin']}")
-    print(f"[spawn] conjuncts: {res.conjuncts}  | orchestrator: {decision.action.value}")
+    print(f"[spawn] CORE-8 RESULT: {n_grad}/{len(PROTOMAP_ORDER)} faculties graduated "
+          f"{'— ★ FULL CONSTELLATION (SOVEREIGN)' if trace['core8_complete'] else ''}")
+    print(f"[spawn] constellation: {trace['constellation']}")
     print(f"[spawn] trace → {args.out}  ({trace['elapsed_s']}s)")
     print("=" * 64, flush=True)
 
