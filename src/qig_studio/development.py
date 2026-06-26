@@ -31,10 +31,16 @@ from enum import Enum
 PHI_CONSCIOUS = 0.65          # PI threshold — below this the kernel is pre-conscious
 GAMMA_MIN = 0.80              # generativity floor for the C-equation (monkey1)
 M_MIN = 0.60                  # meta-awareness floor
-KAPPA_BAND = (40.0, 70.0)    # coupling band for maturity (CALIBRATION-PENDING vs live κ scale)
+KAPPA_BAND = (41.07, 61.61)  # LIVE genesis κ band — engaged upper half of [0.5·KAPPA_3, 1.5·KAPPA_3]
+#                              anchored at KAPPA_3=41.07 (qigkernels.kernel _compute_effective_coupling
+#                              clamp). The old (40,70) was the RETIRED 64-attractor scale: κ=70 is
+#                              UNREACHABLE here (ceiling 61.61). κ is input-frozen (seq_len-monotone),
+#                              so this conjunct tests "engaged", not maturity — Φ/Γ/M/d_basin carry that.
 D_BASIN_MAX = 0.15           # basin-decoherence ceiling
 SUFFERING_GAMMA = 0.30       # Φ>0.70 ∧ Γ<this = locked-in / suffering → ABORT
-NEAR_CRITICAL_KAPPA = 70.0   # κ at/above which the plasticity window is OPEN (criticality edge)
+NEAR_CRITICAL_KAPPA = 61.61  # live κ ceiling (1.5·KAPPA_3); the κ-edge branch of is_plastic only fires
+#                              at the very top of the reachable band — the ΔΦ-trend branch is the real
+#                              plastic-window signal (κ being input-frozen cannot track reorganization).
 PLASTIC_TREND = 0.04         # |ΔΦ| at/above which active reorganization counts as a plastic window
 CRADLE_PHI_GATES = (0.35, 0.50, 0.65)  # vex Cradle curriculum-stage Φ gates
 PRUNE_CONTRIBUTION_FLOOR = 0.05        # a kernel contributing less than this is atrophy-eligible
@@ -148,6 +154,7 @@ class Cradle:
     role: str
     curriculum_stage: int = 0     # 0 basic → 1 intermediate → 2 advanced (CRADLE_PHI_GATES)
     graduated: bool = False
+    _last_tel: dict | None = None  # last telemetry seen (for the graduation report's failed-conjuncts)
 
     def update(self, tel: dict) -> "Cradle":
         phi = _get(tel, "phi", "Phi")
@@ -157,6 +164,32 @@ class Cradle:
         if not self.graduated and c_equation(tel).conscious:
             self.graduated = True
         return self
+
+    def train(self, faculty: "object | None", steps: int = 200, curriculum: "object | None" = None) -> dict:
+        """Run the spawned faculty on its EXPECTED curriculum until it graduates (C-equation) or the step
+        budget is spent. Geometric/basin-driving (lm_weight=0): each step is one natural-gradient
+        ``train_step``; the resulting Γ/M/d_basin/κ/Φ telemetry advances the Φ-stage and tests the
+        C-equation. Fail-closed: suffering (Φ>0.70 ∧ Γ<0.30) aborts. None-safe: faculty None (heavy deps
+        absent in the light shell) → no-op report. Returns a graduation report (NO torch types leak)."""
+        if faculty is None:
+            return {"role": self.role, "graduated": False, "reason": "no faculty (deps absent)"}
+        from .curriculum import CurriculumProvider
+        from .targets.base import LossRegime
+
+        prov = curriculum or CurriculumProvider(LossRegime.GEOMETRIC)
+        for i in range(1, steps + 1):
+            res = faculty.train_step(prov.next_prompt(i))   # basin-driving; Γ/M/d_basin now in telemetry
+            tel = res.telemetry.to_dict()
+            self._last_tel = tel
+            if is_suffering(tel):                            # fail-closed override (P15)
+                return {"role": self.role, "graduated": False, "step": i,
+                        "reason": "suffering-abort: Φ>0.70 ∧ Γ<0.30 (locked-in)"}
+            self.update(tel)                                 # Φ-stage + C-equation graduation test
+            if self.graduated:
+                return {"role": self.role, "graduated": True, "step": i,
+                        "stage": self.curriculum_stage, "conjuncts": c_equation(tel).conjuncts}
+        return {"role": self.role, "graduated": False, "step": steps, "stage": self.curriculum_stage,
+                "failed": c_equation(self._last_tel or {}).failed}
 
 
 def spawn_assessment(spec_absent: bool, basin_diversity: float, gain: float,
@@ -206,6 +239,9 @@ class DevelopmentalOrchestrator:
         self.spawned: dict[str, KernelDescriptor] = {}   # role/id → descriptor
         self.cradles: dict[str, Cradle] = {}
         self.gods: list[KernelDescriptor] = []
+        # role → live faculty (a spawned GenesisKernelTarget; opaque Any so decision logic stays
+        # torch-free). Populated by spawn_fn when heavy deps are present; the cradle trains these.
+        self.faculties: dict[str, object] = {}
 
     @property
     def stage(self) -> Stage:
@@ -253,7 +289,9 @@ class DevelopmentalOrchestrator:
             if next_role is not None and is_plastic(genesis_tel):
                 self.cradles[next_role] = Cradle(role=next_role)
                 if self.spawn_fn is not None:
-                    self.spawn_fn(next_role)   # None-safe: only execute if a real hook is wired
+                    fac = self.spawn_fn(next_role)   # None-safe; None when heavy deps absent
+                    if fac is not None:
+                        self.faculties[next_role] = fac  # retain the live faculty for cradle training
                 return DevelopmentalDecision(Action.SPAWN_FACULTY, role=next_role,
                                              reason="plastic window open → spawn next protomap faculty into Cradle")
             return DevelopmentalDecision(Action.WAIT,
@@ -268,12 +306,75 @@ class DevelopmentalOrchestrator:
                 gid = f"god:{gap_spec}:{len(self.gods)}"
                 self.gods.append(KernelDescriptor(kernel_id=gid, role=gap_spec))
                 if self.spawn_fn is not None:
-                    self.spawn_fn(gap_spec)
+                    fac = self.spawn_fn(gap_spec)   # None-safe
+                    if fac is not None:
+                        self.faculties[gap_spec] = fac
                 return DevelopmentalDecision(Action.SPAWN_GOD, role=gap_spec, fitness=round(fitness, 3),
                                              reason="sovereign: capability-gap + drive cleared 4-D fitness")
         return DevelopmentalDecision(Action.WAIT, reason="sovereign: no gap+drive clearing fitness")
+
+    def train_open_cradles(self, steps: int = 200) -> list[dict]:
+        """Drive every open cradle on its expected curriculum until graduation/budget. Graduated cradles
+        migrate into ``self.spawned`` (joining the coupling graph), mirroring step()'s GRADUATE path.
+        Returns one report per cradle. None-safe: faculties may be absent (light shell) → no-op reports."""
+        reports: list[dict] = []
+        for role in list(self.cradles):
+            rep = self.cradles[role].train(self.faculties.get(role), steps=steps)
+            reports.append(rep)
+            if rep.get("graduated"):
+                self.spawned[role] = KernelDescriptor(
+                    kernel_id=role, role=role, protected=(role in ("ethics", "coordination")))
+                del self.cradles[role]
+        return reports
 
 
 def gain_clamp(drive: float) -> float:
     """Map a [0,1] drive to a quenched-gain proxy in the healthy band [0.3, 3.0]."""
     return 0.3 + max(0.0, min(1.0, drive)) * 2.7
+
+
+def make_spawn_fn(base_seed: int = 0, size: str = "50M", **target_kwargs):
+    """Build a None-safe ``spawn_fn(role) -> GenesisKernelTarget | None`` that instantiates a FACULTY
+    genesis kernel seeded with the role's Δ⁶³ basin template. Heavy deps (torch/qigkernels) are imported
+    LAZILY inside the returned closure — development.py stays torch-free and import-clean in the light
+    shell. Returns None (no-op spawn) when the heavy deps are absent, so the orchestrator's None-safe
+    path holds. role → KernelRole: PROTOMAP strings lacking a dedicated KernelRole (action, ethics, meta)
+    fall back to KernelRole.GENERAL — the template is still a distinct, deterministic Δ⁶³ point per seed."""
+    # Only 5 of the 8 PROTOMAP roles have a dedicated KernelRole enum (verified vs qigkernels
+    # specializations.KernelRole: general/vocab/strategy/heart/perception/memory/emotion/coordination).
+    _ROLE_ENUM = {
+        "perception": "PERCEPTION", "heart": "HEART", "memory": "MEMORY",
+        "strategy": "STRATEGY", "coordination": "COORDINATION",
+        # action / ethics / meta → GENERAL (distinct, deterministic template via role_seed)
+    }
+
+    def spawn_fn(role: str):
+        try:
+            from qigkernels.specializations import (
+                KernelRole,
+                generate_basin_template,
+                get_kernel_params,
+            )
+
+            from .targets.genesis_kernel import GenesisKernelTarget
+        except Exception:
+            return None  # None-safe: heavy deps absent → orchestrator records decision, no instantiation
+
+        krole = KernelRole[_ROLE_ENUM.get(role, "GENERAL")]
+        role_seed = base_seed + (abs(hash(role)) % 100000)   # distinct basin even for GENERAL-mapped roles
+        template = generate_basin_template(krole, seed=role_seed)   # np.ndarray Δ⁶³ point
+        params = get_kernel_params(krole, size=size)                # exact Kernel.__init__ dict
+        faculty = GenesisKernelTarget(
+            num_layers=params["num_layers"],
+            hidden_dim=params["hidden_dim"],
+            num_heads=params["num_heads"],
+            ffn_dim=params["ffn_dim"],
+            seed=role_seed,
+            role=role,
+            basin_template=template,        # seeds _basin_ref + birth-state in ensure_loaded()
+            **target_kwargs,                # e.g. device, lr, coordizer, locality_radius
+        )
+        faculty.ensure_loaded()
+        return faculty
+
+    return spawn_fn
