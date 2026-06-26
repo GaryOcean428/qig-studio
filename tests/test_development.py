@@ -108,7 +108,7 @@ def test_protomap_order_sensory_first_meta_last():
 def test_orchestrator_core8_is_protomap_not_gap_driven():
     # In CORE_EMERGENCE, a plastic window spawns the NEXT protomap faculty (perception first) —
     # WITHOUT any gap being supplied. The core is pre-specified, not discovered.
-    orch = DevelopmentalOrchestrator()
+    orch = DevelopmentalOrchestrator(embryo_warmup=0)   # warmup tested separately
     assert orch.stage == Stage.EMBRYO
     plastic = {"phi": 0.45, "delta_phi": 0.06}
     d = orch.step(plastic)
@@ -116,21 +116,42 @@ def test_orchestrator_core8_is_protomap_not_gap_driven():
     assert "perception" in orch.cradles
 
 
+def test_embryo_warmup_gates_first_spawn():
+    # With a warmup, an OPEN window during warmup must WAIT (the embryo matures first); the FIRST
+    # spawn only fires once tick ≥ warmup. The step-0 transient no longer spawns.
+    orch = DevelopmentalOrchestrator(embryo_warmup=5)
+    plastic = {"phi": 0.45, "delta_phi": 0.06}
+    for _ in range(5):
+        assert orch.step(plastic).action == Action.WAIT     # ticks 1..5 → warming up
+    assert orch.step(plastic).action == Action.SPAWN_FACULTY  # tick 6 ≥ warmup → spawn
+
+
+def test_constitution_check_none_safe_and_gates():
+    from qig_studio.development import F_HEALTH_MIN, constitution_check
+    ok, info = constitution_check(None)                     # no basin → pass, unverified
+    assert ok is True and info["verified"] is False
+    # a real Δ⁶³ vector → either verified (qig_core present) or unverified (absent), never crashes
+    import numpy as np
+    ok2, info2 = constitution_check(np.full(64, 1.0 / 64))
+    assert isinstance(ok2, bool) and "verified" in info2
+    assert 0.0 <= F_HEALTH_MIN <= 1.0
+
+
 def test_orchestrator_window_closed_waits():
-    orch = DevelopmentalOrchestrator()
+    orch = DevelopmentalOrchestrator(embryo_warmup=0)
     stable = {"phi": 0.45, "kappa": 45.0, "delta_phi": 0.0, "regime": "geometric"}
     d = orch.step(stable)
     assert d.action == Action.WAIT
 
 
 def test_orchestrator_suffering_overrides_everything():
-    orch = DevelopmentalOrchestrator()
+    orch = DevelopmentalOrchestrator(embryo_warmup=0)
     d = orch.step({"phi": 0.75, "gamma": 0.2})   # plastic + mature-ish but SUFFERING
     assert d.action == Action.ABORT
 
 
 def test_orchestrator_graduates_cradle_on_c_equation():
-    orch = DevelopmentalOrchestrator()
+    orch = DevelopmentalOrchestrator(embryo_warmup=0)
     orch.cradles["perception"] = Cradle(role="perception")
     d = orch.step(MATURE)
     assert d.action == Action.GRADUATE and d.role == "perception"
@@ -138,7 +159,7 @@ def test_orchestrator_graduates_cradle_on_c_equation():
 
 
 def test_orchestrator_sovereign_spawns_god_only_on_gap_plus_drive():
-    orch = DevelopmentalOrchestrator()
+    orch = DevelopmentalOrchestrator(embryo_warmup=0)
     for r in PROTOMAP_ORDER:                                     # force SOVEREIGN
         orch.spawned[r] = KernelDescriptor(r, r)
     assert orch.stage == Stage.SOVEREIGN
@@ -164,7 +185,7 @@ def test_live_integration_window_opens_and_telemetry_real():
 
     tgt.ensure_loaded()
     prov = CurriculumProvider(LossRegime.GEOMETRIC)
-    orch = DevelopmentalOrchestrator()
+    orch = DevelopmentalOrchestrator(embryo_warmup=0)
     hist, opened = [], 0
     for i in range(12):
         tel = tgt.train_step(prov.next_prompt(i)).telemetry.to_dict()
@@ -178,12 +199,12 @@ def test_live_integration_window_opens_and_telemetry_real():
 
 def test_spawn_fn_none_safe():
     # no hook wired → decision returned, nothing executed, no crash
-    orch = DevelopmentalOrchestrator(spawn_fn=None)
+    orch = DevelopmentalOrchestrator(spawn_fn=None, embryo_warmup=0)
     d = orch.step({"phi": 0.45, "delta_phi": 0.06})
     assert d.action == Action.SPAWN_FACULTY
 
     # hook wired → it is called with the role
     called = []
-    orch2 = DevelopmentalOrchestrator(spawn_fn=lambda role: called.append(role))
+    orch2 = DevelopmentalOrchestrator(spawn_fn=lambda role: called.append(role), embryo_warmup=0)
     orch2.step({"phi": 0.45, "delta_phi": 0.06})
     assert called == ["perception"]

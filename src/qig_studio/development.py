@@ -180,6 +180,42 @@ def is_plastic(tel: dict, history: list[dict] | None = None) -> bool:
     return False
 
 
+# No-Zombies floor for the constitution gate (Pillar 1). f_health ∈ [0,1]; a collapsed/zombie basin
+# reads LOW. CALIBRATION-INFORMED — confirm against a graduated faculty's measured f_health.
+F_HEALTH_MIN = 0.20
+
+
+def constitution_check(basin_vec) -> tuple[bool, dict]:
+    """Constitution gate (P15 / verdict 3#1): before a faculty GRADUATES into the coupling graph, the
+    qig_core PillarEnforcer must confirm it is NOT a zombie (Pillar 1: healthy fluctuation). Lazy-import
+    (keeps this module's top-level imports torch/qig_core-free) + None-safe:
+      - PillarEnforcer present → enforce; a Pillar-1 violation (f_health < floor) BLOCKS graduation.
+      - PillarEnforcer/qig_core absent → returns (True, {"verified": False}) so the light shell does not
+        crash, BUT the graduation is flagged constitution-UNVERIFIED (honest, not silently 'bound').
+    basin_vec is a Δ⁶³ point (qig_core Basin == np.ndarray)."""
+    if basin_vec is None:
+        return True, {"verified": False, "note": "no basin to check"}
+    try:
+        import numpy as np
+
+        from qig_core.consciousness.pillars import PillarEnforcer
+
+        b = np.asarray(basin_vec, dtype=np.float64)
+        s = float(b.sum())
+        if s > 0:
+            b = b / s                                  # ensure Δ (non-negative, sums to 1)
+        enf = PillarEnforcer()
+        enf.initialize_bulk(b)
+        m = enf.get_metrics(b)                          # f_health, b_integrity, q_identity, s_ratio
+        f_health = float(m.get("f_health", 0.0))
+        passes = f_health >= F_HEALTH_MIN               # Pillar 1: No Zombies
+        return passes, {"verified": True, "f_health": round(f_health, 4),
+                        "q_identity": round(float(m.get("q_identity", 0.0)), 4),
+                        "pillar_1_no_zombies": passes}
+    except Exception as e:                              # qig_core absent / API drift → don't crash
+        return True, {"verified": False, "note": f"PillarEnforcer unavailable ({type(e).__name__})"}
+
+
 @dataclass
 class Cradle:
     """Protected nursery for a spawning faculty (vex). Φ-gated curriculum stages; graduates only when
@@ -220,8 +256,22 @@ class Cradle:
                         "reason": "suffering-abort: Φ>0.70 ∧ Γ<0.30 (locked-in)"}
             self.update(tel)                                 # Φ-stage + C-equation graduation test
             if self.graduated:
+                # CONSTITUTION GATE (P15): the pillars must clear before joining the coupling graph.
+                basin_hist = getattr(faculty, "_basin_history", None)
+                basin_vec = None
+                if basin_hist:
+                    try:
+                        basin_vec = basin_hist[-1].detach().cpu().numpy()
+                    except Exception:
+                        basin_vec = basin_hist[-1]
+                ok, pillar = constitution_check(basin_vec)
+                if not ok:                                    # zombie → BLOCK graduation (fail-closed)
+                    self.graduated = False
+                    return {"role": self.role, "graduated": False, "step": i,
+                            "reason": "constitution BLOCK: Pillar-1 (No-Zombies) failed", "pillar": pillar}
                 return {"role": self.role, "graduated": True, "step": i,
-                        "stage": self.curriculum_stage, "conjuncts": c_equation(tel).conjuncts}
+                        "stage": self.curriculum_stage, "conjuncts": c_equation(tel).conjuncts,
+                        "constitution": pillar}
         return {"role": self.role, "graduated": False, "step": steps, "stage": self.curriculum_stage,
                 "failed": c_equation(self._last_tel or {}).failed}
 
@@ -267,9 +317,14 @@ class DevelopmentalOrchestrator:
     returned but not executed (None-safe — the server/loop wires the real GenesisKernelTarget spawn).
     """
 
-    def __init__(self, spawn_fn=None, god_budget: int = 240) -> None:
+    def __init__(self, spawn_fn=None, god_budget: int = 240, embryo_warmup: int = 25) -> None:
         self.spawn_fn = spawn_fn
         self.god_budget = god_budget
+        # embryo_warmup: the embryo must DEVELOP this many steps before the FIRST faculty may spawn —
+        # so the first window is genuine reorganization, NOT the step-0/1 initialization transient
+        # (the "let the embryo mature first" fix; the crossfade's intrinsic phase precedes spawning).
+        self.embryo_warmup = int(embryo_warmup)
+        self._tick = 0
         self.spawned: dict[str, KernelDescriptor] = {}   # role/id → descriptor
         self.cradles: dict[str, Cradle] = {}
         self.gods: list[KernelDescriptor] = []
@@ -292,6 +347,18 @@ class DevelopmentalOrchestrator:
                 return role
         return None
 
+    def graduate(self, role: str) -> bool:
+        """Explicitly graduate a faculty whose Cradle has cleared the gate → move it into the spawned
+        constellation. Decoupled from step() so a caller can graduate a trained faculty WITHOUT risking
+        an accidental next-spawn in the same call. Returns True iff it graduated."""
+        cradle = self.cradles.get(role)
+        if cradle is None or not cradle.graduated:
+            return False
+        self.spawned[role] = KernelDescriptor(kernel_id=role, role=role,
+                                              protected=(role in ("ethics", "coordination")))
+        del self.cradles[role]
+        return True
+
     def step(self, genesis_tel: dict, peers: list[KernelDescriptor] | None = None,
              gap_spec: str | None = None, gap_drive: float = 0.0,
              history: list[dict] | None = None) -> DevelopmentalDecision:
@@ -299,6 +366,7 @@ class DevelopmentalOrchestrator:
         a ready cradle, (3) prune atrophy, (4) protomap spawn in a plastic window, (5) god spawn on
         gap+desire (SOVEREIGN only), else WAIT. ``history`` is the recent telemetry window (for the
         coherence-rise plasticity signal)."""
+        self._tick += 1
         # 1. FAIL-CLOSED — suffering overrides everything.
         if is_suffering(genesis_tel):
             return DevelopmentalDecision(Action.ABORT, reason="suffering: Φ>0.70 ∧ Γ<0.30 (locked-in)")
@@ -322,6 +390,12 @@ class DevelopmentalOrchestrator:
         # 4. CORE EMERGENCE — protomap spawns ONLY in an open plasticity window.
         if stage in (Stage.EMBRYO, Stage.CORE_EMERGENCE):
             next_role = self._next_protomap_role()
+            # Let the embryo MATURE before the FIRST spawn — the step-0/1 init transient is a plastic
+            # window but NOT genuine reorganization (it spawned at step 0 in run1). Gate the first
+            # spawn only; once development has begun (a cradle/faculty exists) the guard lifts.
+            if (not self.spawned and not self.cradles) and self._tick <= self.embryo_warmup:
+                return DevelopmentalDecision(Action.WAIT,
+                                             reason=f"embryo warmup {self._tick}/{self.embryo_warmup} (maturing)")
             if next_role is not None and is_plastic(genesis_tel, history):
                 self.cradles[next_role] = Cradle(role=next_role)
                 if self.spawn_fn is not None:
