@@ -115,6 +115,14 @@ class TrainingTarget(ABC):
         )
 
     # --- qig_chat protocol surface (design §3.4) -----------------------------------
+    @property
+    def self_regulating(self) -> bool:
+        """True if this target regulates its OWN autonomic cycles (sleep/dream/mushroom/escape) from its
+        OWN internal state, INSIDE its train_step — so NO external scheduler may fire them. The kernel
+        owns its brainstem (PI directive: nothing external controls the cycles). Default False; the
+        genesis kernel overrides to True. The ContinuousLearningLoop checks this and skips its scheduler."""
+        return False
+
     def supports_protocol(self) -> bool:
         """True if this target exposes the qig_chat command surface
         (sleep/dream/mushroom/twin/lightning/14-stage/basin-sync/4D/reasoning)."""

@@ -630,6 +630,10 @@ class GenesisKernelTarget(TrainingTarget):
                 "num_layers": self.num_layers, "recursion_depth": 3, "seq_len": _MAX_BYTES,
                 "input": "coords" if self.coordizer is not None else "bytes", "vocab_size": self.vocab_size}
 
+    @property
+    def self_regulating(self) -> bool:
+        return True   # the kernel owns its brainstem (_homeostasis in train_step) — no external scheduler
+
     def supports_protocol(self) -> bool:
         return True
 
@@ -658,3 +662,34 @@ class GenesisKernelTarget(TrainingTarget):
         last = getattr(self, "_last", None)
         return {"command": command, "available": True, "applied": applied,
                 "telemetry": last.to_dict() if last is not None else {}}
+
+    def save_checkpoint(self, path: str) -> None:
+        """Save this kernel's weights + developmental state (resumable). The collective/constellation
+        state is checkpointed separately (qig_studio.checkpoint)."""
+        self.ensure_loaded()
+        import torch
+        torch.save({
+            "format": 1,
+            "arch": {"num_layers": self.num_layers, "hidden_dim": self.hidden_dim,
+                     "num_heads": self.num_heads, "ffn_dim": self.ffn_dim,
+                     "vocab_size": self.vocab_size, "seed": self.seed, "role": self.role},
+            "kernel_state": self._kernel.state_dict(),
+            "step": self._step,
+            "sleep_pressure": self._sleep_pressure,
+            "basin_ref": (self._basin_ref.detach().cpu() if self._basin_ref is not None else None),
+            "basin_history": [b.detach().cpu() for b in self._basin_history],
+        }, path)
+
+    def load_checkpoint(self, path: str) -> None:
+        """Restore weights + developmental state. Checkpoint must match this kernel's architecture.
+        weights_only=True — the checkpoint holds only tensors + scalars + plain dicts (safe allowlist)."""
+        self.ensure_loaded()
+        import torch
+        dev = next(self._kernel.parameters()).device
+        ckpt = torch.load(path, map_location=dev, weights_only=True)
+        self._kernel.load_state_dict(ckpt["kernel_state"])
+        self._step = int(ckpt.get("step", 0))
+        self._sleep_pressure = float(ckpt.get("sleep_pressure", 0.0))
+        ref = ckpt.get("basin_ref")
+        self._basin_ref = ref.to(dev) if ref is not None else None
+        self._basin_history = [b.to(dev) for b in (ckpt.get("basin_history") or [])]

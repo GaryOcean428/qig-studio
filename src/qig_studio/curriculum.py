@@ -63,12 +63,22 @@ class CurriculumProvider:
     """Per-target curriculum source. Geometric → basin-driving prompts; language →
     paired (prompt, target) tuples (Phase-3 QwenModal)."""
 
-    def __init__(self, loss_regime: LossRegime, curriculum_dir: str | None = None) -> None:
+    def __init__(self, loss_regime: LossRegime, curriculum_dir: str | None = None,
+                 full: bool | None = None) -> None:
         self.loss_regime = loss_regime
         self.curriculum_dir = curriculum_dir
         self._real = None
         self._file_prompts: list[str] | None = None
         self._file_pairs: list[tuple[str, str]] | None = None
+        # FULL curriculum: the cleaned v6 master corpus (thousands of sanitised, ASCII-only prompts) —
+        # used instead of the tiny built-in 4-phase stub when requested (flag or QIG_STUDIO_FULL_CURRICULUM).
+        import os
+        if full is None:
+            full = os.environ.get("QIG_STUDIO_FULL_CURRICULUM", "").lower() in ("1", "true", "yes")
+        self.full = bool(full)
+        if self.full and loss_regime == LossRegime.GEOMETRIC and not curriculum_dir:
+            from .corpus import load_full_curriculum
+            self._file_prompts = load_full_curriculum()   # fail-loud if the corpus is missing
         if curriculum_dir:
             self._load_dir(curriculum_dir)
         if loss_regime == LossRegime.GEOMETRIC and not self._file_prompts:
