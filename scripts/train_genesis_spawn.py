@@ -78,7 +78,9 @@ def main() -> None:
         of truth, this is the guard). ``seed_offset`` draws a DIFFERENT DNA for the same role (seed-retry
         = overproduce-and-select): the role attractor (template) is unchanged; only the init seed moves —
         nature makes many embryos of the same kind; the viable ones mature."""
-        rseed = _role_seed(role) + seed_offset * 9973
+        # Independent DNA draw per attempt (a hash of role+attempt, not a linear offset that could
+        # correlate) — explores the init-seed space so overproduce-and-select can find a viable embryo.
+        rseed = int(hashlib.sha256(f"{role}:{seed_offset}".encode()).hexdigest(), 16) % 100000
         try:
             tmpl = generate_basin_template(KernelRole[role.upper()])
         except KeyError:
@@ -145,17 +147,23 @@ def main() -> None:
         cradle = orch.cradles[spawned_role]
         report = {"graduated": False}
         for attempt in range(args.seed_retries + 1):
-            if attempt > 0:
+            if attempt == 0:
+                print(f"[spawn]   training '{spawned_role}'…", flush=True)
+            else:
                 faculty = spawn_fn(spawned_role, seed_offset=attempt)   # a fresh DNA of the same role
                 orch.faculties[spawned_role] = faculty
                 orch.cradles[spawned_role] = Cradle(role=spawned_role)  # a fresh early environment
                 cradle = orch.cradles[spawned_role]
-                print(f"[spawn]   '{spawned_role}' did not mature → new DNA (attempt {attempt})…", flush=True)
-            else:
-                print(f"[spawn]   training '{spawned_role}'…", flush=True)
+                print(f"[spawn]   '{spawned_role}' new DNA (attempt {attempt})…", flush=True)
             report = cradle.train(faculty, steps=args.cradle_steps)
             if report.get("graduated"):
                 break
+            ft = faculty.telemetry().to_dict()
+            ex = ft.get("extra", {})
+            g = ex.get("gamma")
+            gs = f"{g:.3f}" if isinstance(g, (int, float)) else str(g)
+            print(f"[spawn]     ↳ attempt {attempt} did not mature: Φ={float(ft.get('phi') or 0):.3f} "
+                  f"Γ={gs} d_basin={ex.get('d_basin')} ({report.get('reason') or 'gate'})", flush=True)
         final_tel = faculty.telemetry().to_dict()
         res = c_equation(final_tel)
         graduated = report.get("graduated", False)
