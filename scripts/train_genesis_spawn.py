@@ -78,9 +78,12 @@ def main() -> None:
         of truth, this is the guard). ``seed_offset`` draws a DIFFERENT DNA for the same role (seed-retry
         = overproduce-and-select): the role attractor (template) is unchanged; only the init seed moves —
         nature makes many embryos of the same kind; the viable ones mature."""
-        # Independent DNA draw per attempt (a hash of role+attempt, not a linear offset that could
-        # correlate) — explores the init-seed space so overproduce-and-select can find a viable embryo.
-        rseed = int(hashlib.sha256(f"{role}:{seed_offset}".encode()).hexdigest(), 16) % 100000
+        # DNA per attempt. Attempt 0 = sha256(role) — the genotype that matured perception+heart in the
+        # validated run; retries = independent draws sha256(role:retry:k) for the roles whose first
+        # genotype lands in the over-crystallized basin (overproduce-and-select). Multi-threaded training
+        # is stochastic, so each spawn is also a fresh roll — retries explore both genotype AND roll.
+        tag = role if seed_offset == 0 else f"{role}:retry:{seed_offset}"
+        rseed = int(hashlib.sha256(tag.encode()).hexdigest(), 16) % 100000
         try:
             tmpl = generate_basin_template(KernelRole[role.upper()])
         except KeyError:

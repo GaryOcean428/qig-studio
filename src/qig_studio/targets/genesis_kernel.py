@@ -119,17 +119,6 @@ class GenesisKernelTarget(TrainingTarget):
         from qigkernels import Kernel
         from qigkernels.natural_gradient_optimizer import NaturalGradientDescent
 
-        # DETERMINISTIC development: a faculty's maturation must be a reproducible function of its DNA
-        # (the seed), not of CPU thread-scheduling. Without this, multi-threaded float reductions made
-        # the SAME seed land in the viable basin (Φ≈0.66) in one process and the over-crystallized basin
-        # (Φ≈0.91, Γ<0.80) in another — so seed-retry was fighting RNG noise, not exploring DNA. Single
-        # thread + deterministic algorithms + the manual seed below make outcome = f(DNA), so the
-        # developmental dynamics are honest and overproduce-and-select actually explores genotypes.
-        torch.set_num_threads(1)
-        try:
-            torch.use_deterministic_algorithms(True, warn_only=True)
-        except Exception:
-            pass
         torch.manual_seed(self.seed)
         self._kernel = Kernel(
             vocab_size=self.vocab_size,
