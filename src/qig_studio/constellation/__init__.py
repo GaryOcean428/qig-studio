@@ -21,23 +21,43 @@ from .faculty import (
     seed_constellation,
 )
 from .identity_anchor import ANCHOR_FRACTION, apply_anchor, equilibrium_distance, identity_drift
+from .rhythm import HeartOscillator, RhythmMonitor, RhythmState
 from .signal_bus import Signal, SignalBus
+from .temporal import (
+    BasinForesight,
+    TemporalAwareness,
+    TemporalState,
+    arc_length,
+    distinguishable_transitions,
+    path_efficiency,
+    tau_macro,
+)
 
 __all__ = [
     "ANCHOR_FRACTION",
     "BIRTH_CONCENTRATION",
     "INBOUND_BUDGET",
+    "BasinForesight",
     "CoupleDiag",
     "Faculty",
     "FacultyView",
+    "HeartOscillator",
+    "RhythmMonitor",
+    "RhythmState",
     "Signal",
     "SignalBus",
+    "TemporalAwareness",
+    "TemporalState",
     "apply_anchor",
+    "arc_length",
     "couple_step",
+    "distinguishable_transitions",
     "equilibrium_distance",
     "identity_drift",
     "min_pairwise_fr",
+    "path_efficiency",
     "rel_weights",
     "seed_birth_basin",
     "seed_constellation",
+    "tau_macro",
 ]
