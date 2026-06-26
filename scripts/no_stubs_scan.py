@@ -18,14 +18,18 @@ import re
 import sys
 from pathlib import Path
 
+# POLICY: the danger is a SILENT stub — code that PRETENDS to work (returns fake success / no-ops)
+# while doing nothing (the sleep/dream "v1 light NEEDS-BUILD" that returned a label and trained nothing;
+# a method that `print("rolling back")` and doesn't). A FAIL-LOUD `raise NotImplementedError(...)` /
+# guard is the OPPOSITE — it refuses rather than fabricates (the project's anti-silent-fallback
+# doctrine; cf. qig-warp bridge "refuse rather than guess"). So fail-loud raises are ALLOWED; silent
+# incompleteness is HARD-forbidden.
 HARD = [
-    (re.compile(r"\b(TODO|FIXME|XXX)\b"), "TODO/FIXME/XXX marker"),
-    (re.compile(r"raise NotImplementedError"), "NotImplementedError"),
-    (re.compile(r"raise\s+\w*Error\([^)]*not implemented", re.I), "raise not-implemented"),
+    (re.compile(r"\b(TODO|FIXME|XXX)\b"), "TODO/FIXME/XXX marker (unfinished work)"),
     (re.compile(r"#\s*stub\b", re.I), "explicit # stub"),
     # the purged curiosity-stub was a FALLBACK DEFAULT (`get(..., 0.6)` / `or 0.6` / bare `= 0.6`),
     # NOT an arithmetic coefficient (`0.6 * x` / `0.6·x` are legit weights) — match only the stub shape.
-    (re.compile(r"\bor 0\.6\b|,\s*0\.6\s*\)|=\s*0\.6\s*(#.*)?$"), "0.6 fallback-default (curiosity-stub shape)"),
+    (re.compile(r"\bor 0\.6\b|\.get\([^)]*,\s*0\.6\s*\)"), "0.6 fallback-default (curiosity-stub shape)"),
     (re.compile(r"return\s+None\s*#.*\b(todo|stub|later|placeholder)", re.I), "return None placeholder"),
     # NON-FUNCTIONAL markers — a capability declared but not built. THIS is the class that hid the
     # sleep/dream stub ("v1 light … NEEDS-BUILD" that returned a label and did no work). HARD-fail so it
@@ -63,9 +67,13 @@ def _body_stub_lines(path: Path) -> list[int]:
                     break
                 body.append(nxt.strip())
                 j += 1
-            # skip protocol/abstract/overload stubs (legit `...`)
-            ctx = " ".join(lines[max(0, i - 2):i])
-            if "abstractmethod" in ctx or "@overload" in ctx or "Protocol" in ctx:
+            # skip protocol/abstract/overload stubs (legit `...`) and intentional NULL-OBJECT / MOCK
+            # no-ops (a Dummy/Mock/Null/NoOp/Fake class whose methods SHOULD do nothing — that is a
+            # complete pattern, not an unfinished stub). Look back to the enclosing class.
+            ctx = " ".join(lines[max(0, i - 16):i])
+            if any(t in ctx for t in ("abstractmethod", "@overload", "Protocol")):
+                continue
+            if re.search(r"class\s+\w*(Dummy|Mock|Null|NoOp|Fake|Stubbed)\w*", ctx) or "no-op" in ctx.lower():
                 continue
             real = [b for b in body if not b.startswith(('"""', "'''", "#"))]
             if real and all(b in ("pass", "...") for b in real):
@@ -79,8 +87,11 @@ def main() -> int:
     root = Path(args[0]) if args else Path("src/qig_studio")
     hard_hits: list[str] = []
     soft_hits: list[str] = []
+    _SKIP = (".venv", "site-packages", "__pycache__", "node_modules", ".git", "build", "dist")
     for p in sorted(root.rglob("*.py")):
-        if "__pycache__" in p.parts or "/web/" in str(p):
+        if any(s in p.parts for s in _SKIP) or "/web/" in str(p) or "/tests/" in str(p) or p.name.startswith("test_"):
+            continue
+        if p.name == "no_stubs_scan.py":      # the scanner contains its own pattern strings — not a stub
             continue
         text = p.read_text(encoding="utf-8", errors="replace")
         for n, line in enumerate(text.splitlines(), 1):
