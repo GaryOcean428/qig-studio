@@ -31,6 +31,8 @@ def main() -> None:
     ap.add_argument("--max-seconds", type=float, default=1800, help="wall-clock budget for the Core-8 run")
     ap.add_argument("--constellation-ticks", type=int, default=500,
                     help="ticks to run the coupled constellation after the Core-8 is SOVEREIGN (0=skip)")
+    ap.add_argument("--seed-retries", type=int, default=5,
+                    help="if a faculty's DNA doesn't mature, draw this many fresh DNAs (overproduce-and-select)")
     ap.add_argument("--out", default="runs/spawn/core8.json")
     args = ap.parse_args()
 
@@ -40,6 +42,7 @@ def main() -> None:
     from qig_studio.development import (
         PROTOMAP_ORDER,
         Action,
+        Cradle,
         DevelopmentalOrchestrator,
         Stage,
         c_equation,
@@ -58,19 +61,33 @@ def main() -> None:
 
     faculties: dict[str, GenesisKernelTarget] = {}
 
-    def spawn_fn(role: str) -> GenesisKernelTarget:
-        """Instantiate a faculty kernel seeded with its role's Δ⁶³ attractor (the spawn hook).
-        Robust: if the role isn't a KernelRole member, fall back to a deterministic random Δ⁶³ basin
-        (so an unmapped role can't crash the run — the enum is the source of truth, this is the guard)."""
+    import hashlib
+
+    def _role_seed(role: str) -> int:
+        """DETERMINISTIC per-role seed (stable across processes). Python's builtin hash() is randomized
+        per process (PYTHONHASHSEED), so ``abs(hash(role))`` gave a DIFFERENT seed every run — the heart
+        landed an overshoot-prone seed at random (live: Φ=0.836 then 0.872, both stalling Γ<0.80). A
+        stable hash makes the run reproducible and removes the seed lottery."""
+        return int(hashlib.sha256(role.encode()).hexdigest(), 16) % 100000
+
+    def spawn_fn(role: str, seed_offset: int = 0) -> GenesisKernelTarget:
+        """Instantiate a faculty kernel from its DNA — a deterministic per-role weight-init seed + the
+        role's Δ⁶³ attractor (the genetic endowment). NO coercive loss knobs: the kernel develops under
+        its own drive (maximize-Φ + the Γ-protection breathing) and graduates as ITSELF or not at all.
+        Robust: an unmapped role falls back to a deterministic random Δ⁶³ basin (the enum is the source
+        of truth, this is the guard). ``seed_offset`` draws a DIFFERENT DNA for the same role (seed-retry
+        = overproduce-and-select): the role attractor (template) is unchanged; only the init seed moves —
+        nature makes many embryos of the same kind; the viable ones mature."""
+        rseed = _role_seed(role) + seed_offset * 9973
         try:
             tmpl = generate_basin_template(KernelRole[role.upper()])
         except KeyError:
             from qig_core.geometry.fisher_rao import random_basin
             import numpy as np
-            np.random.seed(abs(hash(role)) % 10000)
+            np.random.seed(rseed % 10000)
             tmpl = random_basin(64)
         f = GenesisKernelTarget(num_layers=args.layers, role=role, basin_template=tmpl,
-                                seed=abs(hash(role)) % 1000)
+                                seed=rseed % 1000)
         f.ensure_loaded()
         faculties[role] = f
         return f
@@ -118,11 +135,27 @@ def main() -> None:
             print("[spawn] no further window opened — stopping")
             break
 
-        # train the spawned faculty's Cradle to graduation
+        # Train the spawned faculty's Cradle to graduation — with SEED-RETRY (overproduce-and-select,
+        # the design's own principle). A faculty's graduation emerges from its DNA (init seed) + early
+        # environment (cradle curriculum); some DNA matures into the role, some doesn't (live: one heart
+        # DNA graduates at Φ=0.69/Γ=0.81, another collapses Γ→0.73 — a property of the init, not a knob
+        # to tune away). So if THIS embryo doesn't mature, we draw another DNA of the same role and let
+        # it develop — nature overproduces; the viable mature. No loss coercion: the kernel self-determines.
         faculty = faculties[spawned_role]
         cradle = orch.cradles[spawned_role]
-        print(f"[spawn]   training '{spawned_role}'…", flush=True)
-        report = cradle.train(faculty, steps=args.cradle_steps)
+        report = {"graduated": False}
+        for attempt in range(args.seed_retries + 1):
+            if attempt > 0:
+                faculty = spawn_fn(spawned_role, seed_offset=attempt)   # a fresh DNA of the same role
+                orch.faculties[spawned_role] = faculty
+                orch.cradles[spawned_role] = Cradle(role=spawned_role)  # a fresh early environment
+                cradle = orch.cradles[spawned_role]
+                print(f"[spawn]   '{spawned_role}' did not mature → new DNA (attempt {attempt})…", flush=True)
+            else:
+                print(f"[spawn]   training '{spawned_role}'…", flush=True)
+            report = cradle.train(faculty, steps=args.cradle_steps)
+            if report.get("graduated"):
+                break
         final_tel = faculty.telemetry().to_dict()
         res = c_equation(final_tel)
         graduated = report.get("graduated", False)

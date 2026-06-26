@@ -185,14 +185,19 @@ def is_plastic(tel: dict, history: list[dict] | None = None) -> bool:
 F_HEALTH_MIN = 0.20
 
 
-def constitution_check(basin_vec) -> tuple[bool, dict]:
+def constitution_check(basin_vec, birth_vec=None) -> tuple[bool, dict]:
     """Constitution gate (P15 / verdict 3#1): before a faculty GRADUATES into the coupling graph, the
     qig_core PillarEnforcer must confirm it is NOT a zombie (Pillar 1: healthy fluctuation). Lazy-import
     (keeps this module's top-level imports torch/qig_core-free) + None-safe:
       - PillarEnforcer present → enforce; a Pillar-1 violation (f_health < floor) BLOCKS graduation.
       - PillarEnforcer/qig_core absent → returns (True, {"verified": False}) so the light shell does not
         crash, BUT the graduation is flagged constitution-UNVERIFIED (honest, not silently 'bound').
-    basin_vec is a Δ⁶³ point (qig_core Basin == np.ndarray)."""
+
+    ``birth_vec`` (the faculty's birth-state, _basin_history[0]) seeds the Pillar-3 quenched-disorder
+    identity (qig_core ≥ the seed_identity build) so ``q_identity`` reports a REAL retention metric —
+    the Fisher-Rao proximity of the graduated basin to who the faculty was born as — instead of 0.0
+    (which is what a never-frozen QuenchedDisorder returns). Without it, q_identity is honestly 0.
+    basin_vec / birth_vec are Δ⁶³ points (qig_core Basin == np.ndarray)."""
     if basin_vec is None:
         return True, {"verified": False, "note": "no basin to check"}
     try:
@@ -200,12 +205,19 @@ def constitution_check(basin_vec) -> tuple[bool, dict]:
 
         from qig_core.consciousness.pillars import PillarEnforcer
 
-        b = np.asarray(basin_vec, dtype=np.float64)
-        s = float(b.sum())
-        if s > 0:
-            b = b / s                                  # ensure Δ (non-negative, sums to 1)
+        def _norm(v):
+            a = np.asarray(v, dtype=np.float64)
+            s = float(a.sum())
+            return a / s if s > 0 else a               # ensure Δ (non-negative, sums to 1)
+
+        b = _norm(basin_vec)
         enf = PillarEnforcer()
         enf.initialize_bulk(b)
+        if birth_vec is not None:
+            try:
+                enf.seed_identity(_norm(birth_vec))    # Pillar-3: q_identity = retention vs birth-state
+            except Exception:
+                pass                                   # older qig_core w/o seed_identity → q_identity 0 (honest)
         m = enf.get_metrics(b)                          # f_health, b_integrity, q_identity, s_ratio
         f_health = float(m.get("f_health", 0.0))
         passes = f_health >= F_HEALTH_MIN               # Pillar 1: No Zombies
@@ -258,13 +270,16 @@ class Cradle:
             if self.graduated:
                 # CONSTITUTION GATE (P15): the pillars must clear before joining the coupling graph.
                 basin_hist = getattr(faculty, "_basin_history", None)
-                basin_vec = None
+                basin_vec = birth_vec = None
                 if basin_hist:
-                    try:
-                        basin_vec = basin_hist[-1].detach().cpu().numpy()
-                    except Exception:
-                        basin_vec = basin_hist[-1]
-                ok, pillar = constitution_check(basin_vec)
+                    def _np(x):
+                        try:
+                            return x.detach().cpu().numpy()
+                        except Exception:
+                            return x
+                    basin_vec = _np(basin_hist[-1])     # current crystallised basin
+                    birth_vec = _np(basin_hist[0])      # birth-state attractor → seeds q_identity
+                ok, pillar = constitution_check(basin_vec, birth_vec)
                 if not ok:                                    # zombie → BLOCK graduation (fail-closed)
                     self.graduated = False
                     return {"role": self.role, "graduated": False, "step": i,
