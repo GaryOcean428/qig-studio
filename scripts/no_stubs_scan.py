@@ -27,9 +27,17 @@ HARD = [
     # NOT an arithmetic coefficient (`0.6 * x` / `0.6·x` are legit weights) — match only the stub shape.
     (re.compile(r"\bor 0\.6\b|,\s*0\.6\s*\)|=\s*0\.6\s*(#.*)?$"), "0.6 fallback-default (curiosity-stub shape)"),
     (re.compile(r"return\s+None\s*#.*\b(todo|stub|later|placeholder)", re.I), "return None placeholder"),
+    # NON-FUNCTIONAL markers — a capability declared but not built. THIS is the class that hid the
+    # sleep/dream stub ("v1 light … NEEDS-BUILD" that returned a label and did no work). HARD-fail so it
+    # can never be trained-against again. (Functional-but-simple code must NOT carry these words: label
+    # it "v1 reduction" / describe what it actually does, not "placeholder/NEEDS-BUILD".)
+    (re.compile(r"NEEDS.?BUILD", re.I), "NEEDS-BUILD (capability declared, not built — a stub)"),
+    (re.compile(r"\bv1 light\b", re.I), "v1-light (non-functional placeholder op)"),
 ]
-# SOFT labels are allowed (honest roadmap); listed so they're visible.
-SOFT = re.compile(r"NEEDS.?BUILD|CALIBRATION.?PENDING|PROVISIONAL|v1 light", re.I)
+# SOFT labels are allowed (functional code with an honest calibration/scope note — NOT a missing
+# capability). CALIBRATION-PENDING = real values pending empirical confirmation; PROVISIONAL = a
+# functional v1 reduction. These print but do not fail.
+SOFT = re.compile(r"CALIBRATION.?PENDING|PROVISIONAL", re.I)
 
 # `pass` / `...` as the ENTIRE body of a def (a stub) — detected structurally below.
 _DEF = re.compile(r"^\s*def\s+\w+\s*\(")

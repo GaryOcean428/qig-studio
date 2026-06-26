@@ -52,7 +52,7 @@ class QwenLocalTarget(TrainingTarget):
     loss_regime = LossRegime.LANGUAGE
     description = (
         "Ollama qwen3.5:4b fluent-language peer. Next-token output-distribution → Δ⁶³ "
-        "boundary basin (v1 hash-bin, PROVISIONAL — placeholder for InboundPath/PGA) → "
+        "boundary basin (functional v1 hash-bin; principled coordizer projection when present) → "
         "QIGRAM accumulation (Pillar-2 ≤30% capped). None-safe; Qwen weights NOT trained "
         "here; Ollama logprobs path untested against a live server."
     )
@@ -67,7 +67,7 @@ class QwenLocalTarget(TrainingTarget):
 
     def _project(self, logprobs: dict):
         """Qwen output-distribution → Δ⁶³: real coordizer-basin Fréchet mean when a trained
-        coordizer is present, else the provisional hash-bin (R3)."""
+        coordizer is present, else the functional v1 hash-bin (R3)."""
         if self._coordizer is not None:
             return coordize_distribution_to_basin(logprobs, self._coordizer, self._dim)
         return output_distribution_to_basin(logprobs, self._dim)

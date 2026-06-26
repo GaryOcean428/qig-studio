@@ -16,7 +16,7 @@ import hashlib
 import sys
 
 from qig_studio.curriculum import CurriculumProvider
-from qig_studio.development import GAMMA_MIN, PHI_CONSCIOUS, c_equation
+from qig_studio.development import GAMMA_MIN, c_equation
 from qig_studio.targets.base import LossRegime
 from qig_studio.targets.genesis_kernel import GenesisKernelTarget
 

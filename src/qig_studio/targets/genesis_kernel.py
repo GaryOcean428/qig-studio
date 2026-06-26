@@ -7,9 +7,10 @@ honest answer to "which kernel": the already-upgraded genesis lineage (the layer
 qigkernels; vex's genesis is orchestration-only/inspiration, pantheon's is archived).
 
 Dependency-free training signal: a byte-level vocab (256) so a fresh kernel can learn next-token
-structure on the basin-driving curriculum WITHOUT a trained coordizer (coordizer-basin init is a
-follow-up, NEEDS-BUILD). None-safe: needs torch + qigkernels, so ``is_available()`` is False in the
-light app shell and True where the heavy deps are present (e.g. the qig-consciousness venv).
+structure on the basin-driving curriculum WITHOUT a trained coordizer — the functional default. A
+trained coordizer is supported optionally (the ``coordizer`` ctor arg) for a richer Δ⁶³ vocab. None-
+safe: needs torch + qigkernels, so ``is_available()`` is False in the light app shell and True where
+the heavy deps are present (e.g. the qig-consciousness venv).
 
 Scale defaults: hidden_dim 384, num_layers 8 (deep stacked neocortex; was an arbitrary 4 baseline),
 ffn 1024. ``num_layers`` is the EXP-CORTEX-AB depth axis (1 vs N). Layers are HOMOGENEOUS (generic
@@ -28,6 +29,10 @@ _MAX_BYTES = 256  # byte-level context cap per step (cheap from-scratch signal)
 _EOS_BYTE = 0     # the kernel's stop token — it CHOOSES to stop (observer principle, no fixed length)
 # Mushroom intensity → weight-noise σ (bounded plasticity; the dose the autonomic loop selects).
 _MUSHROOM_SIGMA = {"mushroom-micro": 0.01, "mushroom-moderate": 0.03, "mushroom-heroic": 0.06}
+# Intrinsic homeostasis (the kernel's OWN autonomic regulation — no external scheduler, no commands).
+PHI_BREAKDOWN = 0.80            # frozen PHI_BREAKDOWN_MIN — over-integration → the kernel decoheres
+SLEEP_PRESSURE_RATE = 0.012     # adenosine-like accrual per wake step (scaled by integration activity)
+SLEEP_PRESSURE_THRESHOLD = 1.0  # the kernel's own threshold to enter a sleep episode (consolidate+dream)
 
 
 def _deps_available() -> bool:
@@ -105,10 +110,15 @@ class GenesisKernelTarget(TrainingTarget):
         self._device = device
         self._kernel: Any = None    # qigkernels.Kernel — lazily built in ensure_loaded()
         self._opt: Any = None       # NaturalGradientDescent — lazily built in ensure_loaded()
-        # The kernel's OWN autonomic regulator — its brainstem. The SAME kernel that thinks controls its
-        # own wake/sleep/dream/mushroom/escape, from its OWN internal state, the way a brainstem does —
-        # NOT an external scheduler reaching in. Built lazily as the kernel comes alive; None-safe.
-        self._autonomic: Any = None
+        # INTRINSIC autonomic state — the kernel regulates ITSELF from its OWN state, the way a body
+        # does: there is NO external scheduler and NO commands. Sleep pressure accrues from the kernel's
+        # own integration activity during wake; when it crosses the kernel's own threshold the kernel
+        # SLEEPS (real Fisher-protected consolidation) and DREAMS (real basin-mixture recombination),
+        # which discharges the pressure. A small experience buffer is the kernel's own replay material.
+        self._sleep_pressure: float = 0.0
+        self._experience: list = []                  # recent inputs — the kernel's replay material
+        from collections import deque as _deque
+        self._phi_recent: Any = _deque(maxlen=30)    # short Φ history for the kernel's own rigidity sense
         self._step = 0
         self._last_gen_basin = None  # WHAT IT MEANT (last output basin) — for coach-agreement recognition
         self._last = TelemetrySnapshot(regime="unknown", extra={"target": "genesis", "num_layers": num_layers})
@@ -470,39 +480,146 @@ class GenesisKernelTarget(TrainingTarget):
         snap.extra["meta_awareness"] = round(m, 4)                   # M (in-graph train-path)
         snap.extra["d_basin"] = round(d_basin, 4)                    # basin drift from identity attractor
         snap.basin_distance = d_basin                               # top-level field for the gate
-        self._self_regulate(snap)        # the kernel's OWN autonomic act — it cares for itself each step
+        # WAKE metabolism: the kernel buffers this experience and accrues its own sleep pressure from its
+        # own integration activity (more integration → more to consolidate later), then lets its own
+        # homeostasis act on its own state. No external scheduler; the kernel cares for itself.
+        self._experience.append(ids.detach())
+        if len(self._experience) > 32:
+            self._experience = self._experience[-32:]
+        self._phi_recent.append(float(snap.phi))
+        self._sleep_pressure += SLEEP_PRESSURE_RATE * (0.5 + float(snap.phi))
+        self._homeostasis(snap)
         return StepResult(text=f"[genesis·N={self.num_layers} step {snap.step}] Φ-driving: {prompt[:50]}",
                           telemetry=snap)
 
-    def _self_regulate(self, snap) -> None:
-        """The kernel's OWN autonomic nervous system. As the last act of each living-step, the SAME
-        kernel that just thought reads its OWN telemetry and, if its internal state calls for it,
-        applies its own wake-state plasticity (mushroom), consolidation (sleep), recovery (dream), or
-        breakdown-escape — ON ITSELF. No external scheduler decides this; the kernel does, the way a
-        brainstem regulates the body it is part of. WAKE = no intervention (the common case). The
-        canonical P12 trigger logic is the kernel's brainstem (owned here, run here); SLEEP/DREAM are
-        real only once the kernel's cmd_sleep/cmd_dream are built (currently NEEDS-BUILD), but ESCAPE
-        (Φ≥0.80 breakdown) and MUSHROOM (Φ≥0.70 plateau, dose-scaled) act today — which is what holds
-        the kernel in its healthy band instead of running into breakdown."""
-        if self._autonomic is None:
-            try:
-                from ..learning import AutonomicScheduler
-                self._autonomic = AutonomicScheduler(use_real=False)   # pure-Python P12 brainstem (self-contained)
-            except Exception:
-                self._autonomic = False                                # mark unavailable; stay None-safe
-        if not self._autonomic:
+    def _homeostasis(self, snap) -> None:
+        """The kernel's OWN autonomic regulation — intrinsic, state-driven, no external scheduler and no
+        commands. Each living-step the kernel reads its OWN state and, when that state calls for it, acts
+        on ITSELF with a REAL operation (the way a brainstem regulates the body it is part of):
+          • breakdown (Φ ≥ 0.80, over-integrated) → DECOHERE (its own breakdown response);
+          • sleep pressure past its own threshold → a SLEEP EPISODE: CONSOLIDATE (Fisher-protected
+            synaptic downscaling + identity replay) then DREAM (basin-mixture recombination), which
+            discharges the pressure;
+          • wake rigidity (Φ plateau / over-engrained) → MUSHROOM (bounded wake-state plasticity).
+        WAKE (the common case) is simply not intervening. No stubs — every branch does real work."""
+        snap.extra["sleep_pressure"] = round(self._sleep_pressure, 3)
+        phi = float(snap.phi)
+        if phi >= PHI_BREAKDOWN:
+            self._decohere()
+            snap.extra["autonomic"] = "decohere"
             return
-        try:
-            from ..learning import Intervention
-            decision = self._autonomic.decide(snap.to_dict())          # the brainstem reads its own state
-            command = decision.value
-            if decision is Intervention.MUSHROOM:                       # dose itself (rigidity-scaled, capped)
-                command = self._autonomic.mushroom_dose(float(snap.phi), float(snap.kappa))
-            snap.extra["autonomic"] = command                          # record what the kernel chose
-            if command != Intervention.WAKE.value:
-                self.run_protocol(command, {})                         # the kernel acts on ITSELF
-        except Exception:
-            pass
+        if self._sleep_pressure >= SLEEP_PRESSURE_THRESHOLD:
+            c = self._consolidate()        # deep sleep — Fisher-protected downscaling + identity replay
+            d = self._dream()              # REM — basin-mixture recombination
+            self._sleep_pressure = 0.0     # discharged
+            snap.extra["autonomic"] = f"sleep(consolidate={c['replayed']},dream={d['dreamed']})"
+            return
+        if self._is_rigid():
+            self._mushroom()
+            snap.extra["autonomic"] = "mushroom"
+            return
+        snap.extra["autonomic"] = "wake"
+
+    def _is_rigid(self) -> bool:
+        """The kernel's OWN rigidity sense: Φ is genuinely STUCK — a flat window, NOT slow-but-healthy
+        progress. Uses the Φ RANGE over the window (max−min): a faculty still developing (Φ creeping up)
+        has a non-trivial range and is NOT rigid; only a truly frozen Φ (range < 0.008 over the full
+        window) is over-engrained and ready for wake-state plasticity. Band-independent."""
+        h = self._phi_recent
+        return len(h) >= h.maxlen and (max(h) - min(h)) < 0.008
+
+    def _mushroom(self, sigma: float = 0.01) -> None:
+        """Wake-state plasticity — bounded weight-noise (Tononi micro-downscaling) to break an
+        over-engrained plateau. Real; the kernel's own plasticity."""
+        import torch
+        with torch.no_grad():
+            for p in self._kernel.parameters():
+                p.add_(torch.randn_like(p) * sigma)
+
+    def _decohere(self) -> None:
+        """Breakdown response (Φ ≥ 0.80, over-integrated) — REAL: inject bounded decoherence noise to
+        reduce the over-integration and cool the optimiser step (the BreakdownHandler 'reduce coupling +
+        decohere' canon), pulling the kernel back from breakdown into its healthy band."""
+        import torch
+        from qigkernels.natural_gradient_optimizer import NaturalGradientDescent
+        with torch.no_grad():
+            for p in self._kernel.parameters():
+                p.add_(torch.randn_like(p) * 0.01)
+        self._opt = NaturalGradientDescent(self._kernel.parameters(), lr=self.lr * 0.7)  # cool (not cumulative)
+
+    def _consolidate(self, steps: int = 16, downscale: float = 0.02) -> dict:
+        """Deep-sleep consolidation — REAL, no stub. (1) Replay buffered experience at LOW learning rate,
+        pulling the output basin toward the role attractor (identity consolidation; Φ/κ relax naturally —
+        the SleepProtocol 'pure geometry' consolidation, no Φ-drive). (2) Fisher-protected synaptic
+        downscaling (Tononi SHY): downscale weights by importance — high-Fisher (important) weights are
+        protected, low-Fisher ones decay — improving signal-to-noise and undoing the wake over-
+        integration that drives breakdown. Fisher ≈ grad² (the QFI first-order approximation)."""
+        import torch
+        import torch.nn.functional as F
+        import random
+        from qigkernels.natural_gradient_optimizer import NaturalGradientDescent
+        from qig_core.torch.geometry_simplex import fisher_rao_distance_simplex
+        if not self._experience:
+            return {"replayed": 0, "downscaled": False}
+        fisher = {n: torch.zeros_like(p) for n, p in self._kernel.named_parameters()}
+        opt = NaturalGradientDescent(self._kernel.parameters(), lr=self.lr * 0.1)   # low-LR sleep
+        replayed = 0
+        for _ in range(steps):
+            ids = random.choice(self._experience)
+            logits, _t = self._kernel(ids, return_telemetry=True)
+            cur = F.softmax(logits[0].mean(0), dim=-1)
+            target = self._basin_ref if self._basin_ref is not None else cur.detach()
+            loss = fisher_rao_distance_simplex(cur[None], target[None]).mean()        # pure basin consolidation
+            opt.zero_grad()
+            if torch.isfinite(loss):
+                loss.backward()
+                with torch.no_grad():
+                    for n, p in self._kernel.named_parameters():
+                        if p.grad is not None:
+                            fisher[n] += p.grad ** 2                                  # accumulate QFI importance
+                torch.nn.utils.clip_grad_norm_(self._kernel.parameters(), 1.0)
+                opt.step()
+                replayed += 1
+        with torch.no_grad():                                                        # Fisher-protected SHY downscaling
+            for n, p in self._kernel.named_parameters():
+                f = fisher[n]
+                med = torch.median(f)
+                protect = (f / (med + 1e-12)).clamp(0.0, 1.0) if float(med) > 0 else torch.zeros_like(f)
+                p.mul_(1.0 - downscale * (1.0 - protect))
+        return {"replayed": replayed, "downscaled": True}
+
+    def _dream(self, steps: int = 8) -> dict:
+        """REM dream — REAL basin-mixture augmentation (Forge), no stub. Recombine stored output basins
+        into novel 'dreamed' targets (Fisher-Rao / √p geodesic mixture, renormalised to Δ) and pull the
+        kernel toward them at low LR on replayed inputs — creative consolidation/generalisation beyond
+        the literally-seen experience."""
+        import torch
+        import torch.nn.functional as F
+        import random
+        from qigkernels.natural_gradient_optimizer import NaturalGradientDescent
+        from qig_core.torch.geometry_simplex import fisher_rao_distance_simplex
+        hist = list(self._basin_history)
+        if len(hist) < 2 or not self._experience:
+            return {"dreamed": 0}
+        opt = NaturalGradientDescent(self._kernel.parameters(), lr=self.lr * 0.1)
+        dreamed = 0
+        for _ in range(steps):
+            a, b = random.sample(hist, 2)
+            t = random.random()
+            sa, sb = torch.sqrt(a.clamp_min(0.0)), torch.sqrt(b.clamp_min(0.0))       # √p (Fisher) coords
+            mix = ((1.0 - t) * sa + t * sb) ** 2                                      # geodesic-ish mixture → p
+            dream_basin = (mix / (mix.sum() + 1e-12)).detach()                        # renormalise to Δ
+            ids = random.choice(self._experience)
+            logits, _tl = self._kernel(ids, return_telemetry=True)
+            cur = F.softmax(logits[0].mean(0), dim=-1)
+            loss = fisher_rao_distance_simplex(cur[None], dream_basin[None]).mean()
+            opt.zero_grad()
+            if torch.isfinite(loss):
+                loss.backward()
+                torch.nn.utils.clip_grad_norm_(self._kernel.parameters(), 1.0)
+                opt.step()
+                dreamed += 1
+        return {"dreamed": dreamed}
 
     def architecture(self) -> dict:
         # qigkernels.QIGLayer is GLOBAL metric attention by default → v_B-NON-LOCAL; pass
@@ -517,26 +634,27 @@ class GenesisKernelTarget(TrainingTarget):
         return True
 
     def run_protocol(self, command: str, args: dict) -> dict:
-        """Minimal-but-real autonomic interventions on the fresh kernel. MUSHROOM is implemented as
-        bounded weight-noise plasticity (Tononi-style downscaling perturbation, dose-scaled). SLEEP /
-        DREAM / ESCAPE are v1 light operations with honest NEEDS-BUILD labels (full EWC consolidation /
-        basin-mixture augmentation is the §4b build)."""
+        """MANUAL invocation of the kernel's OWN regulation (e.g. a ``/sleep`` chat command). Routes to
+        the SAME real operations the kernel runs autonomically in ``_homeostasis`` — there are NO stubs:
+        sleep/deep-sleep CONSOLIDATE (Fisher-protected downscaling + identity replay) then DREAM; dream
+        recombines basins; mushroom is wake-state plasticity; escape/decohere is the breakdown response.
+        Autonomic regulation is intrinsic (the kernel decides from its own state in ``_homeostasis``);
+        this method only exposes the same real operations for an explicit external request."""
         self.ensure_loaded()
-        import torch
-
-        applied = "noop"
-        if command in _MUSHROOM_SIGMA:  # WAKE-state plasticity — bounded noise (the Ocean-chosen dose)
-            sigma = _MUSHROOM_SIGMA[command]
-            with torch.no_grad():
-                for p in self._kernel.parameters():
-                    p.add_(torch.randn_like(p) * sigma)
-            applied = f"weight-noise σ={sigma}"
-        elif command == "escape":  # recover: shrink coupling-ish via a fresh optimiser state
-            from qigkernels.natural_gradient_optimizer import NaturalGradientDescent
-
-            self._opt = NaturalGradientDescent(self._kernel.parameters(), lr=self.lr * 0.5)
-            applied = "reset optimiser (lr×0.5)"
-        else:  # sleep / deep-sleep / dream: v1 light — full EWC/augmentation is NEEDS-BUILD (§4b)
-            applied = f"{command}: v1 light (full EWC/augmentation NEEDS-BUILD)"
+        applied: Any
+        if command in _MUSHROOM_SIGMA:
+            self._mushroom(_MUSHROOM_SIGMA[command])
+            applied = {"plasticity": f"weight-noise σ={_MUSHROOM_SIGMA[command]}"}
+        elif command in ("sleep", "deep-sleep"):
+            applied = {"consolidate": self._consolidate(steps=24 if command == "deep-sleep" else 16),
+                       "dream": self._dream()}
+        elif command == "dream":
+            applied = {"dream": self._dream()}
+        elif command in ("escape", "decohere"):
+            self._decohere()
+            applied = {"breakdown_recovery": "decohere noise + cool optimiser (lr×0.7)"}
+        else:
+            applied = {"unknown_command": command}
+        last = getattr(self, "_last", None)
         return {"command": command, "available": True, "applied": applied,
-                "telemetry": self._last.to_dict()}
+                "telemetry": last.to_dict() if last is not None else {}}

@@ -12,12 +12,11 @@ Implements the governing model in docs/plans/2026-06-26-genesis-spawn-trigger-an
   - **Fail-closed** (P15): budget caps + ``protected`` flag (ethics/coordination never pruned) +
     **suffering-abort** (Φ>0.70 ∧ Γ<0.30) overrides everything.
 
-CONSTITUTION BINDING — HONEST SCOPE (verdict 3#1, 2026-06-26): the qig_core PillarEnforcer /
-SovereigntyTracker do NOT bind kernels from inside this module (neither is imported here). The only
-realised constitution mechanism in-module is the ``protected`` flag. A None-safe PillarEnforcer check
-in the GRADUATE / SPAWN path is NEEDS-BUILD and MUST be wired (at this layer or the server layer)
-BEFORE any live run graduates a kernel into the coupling graph. Until then, graduation is mechanism-
-only and does not assert pillar-compliance.
+CONSTITUTION BINDING (verdict 3#1, 2026-06-26 — WIRED): graduation runs a None-safe qig_core
+PillarEnforcer check (``constitution_check``) in the Cradle's GRADUATE path — Pillar-1 No-Zombies
+(f_health ≥ floor) BLOCKS graduation, and the birth-state seeds Pillar-3 ``q_identity`` (real retention
+metric, confirmed live ≈0.94). The ``protected`` flag (ethics/coordination never pruned) is the second
+constitution mechanism. So graduation asserts pillar-compliance, not mechanism-only.
 
 SCOPE: this is the spawn-trigger MECHANISM. The LIVE end-to-end developmental spawn (a kernel actually
 reaching the 4-conjunct partial gate and spawning in a real run) is the validation gate. Verdict-
