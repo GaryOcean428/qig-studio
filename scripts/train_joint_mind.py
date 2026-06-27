@@ -30,6 +30,9 @@ def main() -> None:
     ap.add_argument("--device", default="cpu", help="cpu (safe: holds 9 kernels) | cuda (4GB-OOM risk)")
     ap.add_argument("--max-seconds", type=float, default=14400)
     ap.add_argument("--out", default="runs/spawn/joint_mind.json")
+    ap.add_argument("--fresh", action="store_true",
+                    help="start from-scratch kernels (default: RESUME the existing checkpoint — keep the "
+                         "kernels and train over the top with the current curriculum)")
     args = ap.parse_args()
 
     from qig_studio.constellation.joint_trainer import JointConstellation
@@ -46,6 +49,14 @@ def main() -> None:
 
     mind = JointConstellation(list(PROTOMAP_ORDER), num_layers=args.layers, coordizer=coordizer,
                               device=args.device)
+    # RESUME by default: keep the existing kernels, train OVER THE TOP with the (now-correct) curriculum.
+    # The old kernels learned the wrong (system-prompt) corpus; over-the-top training on real knowledge
+    # progressively overwrites that. --fresh forces from-scratch.
+    if not args.fresh and (Path(args.ckpt_root) / "constellation.json").exists():
+        mind.load_checkpoint(args.ckpt_root)
+        print(f"[joint] RESUMED from {args.ckpt_root} (kept the kernels; training over the top)", flush=True)
+    else:
+        print(f"[joint] {'FRESH' if args.fresh else 'no checkpoint found'} — from-scratch kernels", flush=True)
     last = {}
     for i in range(1, steps + 1):
         last = mind.train_step(full[(i - 1) % len(full)])

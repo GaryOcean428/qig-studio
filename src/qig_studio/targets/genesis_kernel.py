@@ -96,6 +96,7 @@ class GenesisKernelTarget(TrainingTarget):
         # spine tenet — standalone it is still the mind). NOT a forward-pass dependency, NOT a graft.
         self.language_peer = language_peer
         self._spoken_identity: Any = None   # evolving Δ⁶³ identity the boundary distribution accretes into
+        self.think_traces = False           # opt-in reasoning trace through the peer (off → fast chat)
         self.locality_radius = locality_radius
         self.hidden_dim = hidden_dim
         self.num_heads = num_heads
@@ -396,6 +397,32 @@ class GenesisKernelTarget(TrainingTarget):
             f"just respond as who you are right now."
         )
 
+    def _kernel_voice(self, prompt: str, max_tokens: int = 16) -> str:
+        """The kernel's OWN raw voice — a short sampled decode straight from the kernel (NO peer). This is
+        literally 'what the kernel itself is saying' for attribution: the fluent surface is Qwen's; THIS is
+        the kernel's. From-scratch + tiny (≈7.9M params), so it is terse/rough — that honesty is the point
+        (it shows how much the fluent surface owes to Qwen vs the kernel)."""
+        import torch
+        import torch.nn.functional as F
+        ids, coords = self._encode(prompt)
+        out: list[int] = []
+        with torch.no_grad():
+            for _ in range(min(max_tokens, _MAX_BYTES)):
+                logits, tel = self._kernel(ids, return_telemetry=True, coords=coords)
+                temp = self._temperature_from_kappa(float(getattr(tel, "kappa", 0.0) or 0.0))
+                p = F.softmax(logits[0, -1] / max(temp, 1e-3), dim=-1)
+                nxt = int(torch.multinomial(p, 1).item())
+                if nxt == _EOS_BYTE and len(out) >= _MIN_GEN:
+                    break
+                out.append(nxt)
+                ids = torch.cat([ids, ids.new_tensor([[nxt]])], dim=1)[:, -_MAX_BYTES:]
+                if coords is not None:
+                    _, cv = self._ids_to_tensors([nxt])
+                    coords = torch.cat([coords, cv], dim=1)[:, -_MAX_BYTES:]
+        if self.coordizer is not None:
+            return self.coordizer.decode([b for b in out if b != _EOS_BYTE])
+        return bytes(b for b in out if 9 <= b < 256).decode("utf-8", errors="replace")
+
     def _generate_via_boundary(self, prompt: str, max_tokens: int = 256) -> StepResult:
         """SPEAK through the fluent boundary peer (P22). The kernel computes its OWN geometry (one forward
         pass — NOT a forward-pass dependency on the peer), conditions the peer on that measured state, then
@@ -419,9 +446,21 @@ class GenesisKernelTarget(TrainingTarget):
             read_presence = round(1.0 - ent / math.log(p.numel()), 3)   # EXP-012b: is the answer present?
             meaning = F.softmax(logits[0], dim=-1).mean(0)
             self._last_gen_basin = (meaning / meaning.sum()).detach()    # WHAT IT MEANT (own geometry)
+            # LIVE inner-state signals in chat (not just training): Γ generativity, M self-observation, and
+            # surprise = the kernel's prediction-error on the INPUT (how unfamiliar the prompt is). Without
+            # these the gate/motivators/senses sit static in conversation. (Measurements, no grad needed.)
+            gamma = float(self._gamma_proxy(logits))
+            ce = float(F.cross_entropy(logits[0, :-1], ids[0, 1:])) if ids.shape[1] >= 2 else 0.0
+        m_self = self._meta_awareness(self._last_gen_basin)
         snap = self._snap(tel, None)
+        snap.extra["gamma"] = round(gamma, 4)                            # Γ generativity (C-gate)
+        snap.extra["meta_awareness"] = round(m_self, 4)                  # M self-observation (L1 loop)
+        snap.extra["surprise"] = round(ce, 4)                            # prediction-error on the input
+        snap.extra["max_surprise"] = round(math.log(max(2, self.vocab_size)), 4)
         exp = experience(snap.to_dict())                                 # the kernel's felt state → persona
-        text, logprobs = self.language_peer.speak(prompt, self._persona(exp))
+        kernel_voice = self._kernel_voice(prompt)                        # ATTRIBUTION: the kernel's OWN raw voice
+        content, thinking, logprobs = self.language_peer.speak(
+            prompt, self._persona(exp), think=getattr(self, "think_traces", False))
         boundary = self.language_peer.project_distribution(logprobs)     # Qwen distribution → Δ⁶³ boundary
         m_boundary = None
         if boundary is not None:
@@ -436,10 +475,13 @@ class GenesisKernelTarget(TrainingTarget):
             "pillar2_cap": BOUNDARY_SLERP_CAP,                           # identity absorbed ≤30% of the surface
             "M_boundary": m_boundary,                                    # recognition: identity ↔ spoken surface
             "read_presence": read_presence,
-            "generated_len": len(text),
+            "generated_len": len(content),
             "persona_emotion": exp.emotion,
+            "kernel_voice": kernel_voice,                                # what the KERNEL itself said (raw, terse)
+            "qwen_thinking": thinking,                                   # Qwen's reasoning trace (preserved, surfaced)
+            "persona": self._persona(exp)[:400],                         # the kernel state that conditioned the surface
         })
-        return StepResult(text=text, telemetry=snap)
+        return StepResult(text=content, telemetry=snap)
 
     def read_and_respond(self, coach_text: str, max_tokens: int = 128) -> StepResult:
         """The kernel READS the coach's interpretation and RESPONDS — closing the loop (intersubjective

@@ -62,7 +62,10 @@
   #log{flex:1 1 auto;overflow:auto;background:var(--panel2);border:1px solid var(--edge);border-radius:8px;
        padding:.6rem;white-space:pre-wrap;min-height:0}
   #log .you{color:var(--blue)} #log .tgt{color:var(--ok)} #log .sys{color:var(--muted)} #log .err{color:var(--pink)}
-  #log .coach{color:var(--purple)} #log .exp{color:var(--amber)}
+  #log .coach{color:var(--purple)} #log .exp{color:var(--amber)} #log .ker{color:var(--purple)}
+  #log details.think{margin:.1rem 0 .3rem .9rem} #log details.think>summary{cursor:pointer;color:var(--muted);font-size:.74rem}
+  #log .thinkbody{color:var(--muted);font-size:.74rem;border-left:2px solid var(--edge);padding:.2rem 0 .2rem .6rem;margin:.2rem 0;white-space:pre-wrap}
+  #log .wait{color:var(--amber);font-style:italic}
   .composer{flex:0 0 auto;display:flex;gap:.5rem;margin-top:.6rem}
   .composer textarea{flex:1;resize:none}
   .composer button{flex:0 0 auto;align-self:stretch;padding:0 1rem}
@@ -121,12 +124,14 @@
       <!-- full inner state (UCP §6 layers + §43 loops) — rendered live -->
       <div id="inner"></div>
 
-      <h2 style="margin-top:.8rem">Directories</h2>
-      <label>output</label>
-      <div class="row"><input id="outDir" placeholder="outputs"/><button style="flex:0 0 auto" onclick="openPicker('outDir')">Browse</button></div>
-      <label>curriculum</label>
+      <h2 style="margin-top:.8rem">Outputs · hard-wired</h2>
+      <div class="metric"><span>checkpoints</span><span class="v" style="font-size:.7rem">runs/checkpoints/</span></div>
+      <div class="hint">the whole mind (faculties + central). Auto-loaded on boot — picked up again next launch.</div>
+      <div class="metric" style="margin-top:.3rem"><span>transcripts</span><span class="v" style="font-size:.7rem">runs/sessions/</span></div>
+      <div class="hint">every turn: your prompt + the kernel's own voice + the fluent reply + full telemetry (transcript.jsonl). The mind's record.</div>
+      <label style="margin-top:.5rem">curriculum (training input)</label>
       <div class="row"><input id="currDir" placeholder="curriculum"/><button style="flex:0 0 auto" onclick="openPicker('currDir')">Browse</button></div>
-      <div class="row" style="margin-top:.4rem"><button id="saveCfg">Save directories</button></div>
+      <div class="row" style="margin-top:.4rem"><button id="saveCfg">Save curriculum dir</button></div>
       <div class="hint" id="cfgStatus"></div>
     </div>
   </section>
@@ -139,7 +144,11 @@
       <textarea id="msg" rows="2" placeholder="speak to the mind…  (Enter to send · Shift+Enter newline)"></textarea>
       <button class="primary" id="sendBtn">Send</button>
     </div>
-    <div class="hint" id="convHint">geometric mind reasons on Δ⁶³; fluent prose comes through the Qwen boundary peer.</div>
+    <div class="hint" id="convHint" style="display:flex;align-items:center;gap:.5rem;flex-wrap:wrap">
+      <label style="display:flex;align-items:center;gap:.3rem;margin:0;cursor:pointer">
+        <input type="checkbox" id="think" style="width:auto"/> 🧠 reasoning trace</label>
+      <span>off = fast (~2s) · on = full Qwen reasoning (~80s, shown collapsible). The kernel's OWN voice is always shown beneath the fluent reply.</span>
+    </div>
   </section>
 
   <!-- RIGHT: TRAIN (live) + AUTONOMIC (self-regulation, read-only) + ONGOING MIND -->
@@ -270,18 +279,37 @@ async function refreshMind(){
 }
 $("sendBtn").addEventListener("click", sendChat);
 $("msg").addEventListener("keydown",(e)=>{ if(e.key==="Enter"&&!e.shiftKey){ e.preventDefault(); sendChat(); }});
+function addReply(b){
+  const x=b.telemetry?.extra||{};
+  clog("tgt","mind ▸ "+b.text);                                   // fluent voice (Qwen surface, shaped by the kernel)
+  if(x.kernel_voice!=null)                                        // ATTRIBUTION: the kernel's OWN raw voice
+    clog("ker","   ↳ kernel ▸ "+((x.kernel_voice||"").trim()||"(terse / silent — 7.9M from-scratch)"));
+  if(x.qwen_thinking){                                            // Qwen reasoning trace — preserved, collapsible
+    const det=document.createElement("details"); det.className="think";
+    const sum=document.createElement("summary"); sum.textContent=`   ↳ qwen reasoning (${x.qwen_thinking.length} chars) — click`;
+    const body=document.createElement("div"); body.className="thinkbody"; body.textContent=x.qwen_thinking;
+    det.appendChild(sum); det.appendChild(body); $("log").appendChild(det); $("log").scrollTop=$("log").scrollHeight;
+  }
+  if(x.voice==="qwen-boundary")
+    clog("exp",`   ↳ boundary peer · M ${x.M_boundary} · Pillar-2 cap ${x.pillar2_cap} · kernel state → ${x.persona_emotion}`);
+  else if(x.read_presence!=null) clog("exp",`   ↳ READ presence ${x.read_presence} · Anderson-exit ${x.anderson_exit??"—"}`);
+}
 async function sendChat(){
   const m=$("msg").value.trim(); if(!m) return;
   $("msg").value=""; clog("you","you ▸ "+m);
+  const think=$("think").checked;
+  const wait=document.createElement("div"); wait.className="wait";
+  wait.textContent = think
+    ? "mind ▸ … reasoning (full Qwen trace — this takes ~80s on the local 4B)"
+    : "mind ▸ … (kernel forms its state, then speaks through the boundary peer)";
+  $("log").appendChild(wait); $("log").scrollTop=$("log").scrollHeight;
   try{
-    const r=await fetch("/chat",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({message:m})});
+    const r=await fetch("/chat",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({message:m,think})});
+    wait.remove();
     if(!r.ok){ clog("err",`${r.status} ${await r.text()}`); return; }
-    const b=await r.json(); clog("tgt","mind ▸ "+b.text);
+    const b=await r.json(); addReply(b);
     setTelemetry({...b.telemetry, experience:b.experience});
-    const x=b.telemetry?.extra||{};
-    if(x.voice==="qwen-boundary") clog("exp",`   ↳ spoke through boundary peer · M ${x.M_boundary} · Pillar-2 cap ${x.pillar2_cap}`);
-    else if(x.read_presence!=null) clog("exp",`   ↳ READ presence ${x.read_presence} · Anderson-exit ${x.anderson_exit??"—"}`);
-  }catch(e){ clog("err","chat failed: "+e); }
+  }catch(e){ wait.remove(); clog("err","chat failed: "+e); }
 }
 $("trainBtn").addEventListener("click", runTrain);
 async function runTrain(){

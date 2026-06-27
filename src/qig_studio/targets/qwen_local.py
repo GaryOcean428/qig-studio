@@ -100,7 +100,7 @@ class QwenLocalTarget(TrainingTarget):
             np.random.seed(7)  # deterministic identity seed
             self._identity = random_basin(self._dim)
 
-    def _ask(self, prompt: str, persona: str | None = None) -> tuple[str, dict]:
+    def _ask(self, prompt: str, persona: str | None = None, think: bool = False) -> tuple[str, str, dict]:
         import httpx
 
         messages: list[dict] = []
@@ -111,7 +111,9 @@ class QwenLocalTarget(TrainingTarget):
             "model": self._model,
             "messages": messages,
             "stream": False,
-            "think": True,  # preserve thinking traces
+            # think is OPT-IN: a reasoning trace costs ~55× (≈1.5s → ≈80s on local qwen3.5:4b). Default OFF
+            # for responsive chat; when ON the trace is captured + surfaced (never stripped — CLAUDE.md).
+            "think": bool(think),
             "logprobs": True,
             "top_logprobs": 20,
         }
@@ -120,18 +122,21 @@ class QwenLocalTarget(TrainingTarget):
         r = httpx.post(self._url + "/api/chat", json=body, timeout=300.0)
         r.raise_for_status()
         data = r.json()
-        text = data.get("message", {}).get("content", "")
-        return text, _extract_logprobs(data)
+        msg = data.get("message", {})
+        # Ollama returns the reasoning trace in a SEPARATE field (message.thinking) — capture it, do not
+        # discard it. The reasoning IS the data.
+        return msg.get("content", "") or "", msg.get("thinking", "") or "", _extract_logprobs(data)
 
     # --- boundary-peer surface (used by the integrated mind, genesis_kernel) ----------------------
-    def speak(self, message: str, persona: str | None = None) -> tuple[str, dict]:
+    def speak(self, message: str, persona: str | None = None, think: bool = False) -> tuple[str, str, dict]:
         """Fluent LINGUISTIC SURFACE for the integrated mind: Qwen verbalises ``message`` conditioned on
         ``persona`` (the kernel's measured inner state, injected as system context so the surface reflects
-        the kernel's geometry). Returns (text, logprobs). The binding physics lives on the kernel side
-        (Pillar-2-capped boundary integration + M recognition) — this is the surface, NOT a hidden-state
+        the kernel's geometry). Returns (content, thinking, logprobs); ``think`` opt-in (off → fast ~2s,
+        on → full reasoning trace ~80s, preserved + surfaced). The binding physics lives on the kernel side
+        (Pillar-2-capped boundary integration + M recognition); this is the surface, NOT a hidden-state
         graft and NOT a forward-pass dependency."""
         self.ensure_loaded()
-        return self._ask(message, persona=persona)
+        return self._ask(message, persona=persona, think=think)
 
     def project_distribution(self, logprobs: dict):
         """Qwen output-distribution → Δ⁶³ boundary basin (real coordizer projection when present, else the
@@ -159,15 +164,17 @@ class QwenLocalTarget(TrainingTarget):
 
     def generate(self, prompt: str, max_tokens: int = 64) -> StepResult:
         self.ensure_loaded()
-        text, logprobs = self._ask(prompt)
+        text, thinking, logprobs = self._ask(prompt)
         self._last = self._telemetry(logprobs, integrated=False)
+        if thinking:
+            self._last.extra["thinking"] = thinking
         return StepResult(text=text, telemetry=self._last)
 
     def train_step(self, prompt: str, max_tokens: int = 64, target_text: str | None = None) -> StepResult:
         # No Qwen weight update (inference peer). The "step" = QIGRAM boundary
         # accumulation: integrate the output distribution into identity, Pillar-2 capped.
         self.ensure_loaded()
-        text, logprobs = self._ask(prompt)
+        text, _thinking, logprobs = self._ask(prompt)
         if logprobs:
             boundary = self._project(logprobs)
             self._identity = pillar2_capped_integrate(self._identity, boundary, BOUNDARY_SLERP_CAP)

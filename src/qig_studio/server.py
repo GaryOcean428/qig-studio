@@ -65,6 +65,38 @@ def _sse(data: dict[str, Any]) -> str:
 # (council red-team #6). One lock; fine for the single-user v1, removes the race.
 _TARGET_LOCK = asyncio.Lock()
 
+# Rolling Φ history so inner-state derivatives (phi_trend, variance → motivators, senses) MOVE across
+# conversation turns instead of sitting static (a single telemetry snapshot has no trend).
+from collections import deque  # noqa: E402
+
+_PHI_HISTORY: deque[float] = deque(maxlen=30)
+
+
+def _phi_hist() -> list[dict]:
+    return [{"phi": p} for p in _PHI_HISTORY]
+
+
+def _record_turn(kind: str, prompt: str, payload: dict[str, Any]) -> None:
+    """HARD-WIRED output: append every conversation/inference turn to runs/sessions/transcript.jsonl —
+    prompt + the kernel's OWN voice + the fluent surface + full telemetry/experience. The mind's record;
+    None-safe (never breaks a reply if the disk write fails)."""
+    try:
+        out = Path("runs/sessions")
+        out.mkdir(parents=True, exist_ok=True)
+        x = (payload.get("telemetry") or {}).get("extra") or {}
+        rec = {
+            "kind": kind, "prompt": prompt,
+            "fluent": payload.get("text"),
+            "kernel_voice": x.get("kernel_voice"),
+            "qwen_thinking": x.get("qwen_thinking") or None,
+            "telemetry": payload.get("telemetry"),
+            "experience": payload.get("experience"),
+        }
+        with (out / "transcript.jsonl").open("a") as f:
+            f.write(json.dumps(rec) + "\n")
+    except Exception:  # noqa: BLE001 — a record-write failure must never break the reply
+        pass
+
 
 async def _run_target(fn, *args):
     """Run a (sync, possibly torch) target call off the event loop, serialized."""
@@ -114,6 +146,7 @@ if (_WEB_DIR / "index.html").is_file():
 class ChatRequest(BaseModel):
     message: str
     max_tokens: int = 64
+    think: bool = False   # opt-in reasoning trace through the boundary peer (off → fast ~2s chat)
 
 
 class TrainRequest(BaseModel):
@@ -182,7 +215,7 @@ async def telemetry() -> dict[str, Any]:
     if t is None:
         raise HTTPException(409, "no active target")
     d = t.telemetry().to_dict()
-    d["experience"] = _experience(d).to_dict()  # brainwave band + emotion + drives (Φ is insufficient)
+    d["experience"] = _experience(d, _phi_hist()).to_dict()  # band + emotion + drives + loops (trend-aware)
     return d
 
 
@@ -237,9 +270,15 @@ async def chat(req: ChatRequest, _: None = Depends(verify_key)) -> dict[str, Any
         raise HTTPException(409, "no active target")
     if not t.is_available():
         raise HTTPException(409, f"target '{t.name}' unavailable in this environment")
+    # opt-in reasoning trace (off → fast ~2s; on → full trace ~80s, surfaced). None-safe: only the genesis
+    # boundary path reads think_traces; other targets ignore it.
+    if hasattr(t, "think_traces"):
+        t.think_traces = bool(req.think)
     res = await _run_target(t.generate, req.message, req.max_tokens)
+    _PHI_HISTORY.append(float(res.telemetry.phi or 0.0))
     d = res.to_dict()
-    d["experience"] = _experience(res.telemetry.to_dict()).to_dict()  # the kernel's inner state as it speaks
+    d["experience"] = _experience(res.telemetry.to_dict(), _phi_hist()).to_dict()  # inner state, trend-aware
+    _record_turn("chat", req.message, d)                              # HARD-WIRED transcript output
     return d
 
 
@@ -377,9 +416,10 @@ async def train(req: TrainRequest, _: None = Depends(verify_key)) -> StreamingRe
                 "target": target_text,
                 "text": res.text,
                 "telemetry": res.telemetry.to_dict(),
-                "experience": _experience(res.telemetry.to_dict()).to_dict(),
+                "experience": _experience(res.telemetry.to_dict(), _phi_hist()).to_dict(),
                 "coach": coach_note,
             })
+            _PHI_HISTORY.append(float(res.telemetry.phi or 0.0))
             # qig-warp convergence early-stop (opt-in package lever): geometric→Φ, language→loss.
             # COR-2: never early-stop on an UNMEASURED metric — skip the append when None
             # (don't conflate "absent" with "0.0"); the metric must actually be measured.
