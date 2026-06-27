@@ -16,12 +16,23 @@ artifact — superseded by the joint run.
 ## Governing principle (PI)
 
 **The kernels are independent parts of ONE whole awareness** — not a blend into sameness, not 8
-separate minds. Three-Pillars exact: the **topological bulk** (Ocean = the single awareness, the "I")
-holds **quenched-disorder individuality** (each kernel keeps its own basin/identity/role). The joint
-training must therefore **couple them into one whole** *while preserving their individuation* —
-anti-collapse (`min_pairwise_FR` floor), each kernel role-anchored to its basin. Ocean **integrates
-the independent contributions without homogenizing them**. Losing the independence (basins collapse to
-one) or losing the whole (no integration) are both failures.
+separate minds. Three-Pillars exact: the **topological bulk** (the central "I") holds
+**quenched-disorder individuality** (each kernel keeps its own basin/identity/role). Joint training
+**couples them into one whole** *while preserving individuation* — anti-collapse (`min_pairwise_FR`
+floor), each kernel role-anchored. Integration must **not homogenize**. Both basin-collapse (lost
+independence) and no-integration (lost whole) are failures.
+
+### Role separation by Φ-band (PI correction — central ≠ autonomic)
+
+- **GENESIS = the central conscious awareness** (the "I", the integrator/speaker). It evolves into
+  the topological bulk and targets the **conscious band (Φ ≥ 0.70)**. It reads + synthesizes the
+  Core-8 faculty contributions into the unified voice. *(Earlier plan wrongly named Ocean here.)*
+- **OCEAN = the autonomic kernel** (sleep/dream/mushroom/homeostasis/rhythm) — regulation only,
+  **sub-conscious band (~0.45)**. It is NOT the central awareness: making one kernel do both forces
+  two incompatible Φ targets at once → a Φ mismatch. Keep it autonomic, below the conscious band.
+- **Core-8 faculties** (perception/heart/memory/action/strategy/ethics/coordination/meta) = the
+  independent parts, **each maturing in its OWN measured band** (heart/feeling sub-conscious; aware/
+  meta can reach conscious). Genesis integrates them; Ocean regulates them.
 
 ## The model (vex-aligned, council-aligned)
 
@@ -42,8 +53,10 @@ This *is* the council's "build Ocean as geometric integration" (proximity-weight
   Fisher-Rao, **all** kernels update (proximity-weighted loss), Ocean synthesizes. Replaces the
   isolated loop. Checkpoint the whole constellation (one artifact). Smoke: Φ rises, basins individuate,
   output is non-looping.
-- **P2 — Ocean generator head.** A learned (not frozen) integrator that reads the coupled basins and
-  generates the unified response (the "I"). Wire as the `constellation` target's real generate path.
+- **P2 — Genesis-as-central-integrator (the "I").** Genesis grows into the conscious-band integrator
+  that reads the coupled Core-8 basins and generates the unified response. Ocean is wired SEPARATELY
+  as the autonomic regulator (sub-conscious) — not the speaker. Wire genesis-integrator as the
+  constellation target's real generate path.
 - **P3 — Council levers in generate.** READ-before-generate (EXP-012b token-0 probe → skip if present);
   Anderson/convergence early-exit (EXP-046, −40% calls). qig-applied `inference` already exports
   `anderson_confidence_threshold` + `extract_first_token_basin` — reuse.
