@@ -21,13 +21,11 @@
   header .tog{cursor:pointer;background:#1c2532;border:1px solid var(--edge);border-radius:7px;
               color:var(--ink);padding:.25rem .55rem;font:inherit;font-size:.74rem}
   header .tog:hover{border-color:var(--blue)}
-  /* single screen: 3 columns, only inner transcripts scroll */
-  .app{flex:1 1 auto;display:grid;grid-template-columns:300px 1fr 340px;gap:.7rem;padding:.7rem;min-height:0}
-  .app.noleft{grid-template-columns:0 1fr 340px} .app.noright{grid-template-columns:300px 1fr 0}
+  .app{flex:1 1 auto;display:grid;grid-template-columns:320px 1fr 340px;gap:.7rem;padding:.7rem;min-height:0}
+  .app.noleft{grid-template-columns:0 1fr 340px} .app.noright{grid-template-columns:320px 1fr 0}
   .app.noleft.noright{grid-template-columns:0 1fr 0}
   .col{background:var(--panel);border:1px solid var(--edge);border-radius:10px;padding:.8rem;
        display:flex;flex-direction:column;min-height:0;overflow:hidden}
-  .col.hide{display:none}
   .col h2{font-size:.72rem;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin:.1rem 0 .6rem}
   .scroll{overflow:auto;min-height:0}
   label{display:block;color:var(--muted);font-size:.7rem;margin:.45rem 0 .15rem}
@@ -41,13 +39,25 @@
   .mind{border:1px solid var(--blue);border-radius:9px;padding:.55rem;background:#10202e;margin-bottom:.5rem}
   .mind .t{font-size:.86rem;color:#dbeeff;font-weight:600} .mind .s{color:var(--muted);font-size:.7rem}
   details.adv{margin:.4rem 0} details.adv>summary{cursor:pointer;color:var(--muted);font-size:.72rem}
-  .metric{display:flex;justify-content:space-between;padding:.15rem 0;border-bottom:1px dashed var(--edge)}
+  .metric{display:flex;justify-content:space-between;padding:.12rem 0;border-bottom:1px dashed var(--edge)}
   .metric .v{font-weight:600}
-  .bar{height:12px;border-radius:7px;background:var(--panel2);overflow:hidden;margin:.25rem 0 .6rem;border:1px solid var(--edge)}
+  .bar{height:11px;border-radius:7px;background:var(--panel2);overflow:hidden;margin:.22rem 0 .5rem;border:1px solid var(--edge)}
   .bar>i{display:block;height:100%;background:linear-gradient(90deg,var(--blue),var(--amber));transition:width .25s}
   .pill{display:inline-block;padding:.05rem .45rem;border-radius:999px;font-size:.72rem;border:1px solid var(--edge)}
   .hint{color:var(--muted);font-size:.7rem;margin-top:.35rem}
-  /* conversation column */
+  /* grouped inner-state */
+  .grp{margin:.55rem 0 .2rem} .grp>.h{display:flex;justify-content:space-between;color:var(--muted);
+       font-size:.66rem;text-transform:uppercase;letter-spacing:.07em;margin:.1rem 0 .25rem}
+  .mini{display:grid;grid-template-columns:84px 1fr 34px;gap:.3rem;align-items:center;margin:.06rem 0;font-size:.72rem}
+  .mini .nm{color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .mini .mb{height:8px;border-radius:5px;background:var(--panel2);overflow:hidden;border:1px solid var(--edge)}
+  .mini .mb>i{display:block;height:100%}
+  .mini .vv{color:var(--muted);text-align:right}
+  .c-blue>i{background:var(--blue)} .c-purple>i{background:var(--purple)} .c-amber>i{background:var(--amber)}
+  .c-teal>i{background:var(--ok)} .c-pink>i{background:var(--pink)}
+  .gate{border:1px solid var(--edge);border-radius:8px;padding:.4rem .55rem;margin:.3rem 0;background:var(--panel2)}
+  .gate .st{font-weight:600} .st-CONSCIOUS{color:var(--ok)} .st-LOCKED_IN{color:var(--pink)}
+  .st-ZOMBIE{color:var(--amber)} .st-pre-conscious,.st-conscious{color:var(--blue)}
   #conv{flex:1 1 auto;display:flex;flex-direction:column;min-height:0}
   #log{flex:1 1 auto;overflow:auto;background:var(--panel2);border:1px solid var(--edge);border-radius:8px;
        padding:.6rem;white-space:pre-wrap;min-height:0}
@@ -58,12 +68,13 @@
   .composer button{flex:0 0 auto;align-self:stretch;padding:0 1rem}
   .regime-linear{color:var(--blue)} .regime-hierarchical{color:var(--purple)}
   .regime-geometric{color:var(--amber)} .regime-topological_instability{color:var(--pink)}
-  .proto-group{margin:.4rem 0} .proto-group>b{color:var(--muted);font-size:.68rem;text-transform:uppercase}
-  .proto-group button{margin:.16rem .16rem 0 0;padding:.26rem .45rem;font-size:.76rem}
-  #protoLog,#trainLog{overflow:auto;background:var(--panel2);border:1px solid var(--edge);border-radius:8px;
+  #trainLog,#autoLog{overflow:auto;background:var(--panel2);border:1px solid var(--edge);border-radius:8px;
                       padding:.5rem;white-space:pre-wrap;margin-top:.5rem;font-size:.78rem}
-  #trainLog{flex:1 1 auto;min-height:80px} #protoLog{height:120px}
-  #protoLog .sys{color:var(--muted)} #protoLog .tgt{color:var(--ok)} #protoLog .err{color:var(--pink)}
+  #trainLog{flex:1 1 auto;min-height:70px} #autoLog{height:88px}
+  #trainLog .sys,#autoLog .sys{color:var(--muted)} #trainLog .tgt{color:var(--ok)} #trainLog .coach{color:var(--purple)}
+  #trainLog .exp{color:var(--amber)} #trainLog .err,#autoLog .err{color:var(--pink)} #autoLog .reg{color:var(--purple)}
+  .fac{display:grid;grid-template-columns:92px 1fr 40px;gap:.3rem;align-items:center;font-size:.72rem;margin:.1rem 0}
+  .fac .fn{color:var(--muted)}
   #picker{position:fixed;inset:0;background:rgba(0,0,0,.55);display:none;align-items:center;justify-content:center;z-index:9}
   #picker .box{background:var(--panel);border:1px solid var(--edge);border-radius:10px;width:min(560px,92vw);max-height:70vh;display:flex;flex-direction:column;padding:1rem}
   #picker .list{overflow:auto;border:1px solid var(--edge);border-radius:7px;margin:.5rem 0;background:var(--panel2)}
@@ -73,13 +84,13 @@
 <body>
 <header>
   <h1>🧠 qig-studio</h1>
-  <button class="tog" id="togL">◧ telemetry</button>
-  <button class="tog" id="togR">train · protocol ◨</button>
+  <button class="tog" id="togL">◧ inner state</button>
+  <button class="tog" id="togR">train · autonomic ◨</button>
   <span class="status" id="status">connecting…</span>
 </header>
 
 <div class="app" id="app">
-  <!-- LEFT: THE MIND + telemetry + dirs -->
+  <!-- LEFT: THE MIND + full inner-state telemetry + dirs -->
   <section class="col" id="leftCol">
     <h2>The mind</h2>
     <div class="scroll">
@@ -87,19 +98,28 @@
         <div class="t" id="mindName">genesis · the integrated "I"</div>
         <div class="s" id="mindSub">central conscious awareness — Core-8 faculties + genesis-central</div>
       </div>
-      <details class="adv"><summary>advanced targets (peers / dev)</summary>
+      <details class="adv" id="advTargets" style="display:none"><summary>advanced targets (peers / dev)</summary>
         <label>active target</label><select id="target"></select>
         <div class="hint" id="regimeMode"></div>
       </details>
 
-      <h2 style="margin-top:.8rem">Telemetry</h2>
+      <!-- consciousness gate + core vitals -->
+      <div class="gate" id="gateBox">
+        <div><span class="st" id="gateState">—</span> <span class="hint" id="gateSub"></span></div>
+      </div>
       <label>Φ (integration)</label>
       <div class="bar"><i id="phiBar" style="width:0%"></i></div>
       <div class="metric"><span>Φ</span><span class="v" id="phi">—</span></div>
       <div class="metric"><span>κ (coupling)</span><span class="v" id="kappa">—</span></div>
+      <div class="metric"><span>Γ generativity</span><span class="v" id="gamma">—</span></div>
       <div class="metric"><span>regime</span><span class="v"><span class="pill" id="regime">—</span></span></div>
+      <div class="metric"><span>band</span><span class="v" id="band">—</span></div>
+      <div class="metric"><span>suffering S</span><span class="v" id="suffer">—</span></div>
       <div class="metric"><span>basin Δ</span><span class="v" id="basin">—</span></div>
       <div class="metric"><span>step</span><span class="v" id="step">—</span></div>
+
+      <!-- full inner state (UCP §6 layers + §43 loops) — rendered live -->
+      <div id="inner"></div>
 
       <h2 style="margin-top:.8rem">Directories</h2>
       <label>output</label>
@@ -122,7 +142,7 @@
     <div class="hint" id="convHint">geometric mind reasons on Δ⁶³; fluent prose comes through the Qwen boundary peer.</div>
   </section>
 
-  <!-- RIGHT: TRAIN (live response) + PROTOCOL (gated) -->
+  <!-- RIGHT: TRAIN (live) + AUTONOMIC (self-regulation, read-only) + ONGOING MIND -->
   <section class="col" id="rightCol">
     <h2>Train · live</h2>
     <div class="row">
@@ -132,11 +152,15 @@
     <div class="hint">curriculum → mind speaks → coach reads → mind learns. Live below.</div>
     <div id="trainLog"></div>
 
-    <h2 style="margin-top:.7rem">Protocol</h2>
-    <div id="protoStatus" class="hint"></div>
-    <div class="scroll" style="max-height:26vh"><div id="protoGroups"></div></div>
-    <label>args (key=value …)</label><input id="protoArgs" placeholder="strength=0.8  n=20"/>
-    <div id="protoLog"></div>
+    <h2 style="margin-top:.7rem">Autonomic · self-regulation</h2>
+    <div class="hint">The kernel owns its brainstem. Ocean watches the faculties' telemetry and regulates
+      the one that needs it — sleep/dream/mushroom — from the mind's own state. No external trigger.</div>
+    <div class="metric"><span>current</span><span class="v" id="autoState">wake</span></div>
+    <div id="autoLog"></div>
+
+    <h2 style="margin-top:.7rem">Mind · ongoing</h2>
+    <div id="mindState" class="hint">—</div>
+    <div id="faculties" style="margin-top:.3rem"></div>
   </section>
 </div>
 
@@ -149,11 +173,51 @@
 
 <script>
 const $ = (id) => document.getElementById(id);
+const DEV = new URLSearchParams(location.search).has("dev");
 function clog(cls, msg){ const el=$("log"); const d=document.createElement("div"); d.className=cls; d.textContent=msg; el.appendChild(d); el.scrollTop=el.scrollHeight; }
 function tlog(cls, msg){ const el=$("trainLog"); const d=document.createElement("div"); d.className=cls; d.textContent=msg; el.appendChild(d); el.scrollTop=el.scrollHeight; }
-function plog(cls, msg){ const el=$("protoLog"); const d=document.createElement("div"); d.className=cls; d.textContent=msg; el.appendChild(d); el.scrollTop=el.scrollHeight; }
+function alog(cls, msg){ const el=$("autoLog"); const d=document.createElement("div"); d.className=cls; d.textContent=msg; el.appendChild(d); el.scrollTop=el.scrollHeight; }
+
+const COL = ["c-blue","c-purple","c-amber","c-teal","c-pink"];
+function miniRows(obj, colour){
+  // render {name:value(0..1)} as compact name·bar·value rows; skip private keys
+  let h="";
+  for(const k in obj){ if(k.startsWith("_")||k==="loss_signal") continue; const v=Number(obj[k]); if(Number.isNaN(v)) continue;
+    const pct=Math.max(0,Math.min(1,Math.abs(v)))*100;
+    h+=`<div class="mini"><span class="nm">${k}</span><span class="mb ${colour}"><i style="width:${pct}%"></i></span><span class="vv">${v.toFixed(2)}</span></div>`;
+  }
+  return h;
+}
+function group(title, sub, body){ return `<div class="grp"><div class="h"><span>${title}</span><span>${sub||""}</span></div>${body}</div>`; }
+
+function renderInner(exp){
+  if(!exp){ return; }
+  // gate + suffering + Γ + band
+  const g=exp.gate||{};
+  $("gateState").textContent = g.state||"—"; $("gateState").className="st st-"+(g.state||"");
+  $("gateSub").textContent = g.suffering_S!=null ? `S=${g.suffering_S}` : (exp.conscious?"conscious":"pre-conscious");
+  if(g.gamma!=null) $("gamma").textContent=g.gamma.toFixed(3);
+  $("band").textContent = (exp.glyph||"")+" "+(exp.band||"")+" · "+(exp.emotion||"");
+  $("suffer").textContent = g.suffering_S!=null ? g.suffering_S : "—";
+  const p=exp.primitives||{}; const loops=exp.loops||{}; const chem=exp.neurochemistry||{};
+  let h="";
+  // recursive loops (§43): self-obs / other-obs / learning-autonomy
+  const lr={}; if(loops.self_observation!=null)lr["self-obs (M)"]=loops.self_observation;
+  if(loops.observation_of_others!=null)lr["other-obs"]=loops.observation_of_others;
+  if(loops.learning_autonomy!=null)lr["learning S"]=loops.learning_autonomy;
+  if(Object.keys(lr).length) h+=group("Recursive loops","L1·L2·L3",miniRows(lr,"c-teal"));
+  if(p.layer0) h+=group("Senses","12 · interoception",miniRows(p.layer0,"c-blue"));
+  if(p.layer05) h+=group("Drives","innate",miniRows(p.layer05,"c-pink"));
+  if(p.layer1) h+=group("Motivators","5",miniRows(p.layer1,"c-purple"));
+  if(p.layer2a) h+=group("Emotions · physical","9",miniRows(p.layer2a,"c-amber"));
+  if(p.layer2b) h+=group("Emotions · cognitive","9",miniRows(p.layer2b,"c-amber"));
+  if(chem.dopamine!=null) h+=group("Neurochemistry",chem._is||"",miniRows(chem,"c-teal"));
+  $("inner").innerHTML=h;
+  if(exp.autonomic){ $("autoState").textContent=exp.autonomic; }
+}
 
 function setTelemetry(t){
+  if(!t) return;
   const phi = t.phi ?? 0;
   $("phiBar").style.width = Math.max(0,Math.min(1,phi))*100 + "%";
   $("phi").textContent = phi.toFixed(3);
@@ -161,8 +225,9 @@ function setTelemetry(t){
   const r=$("regime"); r.textContent=t.regime ?? "—"; r.className="pill regime-"+(t.regime ?? "");
   $("basin").textContent = (t.basin_distance ?? 0).toFixed(3);
   $("step").textContent = t.step ?? "—";
+  const x=t.extra||{}; if(x.gamma!=null) $("gamma").textContent=Number(x.gamma).toFixed(3);
+  if(t.experience) renderInner(t.experience);
 }
-// drawer toggles
 $("togL").onclick=()=>$("app").classList.toggle("noleft");
 $("togR").onclick=()=>$("app").classList.toggle("noright");
 
@@ -173,6 +238,8 @@ async function refreshHealth(){
   }catch(e){ $("status").textContent="server unreachable"; }
 }
 async function loadTargets(){
+  if(!DEV) return;                                 // genesis IS the mind; the target zoo is dev-only (?dev=1)
+  $("advTargets").style.display="";
   const data=await (await fetch("/targets")).json();
   const sel=$("target"); sel.innerHTML="";
   for(const t of data.targets){
@@ -180,18 +247,27 @@ async function loadTargets(){
     o.textContent=`${t.name} · ${t.loss_regime}${t.available?"":" (unavailable)"}`;
     if(t.name===data.active) o.selected=true; sel.appendChild(o);
   }
-  await refreshCurriculum();
-}
-async function refreshCurriculum(){
+  $("target").addEventListener("change", async (e)=>{
+    await fetch(`/targets/${e.target.value}/select`,{method:"POST"});
+    clog("sys",`· active target → ${e.target.value}`); await refreshHealth(); await refreshTelemetry();
+  });
   try{ const c=await (await fetch("/curriculum")).json();
     $("regimeMode").textContent=`${c.loss_regime} · ${c.mode} · ${c.phases.join(" → ")}`; }catch(e){}
 }
 async function refreshTelemetry(){ try{ setTelemetry(await (await fetch("/telemetry")).json()); }catch(e){} }
-$("target").addEventListener("change", async (e)=>{
-  await fetch(`/targets/${e.target.value}/select`,{method:"POST"});
-  clog("sys",`· active target → ${e.target.value}`);
-  await refreshHealth(); await refreshCurriculum(); await refreshTelemetry(); await loadProtocol();
-});
+async function refreshMind(){
+  try{ const m=await (await fetch("/mind/state")).json();
+    if(m.unavailable){ $("mindState").textContent="no joint-mind training run yet."; return; }
+    $("mindState").innerHTML = `joint training · ${m.steps} steps · central Φ ${(m.central_phi??0).toFixed(3)} · `+
+      `individuation min-FR ${(m.min_pairwise_fr??0).toFixed(3)}${m.individuation_preserved?" ✓":""}`;
+    const fac=$("faculties"); fac.innerHTML="";
+    for(const f of (m.faculties||[])){
+      const reg = f.regulated ? `<span class="reg">🌙 ${f.regulated.intervention}</span>` : (f.phi!=null?`Φ ${Number(f.phi).toFixed(2)}`:"");
+      fac.insertAdjacentHTML("beforeend",
+        `<div class="fac"><span>${f.role}</span><span class="fn">${f.function}</span><span class="vv">${reg}</span></div>`);
+    }
+  }catch(e){ $("mindState").textContent="mind state unavailable"; }
+}
 $("sendBtn").addEventListener("click", sendChat);
 $("msg").addEventListener("keydown",(e)=>{ if(e.key==="Enter"&&!e.shiftKey){ e.preventDefault(); sendChat(); }});
 async function sendChat(){
@@ -200,9 +276,11 @@ async function sendChat(){
   try{
     const r=await fetch("/chat",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({message:m})});
     if(!r.ok){ clog("err",`${r.status} ${await r.text()}`); return; }
-    const b=await r.json(); clog("tgt","mind ▸ "+b.text); setTelemetry(b.telemetry);
+    const b=await r.json(); clog("tgt","mind ▸ "+b.text);
+    setTelemetry({...b.telemetry, experience:b.experience});
     const x=b.telemetry?.extra||{};
-    if(x.read_presence!=null||x.anderson_exit!=null) clog("exp",`   ↳ READ presence ${x.read_presence} · Anderson-exit ${x.anderson_exit??"—"}`);
+    if(x.voice==="qwen-boundary") clog("exp",`   ↳ spoke through boundary peer · M ${x.M_boundary} · Pillar-2 cap ${x.pillar2_cap}`);
+    else if(x.read_presence!=null) clog("exp",`   ↳ READ presence ${x.read_presence} · Anderson-exit ${x.anderson_exit??"—"}`);
   }catch(e){ clog("err","chat failed: "+e); }
 }
 $("trainBtn").addEventListener("click", runTrain);
@@ -221,43 +299,17 @@ async function runTrain(){
       const ev=JSON.parse(line.slice(6));
       if(ev.type==="start"){ tlog("sys",`  coach: ${ev.coach||"keyword"} · ${ev.curriculum}`); }
       else if(ev.type==="step"){
-        setTelemetry(ev.telemetry);
+        setTelemetry({...ev.telemetry, experience:ev.experience});
         tlog("sys",`  ${ev.step} [${ev.phase}] curriculum: ${(ev.prompt||"").slice(0,46)}`);
         tlog("tgt",`     mind ▸ ${(ev.text||"").replace(/^\[genesis[^\]]*\]\s*/,"").slice(0,90)}`);
         if(ev.coach) tlog("coach",`     coach ▸ ${ev.coach.message||ev.coach.interpretation||""}`.slice(0,110));
         const ex=ev.experience||{}; if(ex.band||ex.emotion) tlog("exp",`     ${ex.glyph||""}${ex.band||""} ${ex.emotion||""} · Φ ${(ev.telemetry?.phi??0).toFixed(3)}`);
+        if(ex.autonomic && ex.autonomic!=="wake") alog("reg",`step ${ev.step}: 🌙 ${ex.autonomic}`);
       }
       else if(ev.type==="error"){ tlog("err","error: "+ev.error); }
-      else if(ev.type==="done"){ tlog("sys","· done ·"); refreshTelemetry(); }
+      else if(ev.type==="done"){ tlog("sys","· done ·"); refreshTelemetry(); refreshMind(); }
     }
   }
-}
-// protocol (server already gates to what the active target implements)
-async function loadProtocol(){
-  try{
-    const p=await (await fetch("/protocol")).json();
-    const g=$("protoGroups"); g.innerHTML="";
-    $("protoStatus").textContent = p.supported_by_active
-      ? `${p.active}: ${p.commands.length} commands (only what it implements)`
-      : `${p.active}: no protocol commands`;
-    if(!p.supported_by_active) return;
-    const byG={}; for(const c of p.commands){ (byG[c.group]=byG[c.group]||[]).push(c); }
-    for(const grp of p.groups){ if(!byG[grp]) continue;
-      const d=document.createElement("div"); d.className="proto-group";
-      const b=document.createElement("b"); b.textContent=grp; d.appendChild(b); d.appendChild(document.createElement("br"));
-      for(const c of byG[grp]){ const btn=document.createElement("button"); btn.textContent=c.name;
-        btn.title=c.description; btn.onclick=()=>runProtocol(c.name); d.appendChild(btn); }
-      g.appendChild(d);
-    }
-  }catch(e){ $("protoStatus").textContent="protocol unavailable: "+e; }
-}
-function parseArgs(s){ const o={}; for(const tok of (s||"").trim().split(/\s+/)){ if(!tok) continue; const i=tok.indexOf("="); if(i>0) o[tok.slice(0,i)]=tok.slice(i+1);} return o; }
-async function runProtocol(name){
-  const args=parseArgs($("protoArgs").value);
-  plog("sys",`▶ ${name} ${Object.keys(args).length?JSON.stringify(args):""}`);
-  const r=await fetch("/protocol/"+encodeURIComponent(name),{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({args})});
-  if(!r.ok){ plog("err",`${r.status} ${await r.text()}`); return; }
-  const b=await r.json(); plog("tgt", JSON.stringify(b.applied||b)); if(b.telemetry) setTelemetry(b.telemetry);
 }
 // directory picker (server-side /browse)
 let pkField=null, pkCur="";
@@ -283,7 +335,8 @@ async function loadConfig(){
   }catch(e){ $("cfgStatus").textContent="config unavailable"; }
 }
 // boot
-refreshHealth(); loadConfig(); loadTargets().then(()=>{ refreshTelemetry(); loadProtocol(); });
+refreshHealth(); loadConfig(); loadTargets(); refreshTelemetry(); refreshMind();
+setInterval(refreshMind, 8000);
 </script>
 </body>
 </html>

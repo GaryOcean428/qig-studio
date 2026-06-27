@@ -72,12 +72,17 @@ def default_registry(
     # (coordize_distribution_to_basin) — NOT the arbitrary hash-bin. Without this the principled
     # projection (already written) silently never runs and the peer injects geometric noise.
     coordizer = _load_coordizer(genesis_coordizer_checkpoint)
+    # The Qwen boundary peer is shared: it is BOTH a standalone dev target AND the integrated mind's fluent
+    # linguistic surface (genesis speaks through it, Pillar-2 ≤30% capped). One instance, one coordizer
+    # projection — so the principled Fisher-Rao distribution→Δ⁶³ path is exercised in both roles.
+    qwen_peer = QwenLocalTarget(coordizer=coordizer)
     r.register(MockTarget())
     r.register(GenesisKernelTarget(num_layers=genesis_num_layers, device=device,
-                                   coordizer=coordizer, checkpoint=genesis_kernel_checkpoint))
+                                   coordizer=coordizer, checkpoint=genesis_kernel_checkpoint,
+                                   language_peer=qwen_peer))
     r.register(KernelTarget(checkpoint=kernel_checkpoint, device=device))
     r.register(ConstellationTarget(checkpoint=constellation_checkpoint, device=device))
-    r.register(QwenLocalTarget(coordizer=coordizer))
+    r.register(qwen_peer)
     r.register(QwenModalTarget())
     chosen = default_target if default_target in r.names() else "mock"
     r.select(chosen)

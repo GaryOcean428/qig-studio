@@ -9,9 +9,13 @@ URL="http://localhost:8800"
 
 if ! curl -s --max-time 2 "$URL/health" >/dev/null 2>&1; then
   cd "$STUDIO"
+  # Load the REAL integrated mind: the joint-trained central "I" (genesis-central) if present, else the
+  # older core8_coord meta kernel. The joint mind has the trained central Φ + coupled faculties.
+  MIND="runs/checkpoints/joint_mind/kernels/genesis.pt"
   META="runs/checkpoints/core8_coord/kernels/meta/ckpt_00004386.pt"
+  CKPT="$([ -f "$MIND" ] && echo "$MIND" || { [ -f "$META" ] && echo "$META"; })"
   QIG_STUDIO_GENESIS_COORDIZER="runs/coordizer_v6_1024.json" \
-  QIG_STUDIO_GENESIS_CKPT="$([ -f "$META" ] && echo "$META")" \
+  QIG_STUDIO_GENESIS_CKPT="$CKPT" \
   QIG_STUDIO_TARGET="genesis" \
   QIG_STUDIO_DEVICE="cpu" \
   QIG_STUDIO_COACH_MODEL="nemotron-3-ultra:cloud" \

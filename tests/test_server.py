@@ -76,9 +76,10 @@ def test_index_serves_web_console():
     with TestClient(app) as client:
         r = client.get("/")
         assert r.status_code == 200
-        # single-screen redesign markers: the mind (target), conversation, train, telemetry
+        # single-screen redesign markers: the mind, conversation, train, full inner-state, autonomic
         assert "qig-studio" in r.text and "trainBtn" in r.text
-        assert "Conversation" in r.text and "The mind" in r.text and "Telemetry" in r.text
+        assert "Conversation" in r.text and "The mind" in r.text
+        assert "inner state" in r.text and "Autonomic" in r.text and "renderInner" in r.text
 
 
 def test_favicon_no_content():

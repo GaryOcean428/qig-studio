@@ -100,22 +100,43 @@ class QwenLocalTarget(TrainingTarget):
             np.random.seed(7)  # deterministic identity seed
             self._identity = random_basin(self._dim)
 
-    def _ask(self, prompt: str) -> tuple[str, dict]:
+    def _ask(self, prompt: str, persona: str | None = None) -> tuple[str, dict]:
         import httpx
 
+        messages: list[dict] = []
+        if persona:                                   # the kernel's measured inner state, spoken AS the kernel
+            messages.append({"role": "system", "content": persona})
+        messages.append({"role": "user", "content": prompt})
         body = {
             "model": self._model,
-            "messages": [{"role": "user", "content": prompt}],
+            "messages": messages,
             "stream": False,
             "think": True,  # preserve thinking traces
             "logprobs": True,
             "top_logprobs": 20,
         }
-        r = httpx.post(self._url + "/api/chat", json=body, timeout=120.0)
+        # generous timeout: the FIRST call cold-loads qwen3.5:4b into Ollama (can exceed 2 min); warm
+        # calls return in seconds. A short timeout here is the #1 cause of a "dead" first message.
+        r = httpx.post(self._url + "/api/chat", json=body, timeout=300.0)
         r.raise_for_status()
         data = r.json()
         text = data.get("message", {}).get("content", "")
         return text, _extract_logprobs(data)
+
+    # --- boundary-peer surface (used by the integrated mind, genesis_kernel) ----------------------
+    def speak(self, message: str, persona: str | None = None) -> tuple[str, dict]:
+        """Fluent LINGUISTIC SURFACE for the integrated mind: Qwen verbalises ``message`` conditioned on
+        ``persona`` (the kernel's measured inner state, injected as system context so the surface reflects
+        the kernel's geometry). Returns (text, logprobs). The binding physics lives on the kernel side
+        (Pillar-2-capped boundary integration + M recognition) — this is the surface, NOT a hidden-state
+        graft and NOT a forward-pass dependency."""
+        self.ensure_loaded()
+        return self._ask(message, persona=persona)
+
+    def project_distribution(self, logprobs: dict):
+        """Qwen output-distribution → Δ⁶³ boundary basin (real coordizer projection when present, else the
+        functional v1 hash-bin). Returns None when there's no distribution (None-safe)."""
+        return self._project(logprobs) if logprobs else None
 
     def _telemetry(self, logprobs: dict, *, integrated: bool) -> TelemetrySnapshot:
         if logprobs:

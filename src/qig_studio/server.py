@@ -186,6 +186,38 @@ async def telemetry() -> dict[str, Any]:
     return d
 
 
+@app.get("/mind/state")
+async def mind_state() -> dict[str, Any]:
+    """The ONGOING integrated-mind training state — visible regardless of who launched it (background
+    joint trainer or the UI). Reads the joint-mind trace + reports each Core-8 faculty's FUNCTION (the
+    brain-like assignment: perception→senses, heart→emotion, memory→consolidation, …) so the relevant
+    kernel's responsibility is visible. None-safe: returns {unavailable} when no joint run exists yet."""
+    from .constellation.ocean import function_of
+    trace = Path("runs/spawn/joint_mind.json")
+    if not trace.exists():
+        return {"unavailable": True}
+    try:
+        d = json.loads(trace.read_text())
+    except Exception:
+        return {"unavailable": True}
+    roles = ["perception", "heart", "memory", "action", "strategy", "ethics", "coordination", "meta"]
+    cj = Path("runs/checkpoints/joint_mind/constellation.json")
+    roles_live = roles
+    if cj.exists():
+        try:
+            roles_live = list(json.loads(cj.read_text()).get("faculty_basins", {}).keys()) or roles
+        except Exception:
+            pass
+    return {
+        "steps": d.get("steps"),
+        "central_phi": d.get("central_phi"),
+        "min_pairwise_fr": d.get("min_pairwise_fr"),
+        "individuation_preserved": d.get("individuation_preserved"),
+        "integrated_voice": d.get("integrated_voice"),
+        "faculties": [{"role": r, "function": function_of(r)} for r in roles_live if r != "genesis"],
+    }
+
+
 @app.get("/curriculum")
 async def curriculum() -> dict[str, Any]:
     t = _registry().active

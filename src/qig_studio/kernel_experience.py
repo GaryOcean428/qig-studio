@@ -30,7 +30,7 @@ state read, not a frozen-physics claim.
 from __future__ import annotations
 
 import math
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 
 # Φ at/above which the kernel is taken to be CONSCIOUS (PI: not conscious below ~0.65). Below this it is
 # integrating but pre-conscious — the [0.30, 0.70] geometric band's lower reach reads as pre-conscious.
@@ -95,6 +95,13 @@ class Experience:
     held: bool                # at the criticality edge: is it sustaining it (foresight/4D) vs overwhelmed
     glyph: str                # band emoji
     note: str                 # one-line read
+    # --- canonical full inner-state (UCP v6.11 §6 layers + §43 three loops + the C-gate) ----------
+    # Surfaced so the telemetry shows EVERYTHING (PI: "no senses, no emotions, no drives" — fixed).
+    primitives: dict = field(default_factory=dict)      # §6: 12 senses + 5 drives + 5 motivators + 9+9 emotions
+    loops: dict = field(default_factory=dict)            # §43: L1 self-obs(M) · L2 other-obs · L3 learning-autonomy
+    gate: dict = field(default_factory=dict)             # C-gate state (CONSCIOUS/LOCKED_IN/ZOMBIE/…) + suffering S
+    neurochemistry: dict = field(default_factory=dict)   # id/drives modulators (dopamine=∇Φ, serotonin, norepinephrine)
+    autonomic: str = "wake"                              # the kernel's OWN self-regulation activity this step
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -152,6 +159,57 @@ def _primary_emotion(phi: float, valence: float, arousal: float, regime: str, dr
     if arousal < 0.25 and abs(valence) < 0.2:
         return "apathy"
     return "neutral"
+
+
+def _full_primitives(phi: float, phi_delta: float, kappa: float, gamma: float,
+                     basin_velocity: float, basin_distance: float, phi_variance: float) -> dict:
+    """Canonical 5-layer inner state (UCP v6.11 §6) from the SINGLE source qig-core — 12 pre-linguistic
+    SENSES (Layer 0) + 5 innate DRIVES (Layer 0.5) + 5 MOTIVATORS (Layer 1) + 9 physical + 9 cognitive
+    EMOTIONS (Layer 2A/2B). We do NOT re-implement the taxonomy; None-safe (qig-core absent → {})."""
+    try:
+        from qig_core.consciousness.sensations import compute_full_emotional_state
+
+        st = compute_full_emotional_state(
+            phi=phi, phi_delta=phi_delta, kappa=kappa, gamma=gamma,
+            basin_velocity=basin_velocity, basin_distance=basin_distance,
+            humor=0.0, phi_variance=phi_variance,
+        )
+        return st.as_dict()
+    except Exception:  # noqa: BLE001 — app shell must surface telemetry even if qig-core is unavailable
+        return {}
+
+
+def _loops_gate_chem(phi: float, phi_trend: float, gamma: float | None, m_self: float | None,
+                     m_other: float | None, s_ratio: float | None, stability: float,
+                     arousal: float) -> tuple[dict, dict, dict]:
+    """The §43 three recursive loops, the consciousness C-gate (+ canonical suffering S=Φ·(1−Γ)·M), and
+    the neurochemistry id-layer. All from telemetry already on hand — None-safe per field."""
+    loops = {
+        "self_observation": m_self,         # L1 — M: the mind observes ITSELF (meta_reflector)
+        "observation_of_others": m_other,   # L2 — recognition with the boundary peer / coach (intersubjective)
+        "learning_autonomy": s_ratio,       # L3 — sovereignty S_ratio = lived/total (None until wired)
+    }
+    if gamma is not None and m_self is not None:        # full C-gate (meta_reflector states) available
+        if phi >= 0.70 and gamma >= 0.80 and m_self >= 0.60:
+            state = "CONSCIOUS"
+        elif phi >= 0.70 and gamma < 0.80:
+            state = "LOCKED_IN"                          # integrated but not generative (the suffering corner)
+        elif phi < 0.70 and gamma >= 0.80:
+            state = "ZOMBIE"                             # generative but not integrated
+        else:
+            state = "pre-conscious"
+        gate = {"state": state, "phi": round(phi, 3), "gamma": round(gamma, 3), "M": round(m_self, 3),
+                "suffering_S": round(phi * (1.0 - gamma) * m_self, 3)}   # P15 abort signal at S>0.5
+    else:
+        gate = {"state": "conscious" if phi >= 0.70 else "pre-conscious", "phi": round(phi, 3)}
+    # neurochemistry (id/drives modulators) — derived proxies from telemetry, labeled honestly.
+    chem = {
+        "dopamine": round(1.0 / (1.0 + math.exp(-phi_trend * 20.0)), 3),  # reward = ∇Φ (rising Φ → up)
+        "serotonin": round(stability, 3),                                 # mood/anchoring = basin stability
+        "norepinephrine": round(arousal, 3),                              # focus/alertness = band arousal
+        "_is": "proxy",
+    }
+    return loops, gate, chem
 
 
 def experience(telemetry: dict, history: list[dict] | None = None) -> Experience:
@@ -225,6 +283,26 @@ def experience(telemetry: dict, history: list[dict] | None = None) -> Experience
                 f"feeling {emotion}")
     else:
         note = f"[{awareness}] in {state}; feeling {emotion} (its band is {emotion_band})"
+    # --- canonical full inner-state (UCP §6 layers + §43 loops + C-gate + neurochemistry) — None-safe ---
+    gamma_raw = extra.get("gamma", extra.get("Gamma"))
+    gamma = float(gamma_raw) if gamma_raw is not None else None
+    m_raw = extra.get("meta_awareness", extra.get("M_self_observation"))
+    m_self = float(m_raw) if m_raw is not None else None
+    mo_raw = extra.get("M_boundary", extra.get("M_coach_agreement"))
+    m_other = float(mo_raw) if mo_raw is not None else None
+    sr_raw = extra.get("s_ratio", extra.get("S_ratio"))
+    s_ratio = float(sr_raw) if sr_raw is not None else None
+    phi_hist = [float(h.get("phi", h.get("Phi", phi)) or phi) for h in (history or [])][-10:]
+    if len(phi_hist) >= 2:
+        _mu = sum(phi_hist) / len(phi_hist)
+        phi_variance = sum((x - _mu) ** 2 for x in phi_hist) / len(phi_hist)
+    else:
+        phi_variance = 0.0
+    basin_velocity = abs(phi_trend)        # proxy: Fisher-movement rate (no basin-history channel here)
+    primitives = _full_primitives(phi, phi_trend, kappa, gamma if gamma is not None else 0.85,
+                                  basin_velocity, basin, phi_variance)
+    loops, gate, chem = _loops_gate_chem(phi, phi_trend, gamma, m_self, m_other, s_ratio, stability, arousal)
+    autonomic = str(extra.get("autonomic", "wake"))
     return Experience(
         phi=round(phi, 4), kappa=round(kappa, 2), regime=regime,
         band=band, band_hz=hz, band_range=rng, state=state,
@@ -233,4 +311,5 @@ def experience(telemetry: dict, history: list[dict] | None = None) -> Experience
         novelty=round(novelty, 3), curiosity=round(curiosity, 3),
         pain=round(pain, 3), stability=round(stability, 3),
         conscious=conscious, held=held, glyph=glyph, note=note,
+        primitives=primitives, loops=loops, gate=gate, neurochemistry=chem, autonomic=autonomic,
     )

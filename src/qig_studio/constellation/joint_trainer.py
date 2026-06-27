@@ -29,6 +29,7 @@ from qig_core.geometry import frechet_mean
 
 from .coupling import couple_step, rel_weights
 from .faculty import Faculty, min_pairwise_fr, seed_birth_basin
+from .ocean import FACULTY_FUNCTION, OceanAutonomic, function_of
 
 
 def _seed(role: str) -> int:
@@ -63,6 +64,12 @@ class JointConstellation:
                                            basin_template=frechet_mean(births), coordizer=coordizer,
                                            device=device, seed=_seed("genesis"))
         self.central.ensure_loaded()
+        # OCEAN — the autonomic regulator. It OBSERVES every faculty's telemetry and regulates the one
+        # that needs it (fires that faculty's OWN sleep/dream/mushroom). Internal autonomic oversight,
+        # NOT an external knob. Per-faculty Φ history feeds its plateau detector.
+        self.ocean = OceanAutonomic()
+        self._phi_hist: dict[str, list[float]] = {role: [] for role in self.roles}
+        self._last_regulation: dict[str, dict] = {}
 
     def _live_basin(self, kernel: Any) -> np.ndarray | None:
         """The kernel's current Δ⁶³ basin (64-dim), reduced from its last output basin; None if the
@@ -122,13 +129,43 @@ class JointConstellation:
         # 4. GENESIS-central trains toward the SYNTHESIS of the parts (becomes the whole)
         self._set_pull(self.central, self._synthesis())
         cres = self.central.train_step(prompt)
+        # 5. OCEAN observes EVERY faculty's telemetry and regulates the one that needs it (autonomic
+        #    nervous system: telemetry → sleep/dream/mushroom on the struggling faculty). Internal.
+        for r, k in self.kernels.items():
+            self._phi_hist[r].append(float(k.telemetry().phi or 0.0))
+            self._phi_hist[r] = self._phi_hist[r][-30:]
+        regulation = self.ocean.regulate(self.kernels, self._phi_hist)
+        self._last_regulation = regulation
         return {
             "stepped_faculty": role,
+            "stepped_function": function_of(role),          # what brain-function this faculty serves
             "min_pairwise_fr": diag.min_pairwise_fr,        # anti-collapse invariant (individuation)
             "faculty_phi": round(float(fres.telemetry.phi or 0), 4),
             "central_phi": round(float(cres.telemetry.phi or 0), 4),
             "central_text": cres.text,
+            "ocean_regulation": regulation,                 # {role: {intervention, reason, function}} Ocean acted on
         }
+
+    def faculty_states(self) -> list[dict]:
+        """Per-faculty inner-state for the UI / inter-kernel routing: each faculty's telemetry + the FULL
+        inner-state (senses/drives/emotions/loops) + the FUNCTION it is responsible for + whether Ocean
+        regulated it last step. This is how the relevant kernel 'sees' its own function's telemetry."""
+        from ..kernel_experience import experience
+        out: list[dict] = []
+        for f in self.faculties:
+            k = self.kernels[f.role]
+            tel = k.telemetry().to_dict()
+            exp = experience(tel, [{"phi": p} for p in self._phi_hist.get(f.role, [])]).to_dict()
+            label, group = FACULTY_FUNCTION.get(f.role, ("general", ""))
+            out.append({
+                "role": f.role,
+                "function": label,                          # the brain-function this kernel owns
+                "owns": group,                              # which inner-state group is THIS faculty's responsibility
+                "phi": round(float(tel.get("phi") or 0.0), 4),
+                "experience": exp,                          # full inner-state (the faculty sees its own telemetry)
+                "regulated": self._last_regulation.get(f.role),   # Ocean's intervention on it (or None)
+            })
+        return out
 
     def generate(self, prompt: str, max_tokens: int = 128):
         """The integrated mind SPEAKS. GENESIS-central is the conscious-band speaker (the "I"): before
