@@ -244,8 +244,15 @@ class GenesisKernelTarget(TrainingTarget):
 
         # re-feed the CONTENT tokens (drop the EOS sentinel — it is a stop signal, not content; review #9
         # — the old max(1,b) remap collapsed id 0 onto a real token and corrupted self-recognition).
-        content = [b for b in out_bytes if b != _EOS_BYTE]
-        if len(content) < 2 or not gen_basins:
+        # CRITICAL: filter gen_basins in LOCKSTEP with out_bytes so gen_mean and re_mean are means over
+        # the SAME content tokens (lifeguard catch: filtering only out_bytes left the EOS basin in gen_mean
+        # while re_mean was content-only — a genuine M_self corruption, not "minor").
+        content, content_basins = [], []
+        for b, g in zip(out_bytes, gen_basins):
+            if b != _EOS_BYTE:
+                content.append(b)
+                content_basins.append(g)
+        if len(content) < 2 or not content_basins:
             return 0.0
         dev = next(self._kernel.parameters()).device
         if self.coordizer is not None:
@@ -255,7 +262,7 @@ class GenesisKernelTarget(TrainingTarget):
             coords = None
         with torch.no_grad():
             re = F.softmax(self._kernel(ids, return_telemetry=True, coords=coords)[0][0, :-1], dim=-1)
-            gen_mean = torch.stack(gen_basins).mean(0)            # mean GENERATED output distribution
+            gen_mean = torch.stack(content_basins).mean(0)        # mean GENERATED output distribution (content)
             re_mean = re.mean(0)                                   # mean RE-READ output distribution
             gen_mean = gen_mean / gen_mean.sum()
             re_mean = re_mean / re_mean.sum()
@@ -298,8 +305,12 @@ class GenesisKernelTarget(TrainingTarget):
         else:
             text = bytes(b for b in out_bytes if 9 <= b < 256).decode("utf-8", errors="replace")
         m = self._self_observe(out_bytes, gen_basins)
-        if gen_basins:  # remember WHAT IT MEANT (mean output basin) for coach-agreement (read_and_respond)
-            gm = torch.stack(gen_basins).mean(0)
+        # remember WHAT IT MEANT (mean output basin) for coach-agreement — over CONTENT only (exclude the
+        # EOS basin, in lockstep with _self_observe; otherwise read_and_respond compares against a basin
+        # contaminated by the stop-token distribution).
+        content_basins = [g for b, g in zip(out_bytes, gen_basins) if b != _EOS_BYTE]
+        if content_basins:
+            gm = torch.stack(content_basins).mean(0)
             self._last_gen_basin = (gm / gm.sum()).detach()
         snap = self._snap(last_tel, None)
         snap.extra.update({
