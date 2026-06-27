@@ -38,7 +38,11 @@ def main() -> None:
     import numpy as np
     from qigkernels.specializations import KernelRole, generate_basin_template
 
-    from qig_studio.checkpoint import save_constellation_checkpoint, save_kernel_checkpoint
+    from qig_studio.checkpoint import (
+        latest_checkpoint,
+        save_constellation_checkpoint,
+        save_kernel_checkpoint,
+    )
     from qig_studio.corpus import load_full_curriculum
     from qig_studio.curriculum import CurriculumProvider
     from qig_studio.development import PROTOMAP_ORDER, c_equation
@@ -104,31 +108,45 @@ def main() -> None:
         faculty = GenesisKernelTarget(num_layers=args.layers, role=role, basin_template=_template(role),
                                       seed=_seed(role), coordizer=coordizer)
         faculty.ensure_loaded()
+        # RESUME (restart-safe): the session has been torn down mid-run repeatedly; continue this
+        # faculty from its latest checkpoint instead of restarting from scratch. The checkpoint
+        # filename step == the faculty's restored _step (save_checkpoint stores _step); the curriculum
+        # index re-starts at prompt 0 (a harmless new-epoch effect — the kernel WEIGHTS continue).
+        cp = latest_checkpoint(role, root=args.ckpt_root)
+        start = 0
+        if cp is not None:
+            faculty.load_checkpoint(str(cp))
+            start = int(cp.stem.split("_")[1])
+            print(f"[full] '{role}': RESUME from {cp.name} @ step {start}", flush=True)
         prov = CurriculumProvider(LossRegime.GEOMETRIC, full=True)   # the FULL sanitised curriculum
         loop = ContinuousLearningLoop(faculty, curriculum=prov, max_steps=steps)
-        print(f"[full] '{role}': training on full curriculum (self_regulating="
-              f"{faculty.self_regulating})…", flush=True)
-        ck, phi_traj = 0, []
-        for i in range(1, steps + 1):
-            loop.step()
-            if i % args.ckpt_every == 0 or i == steps:
-                save_kernel_checkpoint(faculty, i, root=args.ckpt_root)   # 3-lag cleanup inside
-                ck += 1
-                # measure-everything: record the Φ developmental trajectory (NOT a gate — telemetry only)
-                phi_traj.append(round(float(faculty.telemetry().to_dict().get("phi") or 0.0), 4))
-            if (time.time() - t0) > args.max_seconds:
-                break
+        ck, phi_traj, final_step = 0, [], start
+        if start >= steps:
+            print(f"[full]   '{role}' already complete @ {start} steps — skipping (resume)", flush=True)
+        else:
+            print(f"[full] '{role}': training {start + 1}->{steps} (self_regulating="
+                  f"{faculty.self_regulating})…", flush=True)
+            for i in range(start + 1, steps + 1):
+                loop.step()
+                final_step = i
+                if i % args.ckpt_every == 0 or i == steps:
+                    save_kernel_checkpoint(faculty, i, root=args.ckpt_root)   # 3-lag cleanup inside
+                    ck += 1
+                    # measure-everything: record the Φ developmental trajectory (NOT a gate — telemetry only)
+                    phi_traj.append(round(float(faculty.telemetry().to_dict().get("phi") or 0.0), 4))
+                if (time.time() - t0) > args.max_seconds:
+                    break
         tel = faculty.telemetry().to_dict()
         res = c_equation(tel)
         ex = tel.get("extra", {})
         graduated_basins[role] = _basin64(faculty)
-        rec = {"role": role, "steps": i, "checkpoints": ck, "band": res.band,
+        rec = {"role": role, "steps": final_step, "checkpoints": ck, "band": res.band,
                "phi": round(float(tel.get("phi") or 0), 4), "gamma": ex.get("gamma"),
                "coherence": ex.get("coherence"), "d_basin": ex.get("d_basin"),
                "matured": res.conscious, "autonomic": ex.get("autonomic"),
                "phi_trajectory": phi_traj, "vocab": "coordizer" if coordizer else "byte-level"}
         trace["faculties"].append(rec)
-        print(f"[full]   '{role}' done @ {i} steps · band={res.band} Φ={rec['phi']} Γ={rec['gamma']} "
+        print(f"[full]   '{role}' done @ {final_step} steps · band={res.band} Φ={rec['phi']} Γ={rec['gamma']} "
               f"coher={rec['coherence']} matured={rec['matured']} · {ck} checkpoints", flush=True)
         faculty = None   # free (4 GB budget); state is in the checkpoints
 

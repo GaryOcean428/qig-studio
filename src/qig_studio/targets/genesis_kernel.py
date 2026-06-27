@@ -668,28 +668,60 @@ class GenesisKernelTarget(TrainingTarget):
         state is checkpointed separately (qig_studio.checkpoint)."""
         self.ensure_loaded()
         import torch
+        # format 2 also persists the dialogue/replay/Φ-history state so a RESUMED kernel is the genuinely
+        # trained kernel (review fix): without these a resumed coach turn has a blank recognition basin
+        # (M_coach=None), an empty replay buffer (sleep replays nothing) and no Φ-history (mushroom inert
+        # for 30 steps). All fields are weights_only-safe (tensors / floats / a plain scalar dict). The
+        # optimizer state is intentionally NOT persisted (its LR-cooling self-heals; serialising it would
+        # risk the weights_only=True allowlist).
         torch.save({
-            "format": 1,
+            "format": 2,
             "arch": {"num_layers": self.num_layers, "hidden_dim": self.hidden_dim,
                      "num_heads": self.num_heads, "ffn_dim": self.ffn_dim,
-                     "vocab_size": self.vocab_size, "seed": self.seed, "role": self.role},
+                     "vocab_size": self.vocab_size, "seed": self.seed, "role": self.role,
+                     "coordizer": self.coordizer is not None},
             "kernel_state": self._kernel.state_dict(),
             "step": self._step,
             "sleep_pressure": self._sleep_pressure,
             "basin_ref": (self._basin_ref.detach().cpu() if self._basin_ref is not None else None),
             "basin_history": [b.detach().cpu() for b in self._basin_history],
+            "last_gen_basin": (self._last_gen_basin.detach().cpu() if self._last_gen_basin is not None else None),
+            "experience": [e.detach().cpu() for e in self._experience],
+            "phi_recent": [float(x) for x in self._phi_recent],
+            "last_telemetry": self._last.to_dict(),
         }, path)
 
     def load_checkpoint(self, path: str) -> None:
-        """Restore weights + developmental state. Checkpoint must match this kernel's architecture.
-        weights_only=True — the checkpoint holds only tensors + scalars + plain dicts (safe allowlist)."""
+        """Restore weights + full developmental state. The checkpoint's architecture must match this
+        kernel (fail-loud on mismatch — a byte-vs-coordizer or layer mismatch would otherwise crash deep
+        in load_state_dict or silently mis-load). weights_only=True — only tensors + scalars + plain dicts."""
         self.ensure_loaded()
         import torch
         dev = next(self._kernel.parameters()).device
         ckpt = torch.load(path, map_location=dev, weights_only=True)
+        arch = ckpt.get("arch") or {}
+        for k, cur in (("num_layers", self.num_layers), ("vocab_size", self.vocab_size),
+                       ("coordizer", self.coordizer is not None)):
+            if k in arch and arch[k] != cur:
+                raise ValueError(f"checkpoint arch mismatch at '{k}': checkpoint={arch[k]} kernel={cur} "
+                                 f"(byte-vs-coordizer or layer/vocab mismatch) — {path}")
         self._kernel.load_state_dict(ckpt["kernel_state"])
         self._step = int(ckpt.get("step", 0))
         self._sleep_pressure = float(ckpt.get("sleep_pressure", 0.0))
         ref = ckpt.get("basin_ref")
         self._basin_ref = ref.to(dev) if ref is not None else None
         self._basin_history = [b.to(dev) for b in (ckpt.get("basin_history") or [])]
+        # full developmental state (format 2; format-1 checkpoints leave these at their fresh defaults)
+        lg = ckpt.get("last_gen_basin")
+        self._last_gen_basin = lg.to(dev) if lg is not None else self._last_gen_basin
+        exp = ckpt.get("experience")
+        if exp:
+            self._experience = [e.to(dev) for e in exp]
+        pr = ckpt.get("phi_recent")
+        if pr:
+            from collections import deque as _deque
+            self._phi_recent = _deque(pr, maxlen=self._phi_recent.maxlen)
+        lt = ckpt.get("last_telemetry")
+        if lt:
+            self._last = TelemetrySnapshot(**{k: v for k, v in lt.items()
+                                              if k in TelemetrySnapshot.__dataclass_fields__})
