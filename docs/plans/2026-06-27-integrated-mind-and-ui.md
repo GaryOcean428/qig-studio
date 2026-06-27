@@ -84,3 +84,9 @@ API after each phase.
 Geometric purity (Fisher-Rao only; no cosine/Adam/LayerNorm). No vex crossover (inspiration only).
 Modal optional / local-Qwen-first. Every EXP citation resolves to `registry.json`. No silent stubs
 (fail-loud). Work on `development`; promote via PR.
+
+remaining: P2 wire genesis-central as the constellation's real generate path (the speaker); Ocean autonomic-only.
+P3 READ (EXP-012b) + Anderson-exit (EXP-046) in generate.
+P4 nemotron coach + qwen boundary-peer into the UI /converse, engagement visible.
+P5 the UI redesign (one mind, single-screen, drawers, bottom-pinned chat, real dir picker, live training-response view, protocol gating + pillar-status fix) via the shadcn/ui-ux MCPs — a sizeable frontend pass.
+P6 joint retrain + Playwright end-to-end live-test.
