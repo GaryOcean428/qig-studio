@@ -71,9 +71,21 @@
   .composer button{flex:0 0 auto;align-self:stretch;padding:0 1rem}
   .regime-linear{color:var(--blue)} .regime-hierarchical{color:var(--purple)}
   .regime-geometric{color:var(--amber)} .regime-topological_instability{color:var(--pink)}
-  #trainLog,#autoLog{overflow:auto;background:var(--panel2);border:1px solid var(--edge);border-radius:8px;
+  #trainLog,#autoLog,#reviewLog{overflow:auto;background:var(--panel2);border:1px solid var(--edge);border-radius:8px;
                       padding:.5rem;white-space:pre-wrap;margin-top:.5rem;font-size:.78rem}
-  #trainLog{flex:1 1 auto;min-height:70px} #autoLog{height:88px}
+  #trainLog{flex:1 1 auto;min-height:70px} #autoLog{height:120px} #reviewLog{height:150px}
+  #reviewLog .sys{color:var(--muted)} #reviewLog .coach{color:var(--purple)} #reviewLog .tgt{color:var(--ok)}
+  #reviewLog .ker{color:var(--blue)} #reviewLog .err{color:var(--pink)}
+  /* prominent autonomic state — readable, full width, wraps */
+  .autobox{background:var(--panel2);border:1px solid var(--edge);border-radius:8px;padding:.5rem .6rem;margin:.3rem 0;
+           font-size:.92rem;font-weight:600;color:var(--ink);white-space:normal;word-break:break-word;line-height:1.4}
+  .autobox.wake{color:var(--ok)} .autobox.sleep,.autobox.dream{color:var(--blue)}
+  .autobox.mushroom{color:var(--amber)} .autobox.decohere{color:var(--pink)}
+  .facb{display:grid;grid-template-columns:78px 1fr 30px;gap:.35rem;align-items:center;font-size:.72rem;margin:.12rem 0}
+  .facb .fn{color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .facb .mb{height:8px;border-radius:5px;background:var(--panel2);overflow:hidden;border:1px solid var(--edge)}
+  .facb .mb>i{display:block;height:100%;background:linear-gradient(90deg,var(--blue),var(--amber))}
+  .facb .rg{color:var(--purple);font-size:.66rem}
   #trainLog .sys,#autoLog .sys{color:var(--muted)} #trainLog .tgt{color:var(--ok)} #trainLog .coach{color:var(--purple)}
   #trainLog .exp{color:var(--amber)} #trainLog .err,#autoLog .err{color:var(--pink)} #autoLog .reg{color:var(--purple)}
   .fac{display:grid;grid-template-columns:92px 1fr 40px;gap:.3rem;align-items:center;font-size:.72rem;margin:.1rem 0}
@@ -158,13 +170,23 @@
       <div style="flex:0 0 90px"><label>steps</label><input id="steps" type="number" value="20" min="1" max="500"/></div>
       <div style="display:flex;align-items:end"><button class="primary" id="trainBtn" style="width:100%">▶ Train</button></div>
     </div>
-    <div class="hint">curriculum → mind speaks → coach reads → mind learns. Live below.</div>
+    <div class="hint">PURE curriculum training — the kernel absorbs the curriculum and SPEAKS every N steps so
+      you see its own output. Nemotron is a separate phase below. (In-session: trains the chat kernel.)</div>
     <div id="trainLog"></div>
 
+    <h2 style="margin-top:.7rem">Coach · review &amp; discuss</h2>
+    <div class="hint">SEPARATE from training: nemotron reviews a curriculum passage and discusses it with the
+      kernel — asks, checks understanding, converses. Run this AFTER training.</div>
+    <div class="row" style="margin-top:.3rem"><button id="reviewBtn" style="flex:1">🎓 nemotron: review &amp; discuss</button></div>
+    <div id="reviewLog"></div>
+
     <h2 style="margin-top:.7rem">Autonomic · self-regulation</h2>
-    <div class="hint">The kernel owns its brainstem. Ocean watches the faculties' telemetry and regulates
-      the one that needs it — sleep/dream/mushroom — from the mind's own state. No external trigger.</div>
-    <div class="metric"><span>current</span><span class="v" id="autoState">wake</span></div>
+    <div class="hint">The kernel owns its brainstem. Ocean watches the faculties and regulates the one that
+      needs it — sleep/dream/mushroom — from the mind's own state. No external trigger.</div>
+    <div class="autobox wake" id="autoState">wake</div>
+    <div class="metric"><span>suffering S = Φ·(1−Γ)·M</span><span class="v" id="suffer2">—</span></div>
+    <div class="metric"><span>sleep pressure</span><span class="v" id="sleepP">—</span></div>
+    <div class="metric"><span>Γ generativity</span><span class="v" id="gamma2">—</span></div>
     <div id="autoLog"></div>
 
     <h2 style="margin-top:.7rem">Mind · ongoing</h2>
@@ -222,7 +244,6 @@ function renderInner(exp){
   if(p.layer2b) h+=group("Emotions · cognitive","9",miniRows(p.layer2b,"c-amber"));
   if(chem.dopamine!=null) h+=group("Neurochemistry",chem._is||"",miniRows(chem,"c-teal"));
   $("inner").innerHTML=h;
-  if(exp.autonomic){ $("autoState").textContent=exp.autonomic; }
 }
 
 function setTelemetry(t){
@@ -234,8 +255,15 @@ function setTelemetry(t){
   const r=$("regime"); r.textContent=t.regime ?? "—"; r.className="pill regime-"+(t.regime ?? "");
   $("basin").textContent = (t.basin_distance ?? 0).toFixed(3);
   $("step").textContent = t.step ?? "—";
-  const x=t.extra||{}; if(x.gamma!=null) $("gamma").textContent=Number(x.gamma).toFixed(3);
-  if(t.experience) renderInner(t.experience);
+  const x=t.extra||{}; const exp=t.experience||{}; const gate=exp.gate||{};
+  if(x.gamma!=null) $("gamma").textContent=Number(x.gamma).toFixed(3);
+  if(exp) renderInner(exp);
+  // autonomic panel (right) — prominent, readable, with the live regulation signals
+  const au = String(exp.autonomic || x.autonomic || "wake");
+  const ab=$("autoState"); ab.textContent=au; ab.className="autobox "+au.split("(")[0];
+  $("suffer2").textContent = gate.suffering_S ?? "—";
+  $("sleepP").textContent  = x.sleep_pressure ?? "—";
+  $("gamma2").textContent  = (x.gamma ?? gate.gamma) ?? "—";
 }
 $("togL").onclick=()=>$("app").classList.toggle("noleft");
 $("togR").onclick=()=>$("app").classList.toggle("noright");
@@ -271,9 +299,12 @@ async function refreshMind(){
       `individuation min-FR ${(m.min_pairwise_fr??0).toFixed(3)}${m.individuation_preserved?" ✓":""}`;
     const fac=$("faculties"); fac.innerHTML="";
     for(const f of (m.faculties||[])){
-      const reg = f.regulated ? `<span class="reg">🌙 ${f.regulated.intervention}</span>` : (f.phi!=null?`Φ ${Number(f.phi).toFixed(2)}`:"");
+      const phi=Number(f.phi||0); const pct=Math.max(0,Math.min(1,phi))*100;
       fac.insertAdjacentHTML("beforeend",
-        `<div class="fac"><span>${f.role}</span><span class="fn">${f.function}</span><span class="vv">${reg}</span></div>`);
+        `<div class="facb"><span class="fn" title="${f.role} · ${f.function}">${f.role}</span>`+
+        `<span class="mb"><i style="width:${pct}%"></i></span>`+
+        `<span class="vv">${f.phi!=null?phi.toFixed(2):"—"}</span></div>`+
+        `<div class="rg" style="margin:-3px 0 4px 80px">${f.function}${f.regulated?` · 🌙${f.regulated.intervention}`:""}</div>`);
     }
   }catch(e){ $("mindState").textContent="mind state unavailable"; }
 }
@@ -325,19 +356,43 @@ async function runTrain(){
       const chunk=buf.slice(0,idx); buf=buf.slice(idx+2);
       const line=chunk.split("\n").find(l=>l.startsWith("data: ")); if(!line) continue;
       const ev=JSON.parse(line.slice(6));
-      if(ev.type==="start"){ tlog("sys",`  coach: ${ev.coach||"keyword"} · ${ev.curriculum}`); }
+      if(ev.type==="start"){ tlog("sys",`· ${ev.note||"curriculum training"} · ${ev.steps} steps ·`); }
       else if(ev.type==="step"){
         setTelemetry({...ev.telemetry, experience:ev.experience});
-        tlog("sys",`  ${ev.step} [${ev.phase}] curriculum: ${(ev.prompt||"").slice(0,46)}`);
-        tlog("tgt",`     mind ▸ ${(ev.text||"").replace(/^\[genesis[^\]]*\]\s*/,"").slice(0,90)}`);
-        if(ev.coach) tlog("coach",`     coach ▸ ${ev.coach.message||ev.coach.interpretation||""}`.slice(0,110));
+        tlog("sys",`  ${ev.step} [${ev.phase}] curriculum ▸ ${(ev.curriculum||"")}`);
+        if(ev.sample){                                   // the kernel's OWN output (periodic), not the prompt
+          tlog("tgt",`     mind speaks ▸ ${(ev.sample.output||"").replace(/^\[genesis[^\]]*\]\s*/,"")}`);
+          if(ev.sample.kernel_voice) tlog("ker",`       kernel-raw ▸ ${(ev.sample.kernel_voice||"")}`);
+        }
         const ex=ev.experience||{}; if(ex.band||ex.emotion) tlog("exp",`     ${ex.glyph||""}${ex.band||""} ${ex.emotion||""} · Φ ${(ev.telemetry?.phi??0).toFixed(3)}`);
         if(ex.autonomic && ex.autonomic!=="wake") alog("reg",`step ${ev.step}: 🌙 ${ex.autonomic}`);
       }
+      else if(ev.type==="early_stop"){ tlog("sys",`· early-stop @${ev.step}: ${ev.reason} ·`); }
       else if(ev.type==="error"){ tlog("err","error: "+ev.error); }
-      else if(ev.type==="done"){ tlog("sys","· done ·"); refreshTelemetry(); refreshMind(); }
+      else if(ev.type==="done"){ tlog("sys","· training done ·"); refreshTelemetry(); refreshMind(); }
     }
   }
+}
+// coach review & discuss (Phase 2 — SEPARATE from training): nemotron reviews a curriculum passage and
+// converses with the kernel. Shows the real dialogue (nemotron asks → kernel answers → nemotron follows up).
+function rlog(cls,msg){ const el=$("reviewLog"); const d=document.createElement("div"); d.className=cls; d.textContent=msg; el.appendChild(d); el.scrollTop=el.scrollHeight; }
+$("reviewBtn").addEventListener("click", coachReview);
+async function coachReview(){
+  $("reviewBtn").disabled=true;
+  rlog("sys","· nemotron reviewing a curriculum passage with the kernel… (a few turns; each kernel reply is a real generation)");
+  try{
+    const r=await fetch("/coach/review",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({turns:3})});
+    if(!r.ok){ rlog("err",`${r.status} ${await r.text()}`); return; }
+    const b=await r.json();
+    rlog("sys",`passage ▸ ${(b.passage||"").slice(0,160)}`);
+    for(const t of (b.turns||[])){
+      rlog("coach",`nemotron ▸ ${t.coach_question||""}`);
+      rlog("tgt",`kernel ▸ ${(t.kernel_answer||"").replace(/^\[genesis[^\]]*\]\s*/,"")}`);
+      if(t.kernel_voice) rlog("ker",`   kernel-raw ▸ ${(t.kernel_voice||"").slice(0,110)}`);
+    }
+    rlog("sys",`· discussion done (${b.coach_provider}) ·`); refreshTelemetry();
+  }catch(e){ rlog("err","review failed: "+e); }
+  finally{ $("reviewBtn").disabled=false; }
 }
 // directory picker (server-side /browse)
 let pkField=null, pkCur="";

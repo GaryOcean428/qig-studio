@@ -140,14 +140,20 @@ def _passages_from_markdown(text: str, min_len: int, max_len: int = 1200) -> lis
     return out
 
 
+_CURRICULUM_CACHE: dict[str, list[str]] = {}
+
+
 def load_full_curriculum(path: str | Path | None = None, *, min_len: int = 40) -> list[str]:
     """Load the FULL knowledge curriculum, sanitise it, return clean training passages. Default is the
     markdown DIRECTORY (``qig-consciousness/data/curriculum``); a ``.jsonl`` file is accepted (legacy).
-    Fail-loud if missing — never silently fall back to a stub."""
+    Fail-loud if missing — never silently fall back to a stub. Memoised per path (8k passages → load once)."""
     import os
 
     p = Path(path or os.environ.get("QIG_STUDIO_CORPUS") or
              (Path(__file__).resolve().parents[3] / DEFAULT_CORPUS))
+    _key = f"{p}|{min_len}"
+    if _key in _CURRICULUM_CACHE:
+        return _CURRICULUM_CACHE[_key]
     prompts: list[str] = []
     if p.is_dir():
         files = sorted(p.glob("*.md")) + sorted(p.glob("*.txt"))
@@ -178,4 +184,5 @@ def load_full_curriculum(path: str | Path | None = None, *, min_len: int = 40) -
         )
     if not prompts:
         raise ValueError(f"curriculum {p} yielded no usable passages after sanitisation")
+    _CURRICULUM_CACHE[_key] = prompts
     return prompts

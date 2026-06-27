@@ -76,11 +76,17 @@ class CurriculumProvider:
         if full is None:
             full = os.environ.get("QIG_STUDIO_FULL_CURRICULUM", "").lower() in ("1", "true", "yes")
         self.full = bool(full)
-        if self.full and loss_regime == LossRegime.GEOMETRIC and not curriculum_dir:
-            from .corpus import load_full_curriculum
-            self._file_prompts = load_full_curriculum()   # fail-loud if the corpus is missing
         if curriculum_dir:
-            self._load_dir(curriculum_dir)
+            self._load_dir(curriculum_dir)   # an explicit dir wins IF it yields prompts
+        # GEOMETRIC DEFAULT = the full KNOWLEDGE curriculum (qig-consciousness/data/curriculum) — the kernel
+        # trains on real knowledge, NOT the tiny developmental-question stub. (The stub _PHASES is only the
+        # last-resort fallback if the corpus is genuinely missing.) This matches what the joint trainer uses.
+        if loss_regime == LossRegime.GEOMETRIC and not self._file_prompts:
+            try:
+                from .corpus import load_full_curriculum
+                self._file_prompts = load_full_curriculum()
+            except Exception:  # noqa: BLE001 — fall back to the built-in stub only if the corpus is missing
+                self._file_prompts = None
         if loss_regime == LossRegime.GEOMETRIC and not self._file_prompts:
             self._try_real_curriculum()
 

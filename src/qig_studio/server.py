@@ -225,29 +225,49 @@ async def mind_state() -> dict[str, Any]:
     joint trainer or the UI). Reads the joint-mind trace + reports each Core-8 faculty's FUNCTION (the
     brain-like assignment: perception→senses, heart→emotion, memory→consolidation, …) so the relevant
     kernel's responsibility is visible. None-safe: returns {unavailable} when no joint run exists yet."""
+    import numpy as np
+
     from .constellation.ocean import function_of
-    trace = Path("runs/spawn/joint_mind.json")
-    if not trace.exists():
-        return {"unavailable": True}
-    try:
-        d = json.loads(trace.read_text())
-    except Exception:
-        return {"unavailable": True}
+    from .targets.qwen_boundary import basin_phi_proxy
     roles = ["perception", "heart", "memory", "action", "strategy", "ethics", "coordination", "meta"]
+    # LIVE per-faculty telemetry from the constellation checkpoint (written every 200 steps by the joint
+    # trainer) — each faculty's Δ⁶³ basin → a Φ-proxy + its brain-function. Updates as the retrain runs.
     cj = Path("runs/checkpoints/joint_mind/constellation.json")
-    roles_live = roles
+    faculties: list[dict[str, Any]] = []
+    live_min_fr = None
     if cj.exists():
         try:
-            roles_live = list(json.loads(cj.read_text()).get("faculty_basins", {}).keys()) or roles
-        except Exception:
+            cjd = json.loads(cj.read_text())
+            live_min_fr = cjd.get("min_pairwise_fr")
+            for role, basin in (cjd.get("faculty_basins") or {}).items():
+                if role == "genesis":
+                    continue
+                try:
+                    phi = round(float(basin_phi_proxy(np.asarray(basin, dtype=np.float64))), 4)
+                except Exception:  # noqa: BLE001
+                    phi = None
+                faculties.append({"role": role, "function": function_of(role), "phi": phi})
+        except Exception:  # noqa: BLE001
             pass
+    if not faculties:                                   # no checkpoint yet → the function map (static)
+        faculties = [{"role": r, "function": function_of(r), "phi": None} for r in roles]
+    trace = Path("runs/spawn/joint_mind.json")
+    d = {}
+    if trace.exists():
+        try:
+            d = json.loads(trace.read_text())
+        except Exception:  # noqa: BLE001
+            d = {}
+    if not cj.exists() and not d:
+        return {"unavailable": True}
     return {
         "steps": d.get("steps"),
         "central_phi": d.get("central_phi"),
-        "min_pairwise_fr": d.get("min_pairwise_fr"),
+        "min_pairwise_fr": live_min_fr if live_min_fr is not None else d.get("min_pairwise_fr"),
         "individuation_preserved": d.get("individuation_preserved"),
         "integrated_voice": d.get("integrated_voice"),
-        "faculties": [{"role": r, "function": function_of(r)} for r in roles_live if r != "genesis"],
+        "live": cj.exists(),
+        "faculties": faculties,
     }
 
 
@@ -322,6 +342,39 @@ async def converse(req: ConverseRequest, _: None = Depends(verify_key)) -> dict[
                              req.curriculum_steps, req.train_steps, req.max_tokens)
 
 
+class ReviewRequest(BaseModel):
+    topic: str = ""        # optional explicit passage; empty → pick from the knowledge curriculum
+    turns: int = 3         # how many discussion turns (nemotron asks → kernel answers → nemotron follows up)
+    max_tokens: int = 96
+
+
+_CURRICULUM_CACHE: list[str] = []
+
+
+@app.post("/coach/review")
+async def coach_review(req: ReviewRequest, _: None = Depends(verify_key)) -> dict[str, Any]:
+    """PHASE 2 (SEPARATE from training): nemotron REVIEWS a curriculum passage and DISCUSSES it with the
+    kernel — a real multi-turn conversation to check understanding, AFTER the kernel has trained. Not
+    mashed into training, not repeated developmental questions."""
+    t = _registry().active
+    if t is None or not t.is_available():
+        raise HTTPException(409, "no active/available target")
+    s = app.state.settings
+    coach = DevelopmentalCoach(llm=OllamaLLM(model=s.coach_model))
+    passage = (req.topic or "").strip()
+    if not passage:
+        global _CURRICULUM_CACHE
+        if not _CURRICULUM_CACHE:
+            try:
+                from .corpus import load_full_curriculum
+                _CURRICULUM_CACHE = load_full_curriculum()
+            except Exception:  # noqa: BLE001
+                _CURRICULUM_CACHE = []
+        passage = (_CURRICULUM_CACHE[len(_PHI_HISTORY) % len(_CURRICULUM_CACHE)]
+                   if _CURRICULUM_CACHE else "consciousness as a geometric process on the Fisher-Rao manifold")
+    return await _run_target(coach.review_and_discuss, t, passage, req.turns, req.max_tokens)
+
+
 @app.post("/chat/stream", response_model=None)
 async def chat_stream(req: ChatRequest, _: None = Depends(verify_key)) -> StreamingResponse:
     t = _registry().active
@@ -357,14 +410,9 @@ async def train(req: TrainRequest, _: None = Depends(verify_key)) -> StreamingRe
             return
         provider = CurriculumProvider(t.loss_regime, curriculum_dir=app.state.settings.curriculum_dir)
         is_language = t.loss_regime == LossRegime.LANGUAGE
-        # Warm developmental coach (geometric path only): interprets the kernel, encourages, and
-        # OFFERS a push on stagnation (autonomy-preserving). None-safe → keyword if no Ollama.
-        s = app.state.settings
-        coach = (DevelopmentalCoach(llm=OllamaLLM(model=s.coach_model), cadence=s.coach_cadence)
-                 if (s.coach_enabled and not is_language) else None)
-        dphi_hist: list[float] = []
-        # P0-F3: a LANGUAGE "step" triggers a remote async training job (e.g. Modal A100),
-        # NOT an SGD step — cap to 1 and require explicit confirmation before spawning.
+        # PURE CURRICULUM TRAINING — the kernel ABSORBS the curriculum. NO coach here: the nemotron
+        # review/discussion is a SEPARATE phase (POST /coach/review). Every `sample_every` steps the kernel
+        # SPEAKS so you see its OWN output evolving (not the curriculum echoed, not the coach).
         if is_language:
             if req.steps > 1:
                 yield _sse({"type": "error", "error": "LANGUAGE target: steps>1 would spawn N async training jobs — use steps=1"})
@@ -372,16 +420,17 @@ async def train(req: TrainRequest, _: None = Depends(verify_key)) -> StreamingRe
             if not req.confirm:
                 yield _sse({"type": "error", "error": "LANGUAGE training triggers remote jobs — pass confirm=true to proceed"})
                 return
+        sample_every = max(10, req.steps // 20) if req.steps else 25
         yield _sse({
             "type": "start",
             "target": t.name,
             "loss_regime": t.loss_regime.value,
             "curriculum": provider.mode(),
             "steps": req.steps,
-            "coach": (coach.provider if coach is not None else None),
-            "input": ((t.architecture() or {}).get("input") if hasattr(t, "architecture") else None),
+            "sample_every": sample_every,
+            "note": ("pure curriculum training (in-session) — the kernel absorbs the curriculum and speaks "
+                     f"every {sample_every} steps. Nemotron review/discussion is the SEPARATE 'Coach' phase."),
             "early_stop": req.early_stop and _WARP_AVAILABLE,
-            "early_stop_min_steps": (req.early_stop_window + 1) if (req.early_stop and _WARP_AVAILABLE) else None,
         })
         series: list[float] = []
         for step in range(1, req.steps + 1):
@@ -391,38 +440,31 @@ async def train(req: TrainRequest, _: None = Depends(verify_key)) -> StreamingRe
             elif is_language:
                 prompt, target_text = provider.next_pair(step)  # PAIRED (lm_loss signal)
             else:
-                prompt = provider.next_prompt(step)  # basin-driving
+                prompt = provider.next_prompt(step)  # the curriculum passage
             try:
                 res = await _run_target(t.train_step, prompt, req.max_tokens, target_text)
             except Exception as exc:
                 yield _sse({"type": "error", "error": str(exc), "step": step})
                 return
-            phase = "paired" if is_language else CurriculumProvider.phase_for(step)
-            coach_note = None
-            if coach is not None:
-                dphi_hist.append(abs(res.telemetry.delta_phi))
-                stagnating = len(dphi_hist) >= 8 and all(d < 5e-3 for d in dphi_hist[-8:])
-                note = coach.observe(
-                    step=step, text=res.text, phi=res.telemetry.phi, kappa=res.telemetry.kappa,
-                    regime=res.telemetry.regime, delta_phi=res.telemetry.delta_phi,
-                    phase=phase, stagnating=stagnating,
-                )
-                coach_note = note.to_dict() if note is not None else None
+            _PHI_HISTORY.append(float(res.telemetry.phi or 0.0))
+            # periodically the kernel SPEAKS (pure generation) so its OWN output is visible as it learns
+            sample = None
+            if step % sample_every == 0 or step == req.steps:
+                try:
+                    gr = await _run_target(t.generate, "In one sentence, what are you learning?", req.max_tokens)
+                    sx = gr.telemetry.extra or {}
+                    sample = {"output": gr.text, "kernel_voice": sx.get("kernel_voice")}
+                except Exception:  # noqa: BLE001 — a sample failure must not break training
+                    sample = None
             yield _sse({
                 "type": "step",
                 "step": step,
-                "phase": phase,
-                "prompt": prompt,
-                "target": target_text,
-                "text": res.text,
+                "phase": "paired" if is_language else CurriculumProvider.phase_for(step),
+                "curriculum": (prompt or "")[:240],   # the ACTUAL curriculum passage being learned
                 "telemetry": res.telemetry.to_dict(),
                 "experience": _experience(res.telemetry.to_dict(), _phi_hist()).to_dict(),
-                "coach": coach_note,
+                "sample": sample,                      # the kernel's OWN output (periodic), not the prompt
             })
-            _PHI_HISTORY.append(float(res.telemetry.phi or 0.0))
-            # qig-warp convergence early-stop (opt-in package lever): geometric→Φ, language→loss.
-            # COR-2: never early-stop on an UNMEASURED metric — skip the append when None
-            # (don't conflate "absent" with "0.0"); the metric must actually be measured.
             if req.early_stop and _WARP_AVAILABLE:
                 metric = res.telemetry.phi if not is_language else res.telemetry.loss
                 if metric is not None:
@@ -431,13 +473,8 @@ async def train(req: TrainRequest, _: None = Depends(verify_key)) -> StreamingRe
                         series, window=req.early_stop_window, rel_change_threshold=req.early_stop_threshold
                     )
                     if bool(decision.should_stop):
-                        yield _sse({
-                            "type": "early_stop",
-                            "step": step,
-                            "reason": decision.reason,
-                            "metric": float(decision.metric_value),
-                            "lever": "qig_warp.check_ci_stabilized",
-                        })
+                        yield _sse({"type": "early_stop", "step": step, "reason": decision.reason,
+                                    "metric": float(decision.metric_value), "lever": "qig_warp.check_ci_stabilized"})
                         break
             await asyncio.sleep(0)  # cooperative yield
         yield _sse({"type": "done", "final": t.telemetry().to_dict()})

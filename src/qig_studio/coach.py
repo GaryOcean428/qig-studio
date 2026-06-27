@@ -122,6 +122,12 @@ class DevelopmentalCoach:
         "It just ASKED YOU SOMETHING. Answer its question directly, helpfully, and simply in 1-2 short "
         "sentences — do not interpret or critique it, just answer. Output ONLY the answer."
     )
+    _REVIEW_SYSTEM = (
+        "You are a patient teacher REVIEWING a curriculum passage WITH a developing mind, AFTER it has "
+        "studied the material. Discuss the passage: explain the key idea simply, then ask ONE clear "
+        "question to check understanding, or give brief honest feedback and ONE follow-up question. Vary "
+        "your questions — never repeat. Be warm but honest. 1-3 sentences. Output ONLY your turn."
+    )
 
     def __init__(
         self,
@@ -273,6 +279,44 @@ class DevelopmentalCoach:
             "M_coach_agreement": rex.get("M_coach_agreement"),   # did the coach read me right?
             "responded_M_self": rex.get("M_self_observation"),
         }
+
+    def review_and_discuss(self, target, passage: str, turns: int = 3, max_tokens: int = 96) -> dict:
+        """PHASE 2 (SEPARATE from training): nemotron REVIEWS a curriculum passage and DISCUSSES it with
+        the kernel — after the kernel has trained on the curriculum. Nemotron explains/asks; the kernel
+        RESPONDS (its own voice, via the boundary peer); nemotron reads the response and FOLLOWS UP. A real
+        multi-turn conversation to check + deepen understanding — NOT mashed into training, NOT repeated
+        developmental questions. Each turn varies. Returns the dialogue + the kernel's telemetry per turn."""
+        live = self.enabled and self.llm.is_available()
+        provider = f"ollama:{self.llm.model}" if live else "keyword"
+        passage = (passage or "").strip()
+        # nemotron opens: review the passage + ask the first understanding question
+        if live:
+            q = self.llm.complete(self._REVIEW_SYSTEM,
+                                  f'Curriculum passage the student just studied:\n"{passage[:800]}"\n\n'
+                                  "Briefly state its key idea, then ask ONE question to check understanding.")
+        else:
+            q = f"What is the key idea in: {passage[:120]}?"
+        q = (q or "").strip() or f"What did you take from: {passage[:80]}?"
+        dialogue: list[dict] = []
+        for _ in range(max(1, turns)):
+            kr = target.generate(q, max_tokens=max_tokens)          # the KERNEL answers in its own voice
+            kx = kr.telemetry.extra or {}
+            if live:
+                fu = self.llm.complete(
+                    self._REVIEW_SYSTEM,
+                    f'Passage:\n"{passage[:600]}"\nYou asked: "{q}"\nThe student answered: '
+                    f'"{(kr.text or "")[:500]}"\n\nGive brief honest feedback, then ask ONE NEW follow-up question.')
+            else:
+                fu = "Good — can you connect that to the rest of the idea?"
+            dialogue.append({
+                "coach_question": q,
+                "kernel_answer": kr.text,
+                "kernel_voice": kx.get("kernel_voice"),            # the kernel's OWN raw voice
+                "telemetry": kr.telemetry.to_dict(),
+                "experience": _experience(kr.telemetry.to_dict()).to_dict(),
+            })
+            q = (fu or "").strip() or "Tell me more."
+        return {"passage": passage[:400], "turns": dialogue, "coach_provider": provider}
 
     def converse_learn_turn(self, target, prompt: str, curriculum_prompt: str | None = None,
                             curriculum_steps: int = 12, train_steps: int = 8,
