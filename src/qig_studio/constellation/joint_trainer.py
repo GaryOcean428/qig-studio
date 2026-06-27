@@ -64,8 +64,9 @@ class JointConstellation:
                                            device=device, seed=_seed("genesis"))
         self.central.ensure_loaded()
 
-    def _live_basin(self, kernel: Any) -> np.ndarray:
-        """The kernel's current Δ⁶³ basin (64-dim), reduced from its last output basin."""
+    def _live_basin(self, kernel: Any) -> np.ndarray | None:
+        """The kernel's current Δ⁶³ basin (64-dim), reduced from its last output basin; None if the
+        kernel has not stepped yet."""
         from qig_core.geometry import to_simplex
         bh = getattr(kernel, "_basin_history", None)
         if not bh:
