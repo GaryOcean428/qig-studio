@@ -88,6 +88,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         constellation_checkpoint=settings.constellation_checkpoint,
         genesis_num_layers=settings.genesis_num_layers,
         genesis_coordizer_checkpoint=settings.genesis_coordizer_checkpoint,
+        genesis_kernel_checkpoint=settings.genesis_kernel_checkpoint,
         device=settings.device,
     )
     app.state.pillars = PillarEnforcerAdapter()

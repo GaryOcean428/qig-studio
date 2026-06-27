@@ -60,15 +60,17 @@ def default_registry(
     constellation_checkpoint: str | None = None,
     genesis_num_layers: int = 8,
     genesis_coordizer_checkpoint: str | None = None,
+    genesis_kernel_checkpoint: str | None = None,
     device: str | None = None,
 ) -> TargetRegistry:
-    """Build the registry: mock (always) + genesis (fresh qigkernels.Kernel; coords path when a
-    trained coordizer checkpoint is given, else byte path) + geometric kernel/constellation +
-    language qwen-local/qwen-modal (all None-safe on their backends)."""
+    """Build the registry: mock (always) + genesis (qigkernels.Kernel; coords path when a trained
+    coordizer checkpoint is given, else byte path; restores a trained kernel checkpoint when given,
+    else fresh) + geometric kernel/constellation + language qwen-local/qwen-modal (all None-safe)."""
     r = TargetRegistry()
     r.register(MockTarget())
     r.register(GenesisKernelTarget(num_layers=genesis_num_layers, device=device,
-                                   coordizer=_load_coordizer(genesis_coordizer_checkpoint)))
+                                   coordizer=_load_coordizer(genesis_coordizer_checkpoint),
+                                   checkpoint=genesis_kernel_checkpoint))
     r.register(KernelTarget(checkpoint=kernel_checkpoint, device=device))
     r.register(ConstellationTarget(checkpoint=constellation_checkpoint, device=device))
     r.register(QwenLocalTarget())

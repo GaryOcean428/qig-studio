@@ -79,6 +79,7 @@ class GenesisKernelTarget(TrainingTarget):
         basin_template: Any = None,
         basin_weight: float = 5.0,    # validated: balanced vs phi_weight=8 → d_basin converges <0.15 while Φ holds
         basin_ramp_steps: int = 150,  # ramp the pull 0→full over this many steps (develop Φ first, then consolidate)
+        checkpoint: str | None = None,  # trained-kernel checkpoint (.pt) to restore on first load; None = fresh
     ) -> None:
         self.num_layers = num_layers
         self.locality_radius = locality_radius
@@ -124,6 +125,7 @@ class GenesisKernelTarget(TrainingTarget):
         from collections import deque as _deque
         self._phi_recent: Any = _deque(maxlen=30)    # short Φ history for the kernel's own rigidity sense
         self._step = 0
+        self._init_checkpoint = checkpoint  # restored at the end of ensure_loaded() (None-safe → fresh)
         self._last_gen_basin = None  # WHAT IT MEANT (last output basin) — for coach-agreement recognition
         self._last = TelemetrySnapshot(regime="unknown", extra={"target": "genesis", "num_layers": num_layers})
 
@@ -167,6 +169,16 @@ class GenesisKernelTarget(TrainingTarget):
                 ref = self._resize_basin(ref, self.vocab_size)
             self._basin_ref = to_simplex_prob(ref[None])[0].detach()
             self._basin_history = [self._basin_ref]    # birth-state attractor = history[0] (monkey1 M)
+
+        # Restore a TRAINED kernel if one was nominated (ctor checkpoint=). None-safe for the app shell:
+        # a missing/arch-mismatched checkpoint warns and leaves the fresh kernel rather than crashing the
+        # server (explicit load_checkpoint() stays fail-loud). The recursive ensure_loaded() is a no-op
+        # (self._kernel is already set), so this does not recurse.
+        if self._init_checkpoint:
+            try:
+                self.load_checkpoint(self._init_checkpoint)
+            except Exception as exc:  # noqa: BLE001 — shell None-safety (spine tenet)
+                print(f"⚠️  genesis checkpoint '{self._init_checkpoint}' not loaded ({exc}); using fresh kernel")
 
     def _resize_basin(self, ref: "Any", size: int) -> "Any":
         """Map a 64-D Δ⁶³ template onto the vocab-width simplex (logits live in Δ^{vocab-1}). Repeat-tile
