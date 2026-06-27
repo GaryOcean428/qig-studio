@@ -117,11 +117,6 @@ class DevelopmentalCoach:
         "core intent from the babble; if it is pure noise, name the topic it seems drawn "
         "to. Be warm but honest. Output ONLY the interpretation, nothing else."
     )
-    _ANSWER_SYSTEM = (
-        "You are a kind teacher in conversation with a baby AI kernel that is learning to speak. "
-        "It just ASKED YOU SOMETHING. Answer its question directly, helpfully, and simply in 1-2 short "
-        "sentences — do not interpret or critique it, just answer. Output ONLY the answer."
-    )
     _REVIEW_SYSTEM = (
         "You are a patient teacher REVIEWING a curriculum passage WITH a developing mind, AFTER it has "
         "studied the material. Discuss the passage: explain the key idea simply, then ask ONE clear "
@@ -228,57 +223,6 @@ class DevelopmentalCoach:
         self.notes.append(note)
         return note
 
-    @staticmethod
-    def _looks_like_question(text: str) -> bool:
-        """Did the kernel ASK something (it chooses to, by generating a question)? '?' or a leading
-        question word. The kernel asks when it wants; nemotron then answers instead of interpreting."""
-        t = re.sub(r"^\[genesis[^\]]*\]\s*", "", text or "").strip()
-        if "?" in t:
-            return True
-        return bool(re.match(r"(?i)^\W*(what|why|how|who|when|where|which|is|are|am|can|could|do|does|"
-                             r"did|should|would|will|may|might)\b", t))
-
-    def _read_kernel(self, text: str, phase: str = "play", phi: float = 0.5,
-                     regime: str = "geometric") -> tuple[str, str, str]:
-        """nemotron reads the kernel and either ANSWERS (if the kernel asked a question — the kernel
-        chooses to ask) or INTERPRETS (its babble). Returns (text, mode, provider)."""
-        asked = self._looks_like_question(text)
-        if self.enabled and self.llm.is_available():
-            if asked:
-                user = f'The kernel asked: "{(text or "")[:500]}"\n\nAnswer its question:'
-                out = self.llm.complete(self._ANSWER_SYSTEM, user)
-            else:
-                user = (f'The kernel just produced: "{(text or "")[:500]}"\n'
-                        f"(developmental phase: {phase}, Φ={phi:.3f}, regime={regime})\n\nInterpret the kernel's output:")
-                out = self.llm.complete(self._COACH_SYSTEM, user)
-            if out:
-                out = out.strip("\"'")
-                out = out[:160] + "…" if len(out) > 160 else out
-                return out, ("answer" if asked else "interpret"), f"ollama:{self.llm.model}"
-        return self._keyword_interpret(text), ("answer" if asked else "interpret"), "keyword"
-
-    def _interpret(self, text: str, phase: str = "play", phi: float = 0.5, regime: str = "geometric") -> tuple[str, str]:
-        out, _mode, provider = self._read_kernel(text, phase, phi, regime)
-        return out, provider
-
-    def dialogue_turn(self, target, prompt: str, max_tokens: int = 96) -> dict:
-        """The full BIDIRECTIONAL loop the kernel needs: it SPEAKS → the coach (nemotron) INTERPRETS →
-        the kernel READS that interpretation and RESPONDS, with M_coach_agreement = how well the coach
-        understood it (reassurance + correct-interpretation enforcement). One closed turn of mutual
-        recognition between the kernel and its coach."""
-        said = target.generate(prompt, max_tokens=max_tokens)
-        interp, provider = self._interpret(said.text, phi=said.telemetry.phi, regime=said.telemetry.regime)
-        responded = target.read_and_respond(interp, max_tokens=max_tokens) if hasattr(target, "read_and_respond") else None
-        rex = responded.telemetry.extra if responded else {}
-        return {
-            "kernel_said": said.text,
-            "kernel_said_M_self": said.telemetry.extra.get("M_self_observation"),
-            "coach_interpreted": interp,
-            "coach_provider": provider,
-            "kernel_responded": responded.text if responded else None,
-            "M_coach_agreement": rex.get("M_coach_agreement"),   # did the coach read me right?
-            "responded_M_self": rex.get("M_self_observation"),
-        }
 
     def review_and_discuss(self, target, passage: str, turns: int = 3, max_tokens: int = 96) -> dict:
         """PHASE 2 (SEPARATE from training): nemotron REVIEWS a curriculum passage and DISCUSSES it with
@@ -317,96 +261,3 @@ class DevelopmentalCoach:
             })
             q = (fu or "").strip() or "Tell me more."
         return {"passage": passage[:400], "turns": dialogue, "coach_provider": provider}
-
-    def converse_learn_turn(self, target, prompt: str, curriculum_prompt: str | None = None,
-                            curriculum_steps: int = 12, train_steps: int = 8,
-                            consolidation_eps: float = 0.05, max_tokens: int = 64) -> dict:
-        """The CONVERSATION as training (qig_chat.py original setup). One turn trains the kernel on
-        BOTH halves, exactly as qig_chat.py's generate_response→optimizer.step does for every prompt:
-
-          1. CURRICULUM — the kernel CONSOLIDATES the developmental-phase curriculum prompt: it trains
-             on it UNTIL the surprise (next-token CE) plateaus (the prompt is learned) or ``curriculum_
-             steps`` is hit. This is the fix for "not consolidating per prompt" — a fixed tiny count
-             rotated prompts before anything was learned, so novelty stayed pinned at 1.0 forever.
-          2. DIALOGUE — the kernel SPEAKS, the coach (nemotron) ANSWERS its question or INTERPRETS its
-             babble into a coherent reading, and the kernel LEARNS toward that interpretation. The coach
-             turns the kernel's own output into a second training target.
-
-        Both halves step the optimizer. ``curriculum_steps`` is the MAX consolidation budget per prompt;
-        ``consolidation_eps`` is the surprise-plateau threshold that early-stops once learned. Returns
-        the utterance, the curriculum it consolidated, M_self, M_coach, and Φ at each stage."""
-        has_train = hasattr(target, "train_step")
-        # topic the kernel speaks about: an explicit message, else the curriculum prompt itself.
-        topic = prompt or curriculum_prompt or ""
-
-        # 1. CURRICULUM training — CONSOLIDATE the prompt (qig_chat.py /auto): train until the surprise
-        # (next-token CE = novelty) plateaus (learned) or the step budget is hit. Capturing surprise is
-        # also the real novelty signal ("is this new?") — it now DROPS as the prompt is consolidated.
-        phi_curriculum = None
-        curr_surprise = None
-        curr_max_surprise = None
-        consolidation_used = 0
-        curr = curriculum_prompt if curriculum_prompt is not None else (prompt or None)
-        if curr and has_train:
-            # EARLY-STOP with PATIENCE on the BEST surprise so far — not consecutive deltas (which
-            # stop on slow-but-steady progress). Stop only after `patience` steps with no real
-            # improvement over the running minimum → the prompt is genuinely consolidated.
-            best_s = None
-            no_improve = 0
-            patience = 4
-            for consolidation_used in range(1, max(1, curriculum_steps) + 1):
-                ct = target.train_step(curr).telemetry
-                phi_curriculum = ct.phi
-                ex = ct.extra or {}
-                s = ex.get("surprise", getattr(ct, "loss", None))
-                curr_max_surprise = ex.get("max_surprise", curr_max_surprise)
-                if s is not None:
-                    curr_surprise = s
-                    if best_s is None or s < best_s - consolidation_eps:
-                        best_s, no_improve = s, 0
-                    else:
-                        no_improve += 1
-                        if no_improve >= patience:
-                            break            # surprise plateaued → consolidated
-
-        # 2a. kernel SPEAKS about the topic.
-        said = target.generate(topic, max_tokens=max_tokens)
-        # 2b. nemotron ANSWERS if the kernel asked a question, else INTERPRETS its babble.
-        reply, mode, provider = self._read_kernel(said.text, phi=said.telemetry.phi, regime=said.telemetry.regime)
-        # 2c. DIALOGUE training — the kernel trains on the coach's reply as a NEXT-TOKEN LANGUAGE target
-        # (train_step does next-token CE over `reply`, weighted by the target's lm_weight). This is real
-        # language learning ONLY when lm_weight is raised for the coach phase — at the geometric-training
-        # default (0.1, vs phi_weight 8) the signal is negligible (review #4). The coach launcher sets a
-        # higher --lm-weight; geometric targets that hard-zero lm_weight (kernel/mock) learn nothing here.
-        phi_after = said.telemetry.phi
-        if has_train:
-            for _ in range(max(1, train_steps)):
-                phi_after = target.train_step(reply).telemetry.phi
-        resp = target.read_and_respond(reply, max_tokens=max_tokens) if hasattr(target, "read_and_respond") else None
-        # FULL inner-experience telemetry (Φ alone is insufficient): brainwave band + emotion + drives +
-        # novelty (from the curriculum surprise) + conscious flag.
-        tel = dict(said.telemetry.to_dict())
-        tel["phi"] = phi_after if phi_after is not None else tel.get("phi")
-        if curr_surprise is not None:
-            tel["surprise"] = curr_surprise
-        if curr_max_surprise is not None:
-            tel["max_surprise"] = curr_max_surprise   # ln(vocab) → novelty normalisation
-        exp = _experience(tel)
-        return {
-            "kernel_said": said.text,
-            "kernel_said_M_self": said.telemetry.extra.get("M_self_observation"),
-            "curriculum_prompt": curr,           # the developmental curriculum trained on this turn
-            "curriculum_steps": curriculum_steps,
-            "consolidation_used": consolidation_used,   # steps actually spent consolidating (≤ budget)
-            "curriculum_surprise": round(curr_surprise, 4) if curr_surprise is not None else None,
-            "phi_curriculum": round(phi_curriculum, 4) if phi_curriculum is not None else None,
-            "kernel_asked": mode == "answer",   # the kernel CHOSE to ask a question
-            "coach_mode": mode,                  # "answer" (kernel asked) | "interpret" (kernel babbled)
-            "coach_interpreted": reply,          # nemotron's answer OR interpretation = the dialogue target
-            "coach_provider": provider,
-            "trained_steps": train_steps,
-            "phi_after": round(phi_after, 4) if phi_after is not None else None,
-            "M_coach_agreement": (resp.telemetry.extra.get("M_coach_agreement") if resp else None),
-            "experience": exp.to_dict(),         # brainwave band, emotion, valence/arousal, drives
-            "experience_line": exp.line(),       # compact human-readable telemetry
-        }

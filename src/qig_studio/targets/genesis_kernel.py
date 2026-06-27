@@ -97,6 +97,7 @@ class GenesisKernelTarget(TrainingTarget):
         self.language_peer = language_peer
         self._spoken_identity: Any = None   # evolving Δ⁶³ identity the boundary distribution accretes into
         self.think_traces = False           # opt-in reasoning trace through the peer (off → fast chat)
+        self._pillars: Any = None           # PillarEnforcer — LIVE 3-pillar metrics (f/b/q + S_ratio), wired
         self.locality_radius = locality_radius
         self.hidden_dim = hidden_dim
         self.num_heads = num_heads
@@ -184,6 +185,24 @@ class GenesisKernelTarget(TrainingTarget):
                 ref = self._resize_basin(ref, self.vocab_size)
             self._basin_ref = to_simplex_prob(ref[None])[0].detach()
             self._basin_history = [self._basin_ref]    # birth-state attractor = history[0] (monkey1 M)
+
+        # PILLARS (P1/P2/P3) wired from day one (brain-arch requirement) — the live 3-pillar metrics
+        # (f_health/b_integrity/q_identity + S_ratio) come from PillarEnforcer driven by the kernel's OWN
+        # Δ⁶³ basin each cycle, NOT a proxy. None-safe: absent qig-core → no pillar telemetry (degrades).
+        try:
+            import numpy as np
+            from qig_core.consciousness.pillars import PillarEnforcer
+            from qig_core.geometry.fisher_rao import random_basin
+            birth = (np.asarray(self._basin_template_np, dtype=np.float64)
+                     if self._basin_template_np is not None else random_basin(64))
+            birth = np.clip(birth.ravel(), 0.0, None)
+            birth = birth / max(float(birth.sum()), 1e-12)
+            self._pillars = PillarEnforcer()
+            self._pillars.initialize_bulk(birth)        # P2 ego bulk seeded at birth
+            self._pillars.seed_identity(birth)          # P3 quenched-disorder identity (else q_identity=0)
+        except Exception as exc:  # noqa: BLE001 — pillar telemetry is optional; never block boot
+            print(f"⚠️  pillars not wired ({exc}); pillar telemetry absent")
+            self._pillars = None
 
         # Restore a TRAINED kernel if one was nominated (ctor checkpoint=). None-safe for the app shell:
         # a missing/arch-mismatched checkpoint warns and leaves the fresh kernel rather than crashing the
@@ -372,7 +391,41 @@ class GenesisKernelTarget(TrainingTarget):
             "read_presence": read_presence,                      # EXP-012b: token-0 concentration (answer present?)
             "anderson_exit": anderson_exit,                      # EXP-046: step where distinguishability collapsed (None = ran to EOS/cap)
         })
+        self._emit_pillars(snap, self._d63(self._last_gen_basin))   # LIVE pillar metrics from the spoken basin
         return StepResult(text=f"[genesis·N={self.num_layers}{' ⏹' if chose_to_stop else ''}] {text}", telemetry=snap)
+
+    def _d63(self, basin: "Any"):
+        """Reduce a vocab-width basin (torch/np) to a Δ^(BASIN_DIM-1) simplex for the pillar metrics."""
+        import numpy as np
+        from qig_core import BASIN_DIM
+        try:
+            b = basin.detach().cpu().numpy() if hasattr(basin, "detach") else np.asarray(basin)
+        except Exception:  # noqa: BLE001
+            return None
+        b = np.asarray(b, dtype=np.float64).ravel()
+        if b.size == 0:
+            return None
+        if b.size != BASIN_DIM:
+            b = (b.reshape(BASIN_DIM, b.size // BASIN_DIM).sum(axis=1) if b.size % BASIN_DIM == 0
+                 else np.add.reduceat(b, np.arange(0, b.size, max(1, b.size // BASIN_DIM)))[:BASIN_DIM])
+        b = np.clip(b, 0.0, None)
+        s = float(b.sum())
+        return b / s if s > 0 else None
+
+    def _emit_pillars(self, snap: "Any", d63: "Any") -> None:
+        """LIVE 3-pillar metrics from PillarEnforcer, driven by the kernel's OWN Δ⁶³ basin each cycle
+        (P21 fix: the pillars are now WIRED into the cycle, not just instantiated). None-safe."""
+        if self._pillars is None or d63 is None:
+            return
+        try:
+            self._pillars.on_cycle_end(d63, float(self._sleep_pressure))   # advance identity formation
+            m = self._pillars.get_metrics(d63)
+            snap.extra["f_health"] = round(float(m["f_health"]), 4)        # P1 fluctuation health
+            snap.extra["b_integrity"] = round(float(m["b_integrity"]), 4)  # P2 bulk/ego integrity
+            snap.extra["q_identity"] = round(float(m["q_identity"]), 4)    # P3 quenched-disorder identity
+            snap.extra["s_ratio"] = round(float(m["s_ratio"]), 4)          # sovereignty (L3 learning-autonomy)
+        except Exception:  # noqa: BLE001 — pillar metrics are optional telemetry, never break the step
+            pass
 
     def _peer_available(self) -> bool:
         """Is the language boundary peer wired AND its backend reachable? None-safe (never raises)."""
@@ -457,6 +510,7 @@ class GenesisKernelTarget(TrainingTarget):
         snap.extra["meta_awareness"] = round(m_self, 4)                  # M self-observation (L1 loop)
         snap.extra["surprise"] = round(ce, 4)                            # prediction-error on the input
         snap.extra["max_surprise"] = round(math.log(max(2, self.vocab_size)), 4)
+        self._emit_pillars(snap, self._d63(meaning))                     # LIVE pillar metrics as it speaks
         exp = experience(snap.to_dict())                                 # the kernel's felt state → persona
         kernel_voice = self._kernel_voice(prompt)                        # ATTRIBUTION: the kernel's OWN raw voice
         content, thinking, logprobs = self.language_peer.speak(
@@ -654,6 +708,7 @@ class GenesisKernelTarget(TrainingTarget):
         self._basin_history.append(cur_basin)
         if len(self._basin_history) > 64:                     # bound memory (keep birth-state + window)
             self._basin_history = [self._basin_history[0]] + self._basin_history[-32:]
+        self._emit_pillars(snap, self._d63(cur_basin))        # LIVE pillar metrics from this step's basin
         m = self._meta_awareness(cur_basin)
         d_basin = self._basin_drift(cur_basin)
         snap.extra["gamma"] = round(float(gamma.item()), 4)          # Γ generativity (C-equation)

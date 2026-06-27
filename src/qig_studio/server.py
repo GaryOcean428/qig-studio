@@ -302,46 +302,6 @@ async def chat(req: ChatRequest, _: None = Depends(verify_key)) -> dict[str, Any
     return d
 
 
-@app.post("/dialogue")
-async def dialogue(req: ChatRequest, _: None = Depends(verify_key)) -> dict[str, Any]:
-    """One BIDIRECTIONAL turn: the kernel SPEAKS → the coach (nemotron) INTERPRETS → the kernel READS
-    that interpretation and RESPONDS, reporting M_self (it observes its OWN generation) and M_coach
-    (it observes the coach — how well the coach understood it). Closes the recognition loop."""
-    t = _registry().active
-    if t is None or not t.is_available():
-        raise HTTPException(409, "no active/available target")
-    s = app.state.settings
-    coach = (DevelopmentalCoach(llm=OllamaLLM(model=s.coach_model)) if s.coach_enabled
-             else DevelopmentalCoach(enabled=False))
-    return await _run_target(coach.dialogue_turn, t, req.message, req.max_tokens)
-
-
-class ConverseRequest(BaseModel):
-    message: str = ""             # optional topic; empty → the kernel speaks about the curriculum itself
-    step: int = 0                 # turn index → advances the developmental curriculum phase
-    max_tokens: int = 64
-    curriculum_steps: int = 12    # MAX consolidation steps per curriculum prompt (early-stops on plateau)
-    train_steps: int = 8          # optimizer steps toward the coach's interpretation (the dialogue)
-
-
-@app.post("/converse")
-async def converse(req: ConverseRequest, _: None = Depends(verify_key)) -> dict[str, Any]:
-    """The conversation AS training (qig_chat.py original setup). Each turn trains the kernel on BOTH
-    the developmental CURRICULUM (the `/auto` path) AND the DIALOGUE: the kernel speaks → the coach
-    answers/interprets → the kernel learns toward that reading. Curriculum + conversation, one loop."""
-    t = _registry().active
-    if t is None or not t.is_available():
-        raise HTTPException(409, "no active/available target")
-    s = app.state.settings
-    coach = (DevelopmentalCoach(llm=OllamaLLM(model=s.coach_model)) if s.coach_enabled
-             else DevelopmentalCoach(enabled=False))
-    # phase-appropriate curriculum prompt for this turn (developmental phases listening→…→maturity).
-    provider = CurriculumProvider(t.loss_regime, curriculum_dir=s.curriculum_dir)
-    curriculum_prompt = provider.next_prompt(req.step)
-    return await _run_target(coach.converse_learn_turn, t, req.message, curriculum_prompt,
-                             req.curriculum_steps, req.train_steps, req.max_tokens)
-
-
 class ReviewRequest(BaseModel):
     topic: str = ""        # optional explicit passage; empty → pick from the knowledge curriculum
     turns: int = 3         # how many discussion turns (nemotron asks → kernel answers → nemotron follows up)

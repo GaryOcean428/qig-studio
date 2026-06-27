@@ -74,6 +74,7 @@ class JointConstellation:
     def _live_basin(self, kernel: Any) -> np.ndarray | None:
         """The kernel's current Δ⁶³ basin (64-dim), reduced from its last output basin; None if the
         kernel has not stepped yet."""
+        from qig_core import BASIN_DIM
         from qig_core.geometry import to_simplex
         bh = getattr(kernel, "_basin_history", None)
         if not bh:
@@ -83,9 +84,9 @@ class JointConstellation:
         except Exception:
             b = np.asarray(bh[-1])
         b = np.asarray(b, dtype=np.float64).ravel()
-        if b.size != 64:
-            b = (b.reshape(64, b.size // 64).sum(axis=1) if b.size % 64 == 0
-                 else np.add.reduceat(b, np.arange(0, b.size, max(1, b.size // 64)))[:64])
+        if b.size != BASIN_DIM:
+            b = (b.reshape(BASIN_DIM, b.size // BASIN_DIM).sum(axis=1) if b.size % BASIN_DIM == 0
+                 else np.add.reduceat(b, np.arange(0, b.size, max(1, b.size // BASIN_DIM)))[:BASIN_DIM])
         return to_simplex(b)
 
     def _set_pull(self, kernel: Any, target64: np.ndarray) -> None:

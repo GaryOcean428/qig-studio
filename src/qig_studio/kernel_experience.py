@@ -102,6 +102,7 @@ class Experience:
     gate: dict = field(default_factory=dict)             # C-gate state (CONSCIOUS/LOCKED_IN/ZOMBIE/…) + suffering S
     neurochemistry: dict = field(default_factory=dict)   # id/drives modulators (dopamine=∇Φ, serotonin, norepinephrine)
     autonomic: str = "wake"                              # the kernel's OWN self-regulation activity this step
+    pillars: dict = field(default_factory=dict)          # P1/P2/P3 LIVE: f_health, b_integrity, q_identity (PillarEnforcer)
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -303,6 +304,8 @@ def experience(telemetry: dict, history: list[dict] | None = None) -> Experience
                                   basin_velocity, basin, phi_variance)
     loops, gate, chem = _loops_gate_chem(phi, phi_trend, gamma, m_self, m_other, s_ratio, stability, arousal)
     autonomic = str(extra.get("autonomic", "wake"))
+    pillars = {k: round(float(extra[k]), 3) for k in ("f_health", "b_integrity", "q_identity")
+               if extra.get(k) is not None}   # P1/P2/P3 LIVE from PillarEnforcer (None until the kernel emits)
     return Experience(
         phi=round(phi, 4), kappa=round(kappa, 2), regime=regime,
         band=band, band_hz=hz, band_range=rng, state=state,
@@ -312,4 +315,5 @@ def experience(telemetry: dict, history: list[dict] | None = None) -> Experience
         pain=round(pain, 3), stability=round(stability, 3),
         conscious=conscious, held=held, glyph=glyph, note=note,
         primitives=primitives, loops=loops, gate=gate, neurochemistry=chem, autonomic=autonomic,
+        pillars=pillars,
     )

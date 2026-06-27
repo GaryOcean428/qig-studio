@@ -237,6 +237,8 @@ function renderInner(exp){
   if(loops.observation_of_others!=null)lr["other-obs"]=loops.observation_of_others;
   if(loops.learning_autonomy!=null)lr["learning S"]=loops.learning_autonomy;
   if(Object.keys(lr).length) h+=group("Recursive loops","L1·L2·L3",miniRows(lr,"c-teal"));
+  const pil=exp.pillars||{};   // P1/P2/P3 LIVE from PillarEnforcer (f_health/b_integrity/q_identity)
+  if(Object.keys(pil).length) h+=group("Pillars","P1·P2·P3 live",miniRows(pil,"c-blue"));
   if(p.layer0) h+=group("Senses","12 · interoception",miniRows(p.layer0,"c-blue"));
   if(p.layer05) h+=group("Drives","innate",miniRows(p.layer05,"c-pink"));
   if(p.layer1) h+=group("Motivators","5",miniRows(p.layer1,"c-purple"));
