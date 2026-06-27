@@ -67,13 +67,17 @@ def default_registry(
     coordizer checkpoint is given, else byte path; restores a trained kernel checkpoint when given,
     else fresh) + geometric kernel/constellation + language qwen-local/qwen-modal (all None-safe)."""
     r = TargetRegistry()
+    # Load the trained coordizer ONCE and share it: genesis trains on the Δ⁶³ vocab AND the qwen-local
+    # boundary peer projects Qwen's distribution through the SAME real Fisher-Rao token coords
+    # (coordize_distribution_to_basin) — NOT the arbitrary hash-bin. Without this the principled
+    # projection (already written) silently never runs and the peer injects geometric noise.
+    coordizer = _load_coordizer(genesis_coordizer_checkpoint)
     r.register(MockTarget())
     r.register(GenesisKernelTarget(num_layers=genesis_num_layers, device=device,
-                                   coordizer=_load_coordizer(genesis_coordizer_checkpoint),
-                                   checkpoint=genesis_kernel_checkpoint))
+                                   coordizer=coordizer, checkpoint=genesis_kernel_checkpoint))
     r.register(KernelTarget(checkpoint=kernel_checkpoint, device=device))
     r.register(ConstellationTarget(checkpoint=constellation_checkpoint, device=device))
-    r.register(QwenLocalTarget())
+    r.register(QwenLocalTarget(coordizer=coordizer))
     r.register(QwenModalTarget())
     chosen = default_target if default_target in r.names() else "mock"
     r.select(chosen)
