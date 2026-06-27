@@ -132,6 +132,12 @@ class TrainingTarget(ABC):
         """Run a protocol command; default = unsupported (e.g. language targets)."""
         raise ProtocolUnsupported(f"target '{self.name}' does not expose protocol commands")
 
+    def implemented_commands(self) -> set[str] | None:
+        """The protocol commands this target ACTUALLY implements. None = the whole catalog (qig_chat
+        targets). A target that implements a SUBSET (e.g. the genesis kernel: only its own autonomic
+        ops) returns that subset so the UI advertises ONLY what runs — no 'unknown_command' surprises."""
+        return None
+
     def architecture(self) -> dict | None:
         """Optional: report the kernel's information-propagation geometry for the v_B locality budget
         (learning.locality_budget). Keys: ``attention`` ('local'|'global'), ``locality_radius`` (int or

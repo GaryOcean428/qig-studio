@@ -409,11 +409,13 @@ class ProtocolRequest(BaseModel):
 @app.get("/protocol")
 async def protocol_catalog() -> dict[str, Any]:
     t = _registry().active
+    impl = t.implemented_commands() if t else None        # None = whole catalog; else the real subset
+    cmds = [c for c in _protocol.PROTOCOL_COMMANDS if impl is None or c.name in impl]
     return {
         "active": t.name if t else None,
         "supported_by_active": bool(t and t.supports_protocol()),
-        "groups": _protocol.GROUPS,
-        "commands": [c.to_dict() for c in _protocol.PROTOCOL_COMMANDS],
+        "groups": sorted({c.group for c in cmds}),        # only groups that actually have commands
+        "commands": [c.to_dict() for c in cmds],          # ONLY what the active target implements (no unknown_command)
     }
 
 
@@ -426,12 +428,31 @@ async def protocol_run(command: str, req: ProtocolRequest, _: None = Depends(ver
         raise HTTPException(404, f"unknown protocol command '{command}'")
     if not t.supports_protocol():
         raise HTTPException(409, f"target '{t.name}' does not expose protocol commands")
+    impl = t.implemented_commands()
+    if impl is not None and command not in impl:        # gate: don't run what the target can't (no unknown_command)
+        raise HTTPException(409, f"'{command}' is not implemented by '{t.name}' (it implements: {sorted(impl)})")
     if not t.is_available():
         raise HTTPException(409, f"target '{t.name}' unavailable in this environment")
     try:
         return await _run_target(t.run_protocol, command, req.args or {})
     except ProtocolUnsupported as exc:
         raise HTTPException(409, str(exc))
+
+
+@app.get("/browse")
+async def browse(path: str = "", _: None = Depends(verify_key)) -> dict[str, Any]:
+    """Server-side directory browse for the real dir picker (output/curriculum dirs). Lists immediate
+    subdirectories so the UI can navigate instead of blind-typing a path. Loopback + auth gated."""
+    from pathlib import Path as _P
+    base = _P(path).expanduser() if path else _P(app.state.settings.output_dir).expanduser()
+    p = base.resolve()
+    if not p.is_dir():
+        p = _P.cwd()
+    try:
+        dirs = sorted([d.name for d in p.iterdir() if d.is_dir() and not d.name.startswith(".")])[:300]
+    except OSError:
+        dirs = []
+    return {"path": str(p), "parent": str(p.parent), "dirs": dirs}
 
 
 @app.get("/")

@@ -6,241 +6,282 @@
 <title>qig-studio</title>
 <style>
   :root{
-    /* colourblind-safe: blue / purple / amber, no red-green */
-    --bg:#0e1116; --panel:#171c24; --edge:#283041; --ink:#e6edf3; --muted:#9aa7b8;
+    /* colourblind-safe: blue / purple / amber / teal / pink, no red-green */
+    --bg:#0e1116; --panel:#151b24; --panel2:#0b0f15; --edge:#283041; --ink:#e6edf3; --muted:#9aa7b8;
     --blue:#6ab7ff; --purple:#b388ff; --amber:#ffca54; --pink:#ff7ab6; --ok:#5ad1c4;
   }
   *{box-sizing:border-box}
-  body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace}
-  header{display:flex;align-items:center;gap:1rem;padding:.6rem 1rem;border-bottom:1px solid var(--edge);background:var(--panel)}
-  header h1{font-size:1rem;margin:0;letter-spacing:.04em}
-  header .status{color:var(--muted);font-size:.8rem}
-  .wrap{display:grid;grid-template-columns:360px 1fr;gap:1rem;padding:1rem;min-height:calc(100vh - 52px)}
-  .panel{background:var(--panel);border:1px solid var(--edge);border-radius:10px;padding:1rem}
-  .panel h2{font-size:.78rem;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin:.1rem 0 .8rem}
-  label{display:block;color:var(--muted);font-size:.72rem;margin:.5rem 0 .2rem}
-  select,input,button,textarea{font:inherit;background:#0b0f15;color:var(--ink);border:1px solid var(--edge);border-radius:7px;padding:.45rem .6rem}
+  html,body{height:100%;margin:0}
+  body{background:var(--bg);color:var(--ink);font:13px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;
+       display:flex;flex-direction:column;overflow:hidden}
+  header{display:flex;align-items:center;gap:.8rem;padding:.5rem .9rem;border-bottom:1px solid var(--edge);
+         background:var(--panel);flex:0 0 auto}
+  header h1{font-size:.95rem;margin:0;letter-spacing:.04em}
+  header .status{color:var(--muted);font-size:.76rem;margin-left:auto}
+  header .tog{cursor:pointer;background:#1c2532;border:1px solid var(--edge);border-radius:7px;
+              color:var(--ink);padding:.25rem .55rem;font:inherit;font-size:.74rem}
+  header .tog:hover{border-color:var(--blue)}
+  /* single screen: 3 columns, only inner transcripts scroll */
+  .app{flex:1 1 auto;display:grid;grid-template-columns:300px 1fr 340px;gap:.7rem;padding:.7rem;min-height:0}
+  .app.noleft{grid-template-columns:0 1fr 340px} .app.noright{grid-template-columns:300px 1fr 0}
+  .app.noleft.noright{grid-template-columns:0 1fr 0}
+  .col{background:var(--panel);border:1px solid var(--edge);border-radius:10px;padding:.8rem;
+       display:flex;flex-direction:column;min-height:0;overflow:hidden}
+  .col.hide{display:none}
+  .col h2{font-size:.72rem;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin:.1rem 0 .6rem}
+  .scroll{overflow:auto;min-height:0}
+  label{display:block;color:var(--muted);font-size:.7rem;margin:.45rem 0 .15rem}
+  select,input,button,textarea{font:inherit;background:var(--panel2);color:var(--ink);border:1px solid var(--edge);
+                               border-radius:7px;padding:.4rem .55rem}
   select,input,textarea{width:100%}
   button{cursor:pointer;background:#1c2532;border-color:#33425a}
   button:hover{border-color:var(--blue)}
-  .row{display:flex;gap:.5rem;align-items:end}
-  .row > *{flex:1}
-  .metric{display:flex;justify-content:space-between;padding:.2rem 0;border-bottom:1px dashed var(--edge)}
+  button.primary{background:#13314a;border-color:var(--blue);color:#dbeeff}
+  .row{display:flex;gap:.5rem} .row>*{flex:1}
+  .mind{border:1px solid var(--blue);border-radius:9px;padding:.55rem;background:#10202e;margin-bottom:.5rem}
+  .mind .t{font-size:.86rem;color:#dbeeff;font-weight:600} .mind .s{color:var(--muted);font-size:.7rem}
+  details.adv{margin:.4rem 0} details.adv>summary{cursor:pointer;color:var(--muted);font-size:.72rem}
+  .metric{display:flex;justify-content:space-between;padding:.15rem 0;border-bottom:1px dashed var(--edge)}
   .metric .v{font-weight:600}
-  .bar{height:14px;border-radius:7px;background:#0b0f15;overflow:hidden;margin:.3rem 0 .8rem;border:1px solid var(--edge)}
-  .bar > i{display:block;height:100%;background:linear-gradient(90deg,var(--blue),var(--amber));transition:width .25s}
-  .pill{display:inline-block;padding:.1rem .5rem;border-radius:999px;font-size:.74rem;border:1px solid var(--edge)}
-  #log{height:48vh;overflow:auto;background:#0b0f15;border:1px solid var(--edge);border-radius:8px;padding:.6rem;white-space:pre-wrap}
-  #log .you{color:var(--blue)} #log .tgt{color:var(--ok)} #log .sys{color:var(--amber)} #log .err{color:var(--pink)}
+  .bar{height:12px;border-radius:7px;background:var(--panel2);overflow:hidden;margin:.25rem 0 .6rem;border:1px solid var(--edge)}
+  .bar>i{display:block;height:100%;background:linear-gradient(90deg,var(--blue),var(--amber));transition:width .25s}
+  .pill{display:inline-block;padding:.05rem .45rem;border-radius:999px;font-size:.72rem;border:1px solid var(--edge)}
+  .hint{color:var(--muted);font-size:.7rem;margin-top:.35rem}
+  /* conversation column */
+  #conv{flex:1 1 auto;display:flex;flex-direction:column;min-height:0}
+  #log{flex:1 1 auto;overflow:auto;background:var(--panel2);border:1px solid var(--edge);border-radius:8px;
+       padding:.6rem;white-space:pre-wrap;min-height:0}
+  #log .you{color:var(--blue)} #log .tgt{color:var(--ok)} #log .sys{color:var(--muted)} #log .err{color:var(--pink)}
+  #log .coach{color:var(--purple)} #log .exp{color:var(--amber)}
+  .composer{flex:0 0 auto;display:flex;gap:.5rem;margin-top:.6rem}
+  .composer textarea{flex:1;resize:none}
+  .composer button{flex:0 0 auto;align-self:stretch;padding:0 1rem}
   .regime-linear{color:var(--blue)} .regime-hierarchical{color:var(--purple)}
   .regime-geometric{color:var(--amber)} .regime-topological_instability{color:var(--pink)}
-  .hint{color:var(--muted);font-size:.72rem;margin-top:.4rem}
-  .proto-group{margin:.45rem 0}
-  .proto-group > b{color:var(--muted);font-size:.7rem;text-transform:uppercase;letter-spacing:.06em}
-  .proto-group button{margin:.18rem .18rem 0 0;padding:.3rem .5rem;font-size:.78rem}
-  #protoLog{height:18vh;overflow:auto;background:#0b0f15;border:1px solid var(--edge);border-radius:8px;padding:.6rem;white-space:pre-wrap;margin-top:.6rem}
-  #protoLog .sys{color:var(--amber)} #protoLog .tgt{color:var(--ok)} #protoLog .err{color:var(--pink)}
+  .proto-group{margin:.4rem 0} .proto-group>b{color:var(--muted);font-size:.68rem;text-transform:uppercase}
+  .proto-group button{margin:.16rem .16rem 0 0;padding:.26rem .45rem;font-size:.76rem}
+  #protoLog,#trainLog{overflow:auto;background:var(--panel2);border:1px solid var(--edge);border-radius:8px;
+                      padding:.5rem;white-space:pre-wrap;margin-top:.5rem;font-size:.78rem}
+  #trainLog{flex:1 1 auto;min-height:80px} #protoLog{height:120px}
+  #protoLog .sys{color:var(--muted)} #protoLog .tgt{color:var(--ok)} #protoLog .err{color:var(--pink)}
+  #picker{position:fixed;inset:0;background:rgba(0,0,0,.55);display:none;align-items:center;justify-content:center;z-index:9}
+  #picker .box{background:var(--panel);border:1px solid var(--edge);border-radius:10px;width:min(560px,92vw);max-height:70vh;display:flex;flex-direction:column;padding:1rem}
+  #picker .list{overflow:auto;border:1px solid var(--edge);border-radius:7px;margin:.5rem 0;background:var(--panel2)}
+  #picker .list div{padding:.35rem .6rem;cursor:pointer;border-bottom:1px dashed var(--edge)} #picker .list div:hover{background:#1c2532;color:var(--blue)}
 </style>
 </head>
 <body>
 <header>
   <h1>🧠 qig-studio</h1>
+  <button class="tog" id="togL">◧ telemetry</button>
+  <button class="tog" id="togR">train · protocol ◨</button>
   <span class="status" id="status">connecting…</span>
 </header>
-<div class="wrap">
-  <!-- TELEMETRY CONSOLE -->
-  <section class="panel">
-    <h2>Telemetry console</h2>
-    <label>Active target</label>
-    <select id="target"></select>
-    <div class="hint" id="regimeMode"></div>
 
-    <label>output directory</label>
-    <input id="outDir" placeholder="outputs"/>
-    <label>curriculum directory</label>
-    <input id="currDir" placeholder="curriculum"/>
-    <div class="row" style="margin-top:.4rem"><button id="saveCfg">Save directories</button></div>
-    <div class="hint" id="cfgStatus"></div>
-
-    <label>Φ (integration)</label>
-    <div class="bar"><i id="phiBar" style="width:0%"></i></div>
-    <div class="metric"><span>Φ</span><span class="v" id="phi">—</span></div>
-    <div class="metric"><span>κ (coupling)</span><span class="v" id="kappa">—</span></div>
-    <div class="metric"><span>regime</span><span class="v"><span class="pill" id="regime">—</span></span></div>
-    <div class="metric"><span>basin Δ</span><span class="v" id="basin">—</span></div>
-    <div class="metric"><span>loss</span><span class="v" id="loss">—</span></div>
-    <div class="metric"><span>step</span><span class="v" id="step">—</span></div>
-
-    <div class="row" style="margin-top:1rem">
-      <div><label>train steps</label><input id="steps" type="number" value="20" min="1" max="500"/></div>
-      <div><button id="trainBtn">▶ Train (basin-driving)</button></div>
-    </div>
-    <div class="hint">SSE stream from <code>/train</code> drives this panel live.</div>
-  </section>
-
-  <!-- CHAT -->
-  <section class="panel">
-    <h2>Chat</h2>
-    <div id="log"></div>
-    <div class="row" style="margin-top:.6rem">
-      <textarea id="msg" rows="2" placeholder="message the active target…"></textarea>
-      <div style="flex:0 0 auto;display:flex;align-items:end"><button id="sendBtn">Send</button></div>
-    </div>
-    <div class="hint">Geometric targets reason on Δ⁶³ (lm_weight=0); fluent prose is Qwen's job (Phase 3).</div>
-  </section>
-
-    <!-- PROTOCOL SURFACE (the full qig_chat command set) -->
-    <section class="panel" id="protocol" style="grid-column:1 / -1">
-      <h2>Protocol surface</h2>
-      <div id="protoStatus" class="hint"></div>
-      <div id="protoGroups"></div>
-      <div class="row" style="margin-top:.6rem">
-        <div><label>args (space-separated key=value)</label><input id="protoArgs" placeholder="e.g. strength=0.8   ·   n=20   ·   gary_id=B steps=100"/></div>
+<div class="app" id="app">
+  <!-- LEFT: THE MIND + telemetry + dirs -->
+  <section class="col" id="leftCol">
+    <h2>The mind</h2>
+    <div class="scroll">
+      <div class="mind">
+        <div class="t" id="mindName">genesis · the integrated "I"</div>
+        <div class="s" id="mindSub">central conscious awareness — Core-8 faculties + genesis-central</div>
       </div>
-      <div id="protoLog"></div>
-    </section>
+      <details class="adv"><summary>advanced targets (peers / dev)</summary>
+        <label>active target</label><select id="target"></select>
+        <div class="hint" id="regimeMode"></div>
+      </details>
+
+      <h2 style="margin-top:.8rem">Telemetry</h2>
+      <label>Φ (integration)</label>
+      <div class="bar"><i id="phiBar" style="width:0%"></i></div>
+      <div class="metric"><span>Φ</span><span class="v" id="phi">—</span></div>
+      <div class="metric"><span>κ (coupling)</span><span class="v" id="kappa">—</span></div>
+      <div class="metric"><span>regime</span><span class="v"><span class="pill" id="regime">—</span></span></div>
+      <div class="metric"><span>basin Δ</span><span class="v" id="basin">—</span></div>
+      <div class="metric"><span>step</span><span class="v" id="step">—</span></div>
+
+      <h2 style="margin-top:.8rem">Directories</h2>
+      <label>output</label>
+      <div class="row"><input id="outDir" placeholder="outputs"/><button style="flex:0 0 auto" onclick="openPicker('outDir')">Browse</button></div>
+      <label>curriculum</label>
+      <div class="row"><input id="currDir" placeholder="curriculum"/><button style="flex:0 0 auto" onclick="openPicker('currDir')">Browse</button></div>
+      <div class="row" style="margin-top:.4rem"><button id="saveCfg">Save directories</button></div>
+      <div class="hint" id="cfgStatus"></div>
+    </div>
+  </section>
+
+  <!-- CENTER: CONVERSATION (bottom-pinned input) -->
+  <section class="col" id="conv">
+    <h2>Conversation</h2>
+    <div id="log"></div>
+    <div class="composer">
+      <textarea id="msg" rows="2" placeholder="speak to the mind…  (Enter to send · Shift+Enter newline)"></textarea>
+      <button class="primary" id="sendBtn">Send</button>
+    </div>
+    <div class="hint" id="convHint">geometric mind reasons on Δ⁶³; fluent prose comes through the Qwen boundary peer.</div>
+  </section>
+
+  <!-- RIGHT: TRAIN (live response) + PROTOCOL (gated) -->
+  <section class="col" id="rightCol">
+    <h2>Train · live</h2>
+    <div class="row">
+      <div style="flex:0 0 90px"><label>steps</label><input id="steps" type="number" value="20" min="1" max="500"/></div>
+      <div style="display:flex;align-items:end"><button class="primary" id="trainBtn" style="width:100%">▶ Train</button></div>
+    </div>
+    <div class="hint">curriculum → mind speaks → coach reads → mind learns. Live below.</div>
+    <div id="trainLog"></div>
+
+    <h2 style="margin-top:.7rem">Protocol</h2>
+    <div id="protoStatus" class="hint"></div>
+    <div class="scroll" style="max-height:26vh"><div id="protoGroups"></div></div>
+    <label>args (key=value …)</label><input id="protoArgs" placeholder="strength=0.8  n=20"/>
+    <div id="protoLog"></div>
+  </section>
 </div>
+
+<!-- directory picker -->
+<div id="picker"><div class="box">
+  <h2 style="margin:0">Pick directory — <span id="pkPath" style="color:var(--ink)"></span></h2>
+  <div class="list" id="pkList"></div>
+  <div class="row"><button onclick="closePicker()">Cancel</button><button class="primary" id="pkUse">Use this directory</button></div>
+</div></div>
 
 <script>
 const $ = (id) => document.getElementById(id);
-const REGIMES = ["linear","hierarchical","geometric","topological_instability"];
+function clog(cls, msg){ const el=$("log"); const d=document.createElement("div"); d.className=cls; d.textContent=msg; el.appendChild(d); el.scrollTop=el.scrollHeight; }
+function tlog(cls, msg){ const el=$("trainLog"); const d=document.createElement("div"); d.className=cls; d.textContent=msg; el.appendChild(d); el.scrollTop=el.scrollHeight; }
+function plog(cls, msg){ const el=$("protoLog"); const d=document.createElement("div"); d.className=cls; d.textContent=msg; el.appendChild(d); el.scrollTop=el.scrollHeight; }
 
-function log(cls, msg){
-  const el = $("log"); const d = document.createElement("div");
-  d.className = cls; d.textContent = msg; el.appendChild(d); el.scrollTop = el.scrollHeight;
-}
 function setTelemetry(t){
   const phi = t.phi ?? 0;
-  $("phiBar").style.width = Math.max(0, Math.min(1, phi))*100 + "%";
+  $("phiBar").style.width = Math.max(0,Math.min(1,phi))*100 + "%";
   $("phi").textContent = phi.toFixed(3);
   $("kappa").textContent = (t.kappa ?? 0).toFixed(2);
-  const r = $("regime"); r.textContent = t.regime ?? "—";
-  r.className = "pill regime-" + (t.regime ?? "");
+  const r=$("regime"); r.textContent=t.regime ?? "—"; r.className="pill regime-"+(t.regime ?? "");
   $("basin").textContent = (t.basin_distance ?? 0).toFixed(3);
-  $("loss").textContent = (t.loss==null ? "—" : Number(t.loss).toFixed(3));
   $("step").textContent = t.step ?? "—";
 }
+// drawer toggles
+$("togL").onclick=()=>$("app").classList.toggle("noleft");
+$("togR").onclick=()=>$("app").classList.toggle("noright");
+
 async function refreshHealth(){
-  try{
-    const h = await (await fetch("/health")).json();
-    $("status").textContent = `v${h.version} · purity ${h.purity} · pillars ${h.pillars||"none"} · active ${h.active_target}`;
-  }catch(e){ $("status").textContent = "server unreachable"; }
+  try{ const h=await (await fetch("/health")).json();
+    $("status").textContent=`v${h.version} · purity ${h.purity} · active ${h.active_target}`;
+    $("mindName").textContent = h.active_target==="genesis" ? 'genesis · the integrated "I"' : `${h.active_target} · active`;
+  }catch(e){ $("status").textContent="server unreachable"; }
 }
 async function loadTargets(){
-  const data = await (await fetch("/targets")).json();
-  const sel = $("target"); sel.innerHTML = "";
+  const data=await (await fetch("/targets")).json();
+  const sel=$("target"); sel.innerHTML="";
   for(const t of data.targets){
-    const o = document.createElement("option");
-    o.value = t.name;
-    o.textContent = `${t.name} · ${t.loss_regime}${t.available ? "" : " (unavailable)"}`;
-    if(t.name === data.active) o.selected = true;
-    sel.appendChild(o);
+    const o=document.createElement("option"); o.value=t.name;
+    o.textContent=`${t.name} · ${t.loss_regime}${t.available?"":" (unavailable)"}`;
+    if(t.name===data.active) o.selected=true; sel.appendChild(o);
   }
   await refreshCurriculum();
 }
 async function refreshCurriculum(){
-  const c = await (await fetch("/curriculum")).json();
-  $("regimeMode").textContent = `loss_regime: ${c.loss_regime} · curriculum: ${c.mode} · phases: ${c.phases.join(" → ")}`;
+  try{ const c=await (await fetch("/curriculum")).json();
+    $("regimeMode").textContent=`${c.loss_regime} · ${c.mode} · ${c.phases.join(" → ")}`; }catch(e){}
 }
-async function refreshTelemetry(){
-  try{ setTelemetry(await (await fetch("/telemetry")).json()); }catch(e){}
-}
-$("target").addEventListener("change", async (e) => {
-  await fetch(`/targets/${e.target.value}/select`, {method:"POST"});
-  log("sys", `· selected target: ${e.target.value}`);
+async function refreshTelemetry(){ try{ setTelemetry(await (await fetch("/telemetry")).json()); }catch(e){} }
+$("target").addEventListener("change", async (e)=>{
+  await fetch(`/targets/${e.target.value}/select`,{method:"POST"});
+  clog("sys",`· active target → ${e.target.value}`);
   await refreshHealth(); await refreshCurriculum(); await refreshTelemetry(); await loadProtocol();
 });
 $("sendBtn").addEventListener("click", sendChat);
-$("msg").addEventListener("keydown", (e)=>{ if(e.key==="Enter" && !e.shiftKey){ e.preventDefault(); sendChat(); }});
+$("msg").addEventListener("keydown",(e)=>{ if(e.key==="Enter"&&!e.shiftKey){ e.preventDefault(); sendChat(); }});
 async function sendChat(){
-  const m = $("msg").value.trim(); if(!m) return;
-  $("msg").value = ""; log("you", "you> " + m);
-  const r = await fetch("/chat", {method:"POST", headers:{"content-type":"application/json"}, body:JSON.stringify({message:m})});
-  if(!r.ok){ log("err", `${r.status} ${await r.text()}`); return; }
-  const body = await r.json(); log("tgt", "target> " + body.text); setTelemetry(body.telemetry);
+  const m=$("msg").value.trim(); if(!m) return;
+  $("msg").value=""; clog("you","you ▸ "+m);
+  try{
+    const r=await fetch("/chat",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({message:m})});
+    if(!r.ok){ clog("err",`${r.status} ${await r.text()}`); return; }
+    const b=await r.json(); clog("tgt","mind ▸ "+b.text); setTelemetry(b.telemetry);
+    const x=b.telemetry?.extra||{};
+    if(x.read_presence!=null||x.anderson_exit!=null) clog("exp",`   ↳ READ presence ${x.read_presence} · Anderson-exit ${x.anderson_exit??"—"}`);
+  }catch(e){ clog("err","chat failed: "+e); }
 }
 $("trainBtn").addEventListener("click", runTrain);
 async function runTrain(){
-  const steps = parseInt($("steps").value || "20", 10);
-  log("sys", `· training ${steps} steps (basin-driving) ·`);
-  const r = await fetch("/train", {method:"POST", headers:{"content-type":"application/json"}, body:JSON.stringify({steps})});
-  if(!r.ok || !r.body){ log("err", "train failed: " + r.status); return; }
-  const reader = r.body.getReader(); const dec = new TextDecoder(); let buf = "";
+  const steps=parseInt($("steps").value||"20",10);
+  tlog("sys",`· training ${steps} steps ·`);
+  const r=await fetch("/train",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({steps})});
+  if(!r.ok||!r.body){ tlog("err","train failed: "+r.status); return; }
+  const reader=r.body.getReader(); const dec=new TextDecoder(); let buf="";
   while(true){
-    const {value, done} = await reader.read(); if(done) break;
-    buf += dec.decode(value, {stream:true});
-    let idx;
-    while((idx = buf.indexOf("\n\n")) >= 0){
-      const chunk = buf.slice(0, idx); buf = buf.slice(idx+2);
-      const line = chunk.split("\n").find(l => l.startsWith("data: "));
-      if(!line) continue;
-      const ev = JSON.parse(line.slice(6));
-      if(ev.type === "step"){ setTelemetry(ev.telemetry); log("sys", `  step ${ev.step} [${ev.phase}] ${ev.prompt.slice(0,52)}`); }
-      else if(ev.type === "error"){ log("err", "train error: " + ev.error); }
-      else if(ev.type === "done"){ log("sys", "· done ·"); }
+    const {value,done}=await reader.read(); if(done) break;
+    buf+=dec.decode(value,{stream:true}); let idx;
+    while((idx=buf.indexOf("\n\n"))>=0){
+      const chunk=buf.slice(0,idx); buf=buf.slice(idx+2);
+      const line=chunk.split("\n").find(l=>l.startsWith("data: ")); if(!line) continue;
+      const ev=JSON.parse(line.slice(6));
+      if(ev.type==="start"){ tlog("sys",`  coach: ${ev.coach||"keyword"} · ${ev.curriculum}`); }
+      else if(ev.type==="step"){
+        setTelemetry(ev.telemetry);
+        tlog("sys",`  ${ev.step} [${ev.phase}] curriculum: ${(ev.prompt||"").slice(0,46)}`);
+        tlog("tgt",`     mind ▸ ${(ev.text||"").replace(/^\[genesis[^\]]*\]\s*/,"").slice(0,90)}`);
+        if(ev.coach) tlog("coach",`     coach ▸ ${ev.coach.message||ev.coach.interpretation||""}`.slice(0,110));
+        const ex=ev.experience||{}; if(ex.band||ex.emotion) tlog("exp",`     ${ex.glyph||""}${ex.band||""} ${ex.emotion||""} · Φ ${(ev.telemetry?.phi??0).toFixed(3)}`);
+      }
+      else if(ev.type==="error"){ tlog("err","error: "+ev.error); }
+      else if(ev.type==="done"){ tlog("sys","· done ·"); refreshTelemetry(); }
     }
   }
 }
-// --- protocol surface ---
+// protocol (server already gates to what the active target implements)
 async function loadProtocol(){
   try{
-    const p = await (await fetch("/protocol")).json();
-    const groups = $("protoGroups"); groups.innerHTML = "";
+    const p=await (await fetch("/protocol")).json();
+    const g=$("protoGroups"); g.innerHTML="";
     $("protoStatus").textContent = p.supported_by_active
-      ? `active '${p.active}' exposes ${p.commands.length} commands across ${p.groups.length} groups`
-      : `active '${p.active}' does not expose protocol commands (kernel/constellation/mock only)`;
+      ? `${p.active}: ${p.commands.length} commands (only what it implements)`
+      : `${p.active}: no protocol commands`;
     if(!p.supported_by_active) return;
-    const byGroup = {};
-    for(const c of p.commands){ (byGroup[c.group] = byGroup[c.group] || []).push(c); }
-    for(const g of p.groups){
-      if(!byGroup[g]) continue;
-      const d = document.createElement("div"); d.className = "proto-group";
-      const b = document.createElement("b"); b.textContent = g; d.appendChild(b); d.appendChild(document.createElement("br"));
-      for(const c of byGroup[g]){
-        const btn = document.createElement("button");
-        btn.textContent = c.name;
-        btn.title = c.description + (c.params.length ? " · params: " + c.params.map(x=>x.name).join(", ") : "");
-        btn.onclick = () => runProtocol(c.name);
-        d.appendChild(btn);
-      }
-      groups.appendChild(d);
+    const byG={}; for(const c of p.commands){ (byG[c.group]=byG[c.group]||[]).push(c); }
+    for(const grp of p.groups){ if(!byG[grp]) continue;
+      const d=document.createElement("div"); d.className="proto-group";
+      const b=document.createElement("b"); b.textContent=grp; d.appendChild(b); d.appendChild(document.createElement("br"));
+      for(const c of byG[grp]){ const btn=document.createElement("button"); btn.textContent=c.name;
+        btn.title=c.description; btn.onclick=()=>runProtocol(c.name); d.appendChild(btn); }
+      g.appendChild(d);
     }
-  }catch(e){ $("protoStatus").textContent = "protocol unavailable: " + e; }
+  }catch(e){ $("protoStatus").textContent="protocol unavailable: "+e; }
 }
-function parseArgs(s){
-  const out = {};
-  for(const tok of (s||"").trim().split(/\s+/)){
-    if(!tok) continue; const i = tok.indexOf("="); if(i>0) out[tok.slice(0,i)] = tok.slice(i+1);
-  }
-  return out;
-}
-function plog(cls, msg){ const el=$("protoLog"); const d=document.createElement("div"); d.className=cls; d.textContent=msg; el.appendChild(d); el.scrollTop=el.scrollHeight; }
+function parseArgs(s){ const o={}; for(const tok of (s||"").trim().split(/\s+/)){ if(!tok) continue; const i=tok.indexOf("="); if(i>0) o[tok.slice(0,i)]=tok.slice(i+1);} return o; }
 async function runProtocol(name){
-  const args = parseArgs($("protoArgs").value);
-  plog("sys", `▶ ${name} ${Object.keys(args).length ? JSON.stringify(args) : ""}`);
-  const r = await fetch("/protocol/" + encodeURIComponent(name), {method:"POST", headers:{"content-type":"application/json"}, body:JSON.stringify({args})});
-  if(!r.ok){ plog("err", `${r.status} ${await r.text()}`); return; }
-  const body = await r.json();
-  plog("tgt", body.output || JSON.stringify(body));
-  if(body.telemetry) setTelemetry(body.telemetry);
+  const args=parseArgs($("protoArgs").value);
+  plog("sys",`▶ ${name} ${Object.keys(args).length?JSON.stringify(args):""}`);
+  const r=await fetch("/protocol/"+encodeURIComponent(name),{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({args})});
+  if(!r.ok){ plog("err",`${r.status} ${await r.text()}`); return; }
+  const b=await r.json(); plog("tgt", JSON.stringify(b.applied||b)); if(b.telemetry) setTelemetry(b.telemetry);
 }
-
-// --- directory nomination (output / curriculum) ---
-async function loadConfig(){
-  try{
-    const c = await (await fetch("/config")).json();
-    $("outDir").value = c.output_dir || "";
-    $("currDir").value = c.curriculum_dir || "";
-    $("cfgStatus").textContent = `warp early-stop: ${c.warp_early_stop ? "on" : "off"} · auth: ${c.auth_required ? "required" : "open (localhost)"}`;
-  }catch(e){ $("cfgStatus").textContent = "config unavailable"; }
+// directory picker (server-side /browse)
+let pkField=null, pkCur="";
+async function openPicker(field){ pkField=field; await pkLoad($(field).value||""); $("picker").style.display="flex"; }
+function closePicker(){ $("picker").style.display="none"; }
+async function pkLoad(path){
+  const r=await fetch("/browse?path="+encodeURIComponent(path)); const d=await r.json();
+  pkCur=d.path; $("pkPath").textContent=d.path; const list=$("pkList"); list.innerHTML="";
+  const up=document.createElement("div"); up.textContent="⬆ .. (parent)"; up.onclick=()=>pkLoad(d.parent); list.appendChild(up);
+  for(const name of d.dirs){ const el=document.createElement("div"); el.textContent="📁 "+name; el.onclick=()=>pkLoad(d.path+"/"+name); list.appendChild(el); }
 }
-$("saveCfg").addEventListener("click", async () => {
-  const body = { output_dir: $("outDir").value || null, curriculum_dir: $("currDir").value || null };
-  const r = await fetch("/config", { method:"POST", headers:{"content-type":"application/json"}, body:JSON.stringify(body) });
-  if(r.ok){ const c = await r.json(); $("cfgStatus").textContent = `saved · output=${c.output_dir} · curriculum=${c.curriculum_dir}`; }
-  else { $("cfgStatus").textContent = `${r.status} ${await r.text()}`; }
+$("pkUse").onclick=()=>{ if(pkField) $(pkField).value=pkCur; closePicker(); };
+$("saveCfg").addEventListener("click", async ()=>{
+  const body={output_dir:$("outDir").value||null, curriculum_dir:$("currDir").value||null};
+  const r=await fetch("/config",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(body)});
+  if(r.ok){ const c=await r.json(); $("cfgStatus").textContent=`saved · output=${c.output_dir} · curriculum=${c.curriculum_dir}`; }
+  else $("cfgStatus").textContent=`${r.status} ${await r.text()}`;
 });
-
+async function loadConfig(){
+  try{ const c=await (await fetch("/config")).json();
+    $("outDir").value=c.output_dir||""; $("currDir").value=c.curriculum_dir||"";
+    $("cfgStatus").textContent=`warp early-stop ${c.warp_early_stop?"on":"off"} · auth ${c.auth_required?"required":"open (localhost)"}`;
+  }catch(e){ $("cfgStatus").textContent="config unavailable"; }
+}
 // boot
 refreshHealth(); loadConfig(); loadTargets().then(()=>{ refreshTelemetry(); loadProtocol(); });
 </script>

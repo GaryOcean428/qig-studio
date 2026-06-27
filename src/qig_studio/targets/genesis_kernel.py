@@ -693,6 +693,13 @@ class GenesisKernelTarget(TrainingTarget):
     def supports_protocol(self) -> bool:
         return True
 
+    def implemented_commands(self) -> set[str] | None:
+        """ONLY the kernel's OWN autonomic operations (the same ops _homeostasis runs intrinsically).
+        The genesis kernel is not the qig_chat constellation — it does NOT implement twin/lightning/
+        reasoning/meta/pillar-status etc., so the UI must not advertise them (no 'unknown_command')."""
+        return {"sleep", "deep-sleep", "dream", "mushroom-micro", "mushroom-moderate",
+                "mushroom-heroic", "escape"}
+
     def run_protocol(self, command: str, args: dict) -> dict:
         """MANUAL invocation of the kernel's OWN regulation (e.g. a ``/sleep`` chat command). Routes to
         the SAME real operations the kernel runs autonomically in ``_homeostasis`` — there are NO stubs:
