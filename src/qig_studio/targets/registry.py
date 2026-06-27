@@ -45,7 +45,7 @@ def _load_coordizer(path: str | None):
     if not path:
         return None
     try:
-        from qig_coordizer import FisherCoordizer
+        from qig_coordizer import FisherCoordizer  # type: ignore[import-untyped]
 
         return FisherCoordizer.load(path)
     except Exception as exc:  # noqa: BLE001 — app shell must boot regardless
