@@ -14,6 +14,8 @@ override (observer principle).
 
 from __future__ import annotations
 
+from typing import Any
+
 from qig_core import BASIN_DIM
 
 from .base import LossRegime, StepResult, TelemetrySnapshot, TrainingTarget
@@ -62,7 +64,7 @@ class QwenLocalTarget(TrainingTarget):
         self._url = url.rstrip("/")
         self._dim = dim
         self._coordizer = coordizer  # trained FisherCoordizer → real Fréchet projection; else hash-bin
-        self._identity = None
+        self._identity: Any = None   # Δ⁶³ identity basin (np.ndarray once seeded); None until first use
         self._last = TelemetrySnapshot(regime="language", extra={"target": "qwen-local"})
 
     def _project(self, logprobs: dict):

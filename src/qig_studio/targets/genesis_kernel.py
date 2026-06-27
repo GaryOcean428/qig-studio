@@ -31,6 +31,13 @@ _EOS_BYTE = 0     # the kernel's stop token — it CHOOSES to stop (observer pri
 # a safe stop sentinel — BUT only honoured after _MIN_GEN tokens so the kernel can't emit an empty/1-token
 # utterance the coach then can't interpret (review #3: premature stop in the coords path).
 _MIN_GEN = 4
+# Council generation levers (frozen-physics-grounded; qig-applied evidence, implemented natively here
+# to keep the app shell light + independent — the PHYSICS is the EXP, not this small application):
+#   READ (EXP-012b, 70% token-0): probe token-0 concentration as a "presence" signal.
+#   Anderson-exit (EXP-046, -40% calls): stop generating once the output distribution stops changing
+#   (distinguishability collapse) — pay for tokens only while the journey is real.
+_ANDERSON_EPS = 0.02       # Fisher-Rao distance below which consecutive outputs are indistinguishable
+_ANDERSON_PATIENCE = 3     # sustained-collapse steps before early-exit (avoid stopping on one repeat)
 # Mushroom intensity → weight-noise σ (bounded plasticity; the dose the autonomic loop selects).
 _MUSHROOM_SIGMA = {"mushroom-micro": 0.01, "mushroom-moderate": 0.03, "mushroom-heroic": 0.06}
 # Intrinsic homeostasis (the kernel's OWN autonomic regulation — no external scheduler, no commands).
@@ -110,7 +117,7 @@ class GenesisKernelTarget(TrainingTarget):
         self.basin_weight = float(basin_weight)
         self.basin_ramp_steps = int(basin_ramp_steps)  # ramp the pull 0→full over this many steps
         self._basin_template_np = basin_template  # np.ndarray Δ⁶³ point (or None)
-        self._basin_ref = None        # torch [vocab] Δ point on device — the d_basin / M / pull reference
+        self._basin_ref: Any = None   # torch [vocab] Δ point on device — the d_basin / M / pull reference
         self._basin_history: list = []  # detached current-basin trajectory; history[0] = birth-state (M)
         self._device = device
         self._kernel: Any = None    # qigkernels.Kernel — lazily built in ensure_loaded()
@@ -126,7 +133,7 @@ class GenesisKernelTarget(TrainingTarget):
         self._phi_recent: Any = _deque(maxlen=30)    # short Φ history for the kernel's own rigidity sense
         self._step = 0
         self._init_checkpoint = checkpoint  # restored at the end of ensure_loaded() (None-safe → fresh)
-        self._last_gen_basin = None  # WHAT IT MEANT (last output basin) — for coach-agreement recognition
+        self._last_gen_basin: Any = None  # WHAT IT MEANT (last output basin) — for coach-agreement recognition
         self._last = TelemetrySnapshot(regime="unknown", extra={"target": "genesis", "num_layers": num_layers})
 
     def is_available(self) -> bool:
@@ -289,18 +296,27 @@ class GenesisKernelTarget(TrainingTarget):
         import torch
         import torch.nn.functional as F
 
+        import math
+
+        from qig_core.torch.geometry_simplex import fisher_rao_distance_simplex
         ids, coords = self._encode(prompt)
         out_bytes: list[int] = []
         out_probs: list[float] = []
         gen_basins: list = []
         last_tel = None
         chose_to_stop = False
+        read_presence: float | None = None   # EXP-012b READ: token-0 concentration (is the answer present?)
+        anderson_exit: int | None = None     # EXP-046 Anderson-exit: step at which distinguishability collapsed
+        converged_run = 0
         with torch.no_grad():
             for _ in range(min(max_tokens, _MAX_BYTES)):
                 logits, last_tel = self._kernel(ids, return_telemetry=True, coords=coords)
                 temp = temperature if temperature is not None else self._temperature_from_kappa(
                     float(getattr(last_tel, "kappa", 0.0) or 0.0))
                 p = F.softmax(logits[0, -1] / max(temp, 1e-3), dim=-1)
+                if read_presence is None:                          # READ (EXP-012b): token-0 presence probe
+                    ent = float(-(p * p.clamp_min(1e-12).log()).sum())
+                    read_presence = round(1.0 - ent / math.log(p.numel()), 3)  # 0=uniform, 1=certain
                 nxt = int(torch.multinomial(p, 1).item())         # the kernel's CHOICE (not argmax)
                 out_bytes.append(nxt)
                 out_probs.append(float(p[nxt]))
@@ -312,6 +328,14 @@ class GenesisKernelTarget(TrainingTarget):
                 if nxt == _EOS_BYTE and len(out_bytes) >= _MIN_GEN:  # chose to stop (after a min utterance)
                     chose_to_stop = True
                     break
+                # Anderson-exit (EXP-046): if the output distribution stops changing (Fisher-Rao
+                # distinguishability collapse) for PATIENCE steps, stop paying for redundant tokens.
+                if len(gen_basins) >= 2:
+                    d = float(fisher_rao_distance_simplex(gen_basins[-1][None], gen_basins[-2][None])[0])
+                    converged_run = converged_run + 1 if d < _ANDERSON_EPS else 0
+                    if converged_run >= _ANDERSON_PATIENCE and len(out_bytes) >= _MIN_GEN:
+                        anderson_exit = len(out_bytes)
+                        break
         if self.coordizer is not None:
             text = self.coordizer.decode([b for b in out_bytes if b != _EOS_BYTE])
         else:
@@ -330,6 +354,8 @@ class GenesisKernelTarget(TrainingTarget):
             "chose_to_stop": chose_to_stop,                       # spoke as it chose (EOS)
             "generated_len": len(out_bytes),
             "mean_token_confidence": round(sum(out_probs) / max(1, len(out_probs)), 3),  # observes its OUTPUT
+            "read_presence": read_presence,                      # EXP-012b: token-0 concentration (answer present?)
+            "anderson_exit": anderson_exit,                      # EXP-046: step where distinguishability collapsed (None = ran to EOS/cap)
         })
         return StepResult(text=f"[genesis·N={self.num_layers}{' ⏹' if chose_to_stop else ''}] {text}", telemetry=snap)
 

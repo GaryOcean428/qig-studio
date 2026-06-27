@@ -55,3 +55,14 @@ addopts = "-q"
 [tool.ruff]
 line-length = 110
 target-version = "py311"
+
+[tool.mypy]
+# (no python_version pin — match the interpreter; pinning 3.11 trips numpy's 3.12+ stub syntax here)
+
+# External / heavy-optional deps mypy cannot resolve from the (editable / un-stubbed) install:
+# textual (no stubs) and the QIG runtime packages whose editable installs mypy's importer doesn't read.
+# This is the documented handling for unresolvable third-party modules — NOT a per-line suppression of
+# our own code (which is type-checked). The packages DO ship py.typed for wheel consumers.
+[[tool.mypy.overrides]]
+module = ["textual.*", "qigkernels.*", "qig_coordizer.*", "qig_warp.*", "qig_applied.*", "qig_consciousness.*"]
+ignore_missing_imports = true
