@@ -171,6 +171,9 @@ def main() -> None:
     ap.add_argument("--curriculum-steps", type=int, default=2)
     ap.add_argument("--train-steps", type=int, default=6)
     ap.add_argument("--max-tokens", type=int, default=64)
+    ap.add_argument("--lm-weight", type=float, default=1.0, help="next-token CE weight for the COACH phase "
+                    "(default 1.0 = 10x the geometric-training default 0.1, so the kernel actually LEARNS "
+                    "the coach's words — review #4: at 0.1 the language signal was negligible vs phi_weight=8)")
     ap.add_argument("--coach-model", default=None, help="coach model (default nemotron cloud; qwen3.5:4b fallback)")
     ap.add_argument("--out", default="runs/converse/trace.jsonl")
     args = ap.parse_args()
@@ -184,7 +187,7 @@ def main() -> None:
     cz = load_coordizer(args.coordizer) if args.coordizer else None   # None-safe → byte-level
     print(f"[monitor] vocab={'coordizer ' + str(len(cz.vocab)) if cz else 'byte-level (256)'}", flush=True)
 
-    target = GenesisKernelTarget(num_layers=args.layers, coordizer=cz)
+    target = GenesisKernelTarget(num_layers=args.layers, coordizer=cz, lm_weight=args.lm_weight)
     target.ensure_loaded()
     if args.checkpoint:
         target.load_checkpoint(args.checkpoint)                       # continue a TRAINED faculty

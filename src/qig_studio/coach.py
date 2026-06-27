@@ -329,7 +329,11 @@ class DevelopmentalCoach:
         said = target.generate(topic, max_tokens=max_tokens)
         # 2b. nemotron ANSWERS if the kernel asked a question, else INTERPRETS its babble.
         reply, mode, provider = self._read_kernel(said.text, phi=said.telemetry.phi, regime=said.telemetry.regime)
-        # 2c. DIALOGUE training — LEARN toward nemotron's answer/interpretation.
+        # 2c. DIALOGUE training — the kernel trains on the coach's reply as a NEXT-TOKEN LANGUAGE target
+        # (train_step does next-token CE over `reply`, weighted by the target's lm_weight). This is real
+        # language learning ONLY when lm_weight is raised for the coach phase — at the geometric-training
+        # default (0.1, vs phi_weight 8) the signal is negligible (review #4). The coach launcher sets a
+        # higher --lm-weight; geometric targets that hard-zero lm_weight (kernel/mock) learn nothing here.
         phi_after = said.telemetry.phi
         if has_train:
             for _ in range(max(1, train_steps)):

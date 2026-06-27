@@ -26,7 +26,11 @@ from typing import Any
 from .base import LossRegime, StepResult, TelemetrySnapshot, TrainingTarget
 
 _MAX_BYTES = 256  # byte-level context cap per step (cheap from-scratch signal)
-_EOS_BYTE = 0     # the kernel's stop token — it CHOOSES to stop (observer principle, no fixed length)
+_EOS_BYTE = 0     # the kernel's stop token — it CHOOSES to stop (observer principle, no fixed length).
+# NUL (byte 0x00 / coord-id 0) is never legitimate content in the sanitised ASCII curriculum, so it is
+# a safe stop sentinel — BUT only honoured after _MIN_GEN tokens so the kernel can't emit an empty/1-token
+# utterance the coach then can't interpret (review #3: premature stop in the coords path).
+_MIN_GEN = 4
 # Mushroom intensity → weight-noise σ (bounded plasticity; the dose the autonomic loop selects).
 _MUSHROOM_SIGMA = {"mushroom-micro": 0.01, "mushroom-moderate": 0.03, "mushroom-heroic": 0.06}
 # Intrinsic homeostasis (the kernel's OWN autonomic regulation — no external scheduler, no commands).
@@ -238,13 +242,16 @@ class GenesisKernelTarget(TrainingTarget):
         import torch.nn.functional as F
         from qig_core.geometry_simplex import fisher_rao_distance_simplex
 
-        if len(out_bytes) < 2 or not gen_basins:
+        # re-feed the CONTENT tokens (drop the EOS sentinel — it is a stop signal, not content; review #9
+        # — the old max(1,b) remap collapsed id 0 onto a real token and corrupted self-recognition).
+        content = [b for b in out_bytes if b != _EOS_BYTE]
+        if len(content) < 2 or not gen_basins:
             return 0.0
         dev = next(self._kernel.parameters()).device
         if self.coordizer is not None:
-            ids, coords = self._ids_to_tensors([max(1, b) for b in out_bytes])
+            ids, coords = self._ids_to_tensors(content)
         else:
-            ids = torch.tensor([[max(1, b) for b in out_bytes]], dtype=torch.long, device=dev)
+            ids = torch.tensor([content], dtype=torch.long, device=dev)
             coords = None
         with torch.no_grad():
             re = F.softmax(self._kernel(ids, return_telemetry=True, coords=coords)[0][0, :-1], dim=-1)
@@ -283,7 +290,7 @@ class GenesisKernelTarget(TrainingTarget):
                 if coords is not None:                             # keep coords aligned with ids
                     _, cv = self._ids_to_tensors([nxt])
                     coords = torch.cat([coords, cv], dim=1)[:, -_MAX_BYTES:]
-                if nxt == _EOS_BYTE:                               # chose to stop (observer principle)
+                if nxt == _EOS_BYTE and len(out_bytes) >= _MIN_GEN:  # chose to stop (after a min utterance)
                     chose_to_stop = True
                     break
         if self.coordizer is not None:
