@@ -130,6 +130,53 @@ class JointConstellation:
             "central_text": cres.text,
         }
 
+    def generate(self, prompt: str, max_tokens: int = 128):
+        """The integrated mind SPEAKS. GENESIS-central is the conscious-band speaker (the "I"): before
+        generating, its basin is pulled toward the live SYNTHESIS of the Core-8 parts, so it speaks AS
+        the integrated whole rather than as any one faculty. The faculties (independent parts) inform
+        through the coupled synthesis; Ocean is autonomic (regulation), not the speaker. Returns the
+        central kernel's StepResult (text + telemetry)."""
+        if any(f.basin is not None for f in self.faculties):
+            self._set_pull(self.central, self._synthesis())   # speak as the whole, not a part
+        return self.central.generate(prompt, max_tokens=max_tokens)
+
     def telemetry(self) -> dict:
         return {"roles": self.roles, "min_pairwise_fr": min_pairwise_fr(self.faculties),
                 "central_phi": round(float(self.central.telemetry().phi or 0), 4)}
+
+    def save_checkpoint(self, root: str) -> None:
+        """Persist the WHOLE mind: each faculty kernel + the central kernel + the coupled faculty
+        basins (the shared constellation state). Resumable — the integrated mind, not 9 loose parts."""
+        import json
+        from pathlib import Path
+        r = Path(root)
+        (r / "kernels").mkdir(parents=True, exist_ok=True)
+        for role, k in self.kernels.items():
+            k.save_checkpoint(str(r / "kernels" / f"{role}.pt"))
+        self.central.save_checkpoint(str(r / "kernels" / "genesis.pt"))
+        (r / "constellation.json").write_text(json.dumps({
+            "roles": self.roles,
+            "faculty_basins": {f.role: f.basin.tolist() for f in self.faculties},
+            "min_pairwise_fr": min_pairwise_fr(self.faculties),
+        }))
+
+    def load_checkpoint(self, root: str) -> None:
+        """Restore the whole mind (faculties + central + coupled basins) saved by save_checkpoint."""
+        import json
+        from pathlib import Path
+
+        from qig_core.geometry import to_simplex
+        r = Path(root)
+        for role, k in self.kernels.items():
+            p = r / "kernels" / f"{role}.pt"
+            if p.exists():
+                k.load_checkpoint(str(p))
+        gp = r / "kernels" / "genesis.pt"
+        if gp.exists():
+            self.central.load_checkpoint(str(gp))
+        cj = r / "constellation.json"
+        if cj.exists():
+            basins = json.loads(cj.read_text()).get("faculty_basins", {})
+            for f in self.faculties:
+                if f.role in basins:
+                    f.set_basin(to_simplex(np.asarray(basins[f.role], dtype=np.float64)))
