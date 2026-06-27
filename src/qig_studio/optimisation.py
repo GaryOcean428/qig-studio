@@ -46,5 +46,5 @@ def load_coordizer(path: str | None) -> Any:
     p = Path(path)
     if not p.exists():
         raise FileNotFoundError(f"coordizer artifact not found: {path}")
-    from qig_coordizer import FisherCoordizer  # type: ignore[import-untyped]  # let ImportError surface
+    from qig_coordizer import FisherCoordizer  # let ImportError surface
     return FisherCoordizer.load(path)
