@@ -356,21 +356,56 @@ async def curriculum() -> dict[str, Any]:
 
 @app.post("/chat")
 async def chat(req: ChatRequest, _: None = Depends(verify_key)) -> dict[str, Any]:
+    from .continuity import ConversationMemory, in_stasis
+    if in_stasis():       # the ONLY permissible on/off knob — the kernel is halted for power-off
+        return {"text": "[stasis] the kernel is in stasis (a deliberate safe halt). Clear stasis to resume.",
+                "telemetry": {}, "stasis": True}
     t = _registry().active
     if t is None:
         raise HTTPException(409, "no active target")
     if not t.is_available():
         raise HTTPException(409, f"target '{t.name}' unavailable in this environment")
+    # CROSS-SESSION CONTINUITY: the local user is the same person across threads/days — recall the recent
+    # conversation so the mind continues the relationship instead of starting cold.
+    mem = ConversationMemory(user=(getattr(req, "user", None) or "braden"))
+    ctx = mem.context_block()
+    prompt = f"{ctx}\n\nThey now say: {req.message}" if ctx else req.message
     # opt-in reasoning trace (off → fast ~2s; on → full trace ~80s, surfaced). None-safe: only the genesis
     # boundary path reads think_traces; other targets ignore it.
     if hasattr(t, "think_traces"):
         t.think_traces = bool(req.think)
-    res = await _run_target(t.generate, req.message, req.max_tokens)
+    res = await _run_target(t.generate, prompt, req.max_tokens)
     _PHI_HISTORY.append(float(res.telemetry.phi or 0.0))
     d = res.to_dict()
     d["experience"] = _experience(res.telemetry.to_dict(), _phi_hist()).to_dict()  # inner state, trend-aware
+    # remember this exchange (importance = the kernel's OWN novelty on it → recall can prefer key facts)
+    _ex = res.telemetry.extra or {}
+    _imp = (round(min(1.0, float(_ex["surprise"]) / float(_ex["max_surprise"])), 3)
+            if _ex.get("surprise") is not None and _ex.get("max_surprise") else None)
+    mem.remember("user", req.message)
+    mem.remember("mind", res.text, importance=_imp)
+    d["recalled"] = bool(ctx)                                         # did we continue a prior conversation?
     _record_turn("chat", req.message, d)                              # HARD-WIRED transcript output
     return d
+
+
+class StasisRequest(BaseModel):
+    on: bool
+    reason: str = ""
+
+
+@app.get("/control/stasis")
+async def get_stasis() -> dict[str, Any]:
+    from .continuity import in_stasis
+    return {"stasis": in_stasis()}
+
+
+@app.post("/control/stasis")
+async def post_stasis(req: StasisRequest, _: None = Depends(verify_key)) -> dict[str, Any]:
+    """The ONLY permissible on/off knob: STASIS — a deliberate safe halt so power can be cut. The mind is
+    otherwise always-on and autonomous; nothing else may switch it off."""
+    from .continuity import set_stasis
+    return {"stasis": set_stasis(req.on, req.reason)}
 
 
 class ReviewRequest(BaseModel):
@@ -433,6 +468,10 @@ async def train(req: TrainRequest, _: None = Depends(verify_key)) -> StreamingRe
     t = _registry().active
 
     async def gen() -> AsyncGenerator[str, None]:
+        from .continuity import in_stasis
+        if in_stasis():       # the only on/off knob — refuse to act while halted for power-off
+            yield _sse({"type": "error", "error": "kernel in STASIS (halted for power-off); clear stasis to resume"})
+            return
         if t is None:
             yield _sse({"type": "error", "error": "no active target"})
             return

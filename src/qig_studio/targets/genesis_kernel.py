@@ -410,6 +410,12 @@ class GenesisKernelTarget(TrainingTarget):
         else:
             text = bytes(b for b in out_bytes if 9 <= b < 256).decode("utf-8", errors="replace")
         m = self._self_observe(out_bytes, gen_basins)
+        # SURPRISE on the prompt (prediction-error CE) — the kernel's own novelty signal, in the own-voice
+        # path too (not just train_step / boundary), so importance-gating (coach consolidation) works here.
+        pids, pcoords = self._encode(prompt)
+        with torch.no_grad():
+            plog, _ = self._kernel(pids, return_telemetry=True, coords=pcoords)
+            _ce = float(F.cross_entropy(plog[0, :-1], pids[0, 1:])) if pids.shape[1] >= 2 else 0.0
         # remember WHAT IT MEANT (mean output basin) for coach-agreement — over CONTENT only (exclude the
         # EOS basin, in lockstep with _self_observe; otherwise read_and_respond compares against a basin
         # contaminated by the stop-token distribution).
@@ -425,6 +431,8 @@ class GenesisKernelTarget(TrainingTarget):
             "mean_token_confidence": round(sum(out_probs) / max(1, len(out_probs)), 3),  # observes its OUTPUT
             "read_presence": read_presence,                      # EXP-012b: token-0 concentration (answer present?)
             "anderson_exit": anderson_exit,                      # EXP-046: step where distinguishability collapsed (None = ran to EOS/cap)
+            "surprise": round(_ce, 4),                           # prediction-error on the prompt (novelty → importance)
+            "max_surprise": round(math.log(max(2, self.vocab_size)), 4),
         })
         if foresight and self.coordizer is not None and len(gen_basins) >= 2:
             # 4D FORESIGHT telemetry: how straight (predictable) was the meaning trajectory it just spoke
