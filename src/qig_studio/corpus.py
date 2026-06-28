@@ -43,6 +43,16 @@ _SUPERSEDED_QIG_DOCS = {
     "20251220-project-status-2025-11-20-1.00W.md",
 }
 
+# CONVERSION-WRECKAGE docs: PDF→markdown lost the prose, leaving page numbers + bare lists (a few hundred
+# real words across ~500 lines, >25% bare-number lines). Training on these injects "page-number" NOISE, so
+# they are SKIPPED (non-destructive — the files remain on disk for re-sourcing). Audited 2026-06-28; re-add
+# only after a clean re-conversion. (NOT caused by the sanitiser — these are bad source conversions; the
+# sanitiser separately over-deleted two OTHER files to 0 bytes, since restored from git.)
+_DAMAGED_DOCS = {
+    "20251220-dragon-book-1.00W.md",          # 597 words / 498 lines, 192 bare-number — content lost
+    "20251220-materials-science-1.00W.md",    # 121 words / 499 lines — element list + page numbers only
+}
+
 # Meaning-preserving transliteration (ASCII targets) for the symbols that actually occur in the corpus.
 _GREEK = {
     "α": "alpha", "β": "beta", "γ": "gamma", "δ": "delta", "ε": "epsilon", "ζ": "zeta", "η": "eta",
@@ -161,6 +171,8 @@ def load_full_curriculum(path: str | Path | None = None, *, min_len: int = 40) -
             raise FileNotFoundError(f"curriculum directory {p} has no .md/.txt documents.")
         for f in files:
             if f.name in _SUPERSEDED_QIG_DOCS:          # skip retired-doctrine docs (current canon replaces them)
+                continue
+            if f.name in _DAMAGED_DOCS:                 # skip conversion-wreckage (page-number noise)
                 continue
             prompts.extend(_passages_from_markdown(f.read_text(encoding="utf-8", errors="replace"), min_len))
     elif p.is_file():                                     # legacy chat-format jsonl (e.g. the Qwen corpus)
