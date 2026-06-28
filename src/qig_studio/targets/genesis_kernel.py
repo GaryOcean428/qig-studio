@@ -1019,9 +1019,18 @@ class GenesisKernelTarget(TrainingTarget):
         # locality_radius to make it windowed-local (respects the finite-propagation budget). The
         # locality_budget check reads this; local-vs-global is the EXP-LOCAL-ATTN A/B.
         local = self.locality_radius is not None
+        nparams = None
+        if self._kernel is not None:
+            try:
+                nparams = int(sum(p.numel() for p in self._kernel.parameters()))
+            except Exception:  # noqa: BLE001
+                nparams = None
+        cvocab = len(self.coordizer.vocab) if self.coordizer is not None else None
         return {"attention": "local" if local else "global", "locality_radius": self.locality_radius,
-                "num_layers": self.num_layers, "recursion_depth": 3, "seq_len": _MAX_BYTES,
-                "input": "coords" if self.coordizer is not None else "bytes", "vocab_size": self.vocab_size}
+                "num_layers": self.num_layers, "recursion_depth": 3, "seq_len": _CTX,
+                "input": "coords" if self.coordizer is not None else "bytes",
+                "vocab_size": self.vocab_size, "coord_dim": self.coord_dim or 64,
+                "hidden_dim": self.hidden_dim, "num_params": nparams, "coordizer_vocab": cvocab}
 
     @property
     def self_regulating(self) -> bool:

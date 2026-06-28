@@ -165,6 +165,17 @@
       <div class="metric"><span>basin Δ</span><span class="v" id="basin">—</span></div>
       <div class="metric"><span>step</span><span class="v" id="step">—</span></div>
 
+      <!-- mind SCALE: params + vocab + coordizer (verify the RIGHT one) + a learning-growth sparkline -->
+      <div id="archBox" style="margin:.45rem 0;padding:.4rem .55rem;border:1px solid var(--edge);border-radius:8px;background:var(--panel2)">
+        <div class="hint" style="margin-bottom:.25rem">ARCHITECTURE · Fisher-Rao geometric kernel (not a transformer)</div>
+        <div class="metric"><span>params · per-kernel</span><span class="v" id="archPP">—</span></div>
+        <div class="metric"><span>params · mind</span><span class="v" id="archCP">—</span></div>
+        <div class="metric"><span>vocab · per-kernel</span><span class="v" id="archVocab">—</span></div>
+        <div class="metric"><span>coordizer vocab</span><span class="v" id="archCoord">—</span></div>
+        <div class="hint" style="margin-top:.25rem">learning · Φ over recent steps (params/vocab are fixed this run; growth is the LEARNING):</div>
+        <div id="archSpark" style="font-family:monospace;font-size:.85rem;color:var(--ok);letter-spacing:1px;min-height:1.1em">—</div>
+      </div>
+
       <!-- full inner state (UCP §6 layers + §43 loops) — rendered live -->
       <div id="inner"></div>
 
@@ -290,6 +301,7 @@ function renderLive(r){
   const age = r.ts ? Math.max(0,(Date.now()/1000 - r.ts)) : null;
   $("liveDot").className="dot live";
   $("liveStatus").textContent = `${r.source==="bg"?"background":"in-session"} training · step ${r.step}${r.total?("/"+r.total):""} · Φ ${fnum(r.phi,3)} · fluency ${fppl(r.perplexity)}↓ · lm ${fnum(r.lm_weight_now,2)}${age!=null?(" · "+age.toFixed(0)+"s ago"):""}`;
+  if(r.phi!=null){ PHI_SPARK.push(r.phi); PHI_SPARK=PHI_SPARK.slice(-44); const sp=$("archSpark"); if(sp) sp.textContent=sparkline(PHI_SPARK)+"  Φ "+fnum(r.phi,2); }
   LAST_LIVE_TS = Date.now();
 }
 function subscribeLive(){
@@ -560,10 +572,27 @@ async function toggleStasis(){
   refreshStasis();
 }
 $("stasisBtn")?.addEventListener("click", toggleStasis);
+// ARCHITECTURE — params/vocab/coordizer (verify the right one). Fisher-Rao geometric kernel.
+function fmtN(n){ return n==null?"—":(n>=1e6?(n/1e6).toFixed(1)+"M":n>=1e3?(n/1e3).toFixed(1)+"k":""+n); }
+async function refreshArch(){
+  try{
+    const a=await (await fetch("/mind/architecture")).json();
+    $("archPP").textContent = fmtN(a.per_kernel_params);
+    $("archCP").textContent = fmtN(a.combined_params)+" · "+a.num_kernels+" kernels";
+    $("archVocab").textContent = (a.per_kernel_vocab||"—");
+    const c=$("archCoord");
+    c.textContent = (a.coordizer_vocab? fmtN(a.coordizer_vocab):"byte-level") + (a.coordizer_ok? " ✓ correct (100k)":" ✗ WRONG coordizer");
+    c.style.color = a.coordizer_ok? "var(--ok)":"var(--pink)";
+  }catch(e){}
+}
+// learning sparkline (Φ over recent steps) — params/vocab are fixed; THIS is what grows with training
+const _SPARK="▁▂▃▄▅▆▇█"; let PHI_SPARK=[];
+function sparkline(v){ return v.map(x=>_SPARK[Math.max(0,Math.min(7,Math.round((x||0)*7)))]).join(""); }
 // boot
-refreshHealth(); loadConfig(); loadTargets(); refreshTelemetry(); refreshMind(); subscribeLive(); refreshStasis();
+refreshHealth(); loadConfig(); loadTargets(); refreshTelemetry(); refreshMind(); subscribeLive(); refreshStasis(); refreshArch();
 setInterval(refreshMind, 3000);   // 3s: keep the LEFT live inner-state panel responsive during training
 setInterval(refreshStasis, 5000);
+setInterval(refreshArch, 8000);   // params/vocab/coordizer (refreshes so growth shows once continuous-growth ships)
 </script>
 </body>
 </html>

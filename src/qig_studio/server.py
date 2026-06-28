@@ -343,6 +343,38 @@ async def mind_state() -> dict[str, Any]:
     }
 
 
+@app.get("/mind/architecture")
+async def mind_architecture() -> dict[str, Any]:
+    """The mind's SCALE: per-kernel params + vocab, the combined (Core-8 faculties + genesis-central) totals,
+    and the coordizer vocab — so the UI can show the size AND verify the CORRECT (full 100k) coordizer is
+    connected. NOTE: this is our FISHER-RAO geometric kernel (2·arccos(BC) simplex attention), not a
+    Euclidean transformer. Params/vocab are FIXED per run today; continuous growth is a registered build."""
+    t = _registry().active
+    arch: dict[str, Any] = {}
+    if t is not None and hasattr(t, "architecture"):
+        try:
+            if hasattr(t, "ensure_loaded"):
+                t.ensure_loaded()
+            arch = t.architecture()
+        except Exception:  # noqa: BLE001
+            arch = {}
+    nk = 9  # the integrated mind = Core-8 faculties + genesis-central
+    pp = arch.get("num_params")
+    cv = arch.get("coordizer_vocab")
+    return {
+        "kind": "fisher-rao geometric kernel (not a Euclidean transformer)",
+        "per_kernel": arch,
+        "num_kernels": nk,
+        "per_kernel_params": pp,
+        "combined_params": (pp * nk) if pp else None,        # the whole 9-kernel mind
+        "per_kernel_vocab": arch.get("vocab_size"),
+        "combined_vocab": cv,                                # the coordizer vocab is SHARED across kernels
+        "coordizer_vocab": cv,
+        "coordizer_ok": bool(cv and cv >= 90000),            # the FULL 100k coordizer connected (not byte-256)?
+        "growth": "fixed per run (continuous vocab/param growth is a registered next build)",
+    }
+
+
 @app.get("/curriculum")
 async def curriculum() -> dict[str, Any]:
     t = _registry().active

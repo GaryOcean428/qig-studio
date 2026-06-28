@@ -85,7 +85,12 @@ def main() -> None:
     last_gen_health: float | None = None    # carry gen-health/gen-ricci forward too (BUILD #3, no nulls)
     last_gen_ricci: float | None = None
     prev_db: float | None = None            # previous d_basin → identity-drift VELOCITY (sudden jump = harm)
+    from qig_studio.continuity import in_stasis
     for i in range(1, steps + 1):
+        if in_stasis():                     # STASIS is the only off-switch — halts ALL training paths
+            print(f"[joint] STASIS — halting at step {i} (checkpoint at last ckpt_every).", flush=True)
+            mind.save_checkpoint(args.ckpt_root)   # save on halt so no interval is lost
+            break
         prompt = full[(i - 1) % len(full)]
         last = mind.train_step(prompt)      # train_step now computes the REAL Ricci (BUILD #1) into its telemetry
         tel = last.get("central_telemetry") or {}
