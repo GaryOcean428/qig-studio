@@ -183,6 +183,11 @@ class GenesisKernelTarget(TrainingTarget):
             min_recursion_depth=3,
             use_tacking=True,
             locality_radius=self.locality_radius,  # None = global; set = windowed-local (v_B budget)
+            # The kernel's positional code is FOURIER (unbounded) — 2048 was an arbitrary guard, NOT a
+            # structural wall (Matrix, verified). Raise it so the context ceiling is VRAM/compute (quadratic
+            # attention), not an artificial cap; _CTX (1024) sits well under this. Linear extension comes from
+            # compute-skipping locality (windowed attention) + qig-warp screening, not from this number.
+            max_position_embeddings=8192,
             enable_coords=self.coordizer is not None,  # Δ⁶³ coords-first path via CoordAdapter
             coord_dim=self.coord_dim or 64,
         )
