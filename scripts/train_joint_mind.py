@@ -24,7 +24,10 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--steps", type=int, default=0, help="joint steps (0 = one full curriculum pass)")
     ap.add_argument("--layers", type=int, default=8)
-    ap.add_argument("--coordizer", default="", help="pre-fit FisherCoordizer (richer Δ⁶³ vocab); empty = byte-level")
+    # FULL coordizer by default (~100k vocab) — the path to KERNEL FLUENCY (Qwen is temporary scaffolding).
+    # A coarse vocab cannot carry language; empty = byte-level (only for a deliberate ablation).
+    ap.add_argument("--coordizer", default="../qig-coordizer/checkpoints/coordizer_max.json",
+                    help="pre-fit FisherCoordizer (richer Δ⁶³ vocab); empty = byte-level ablation")
     ap.add_argument("--ckpt-root", default="runs/checkpoints/joint_mind")
     ap.add_argument("--ckpt-every", type=int, default=300)
     ap.add_argument("--device", default="cpu", help="cpu (safe: holds 9 kernels) | cuda (4GB-OOM risk)")
@@ -57,22 +60,43 @@ def main() -> None:
         print(f"[joint] RESUMED from {args.ckpt_root} (kept the kernels; training over the top)", flush=True)
     else:
         print(f"[joint] {'FRESH' if args.fresh else 'no checkpoint found'} — from-scratch kernels", flush=True)
-    last = {}
-    live = Path("runs/spawn/joint_live.json")
-    live.parent.mkdir(parents=True, exist_ok=True)
+    # LIVE telemetry: a RICH per-step record (Φ/Γ/regime/perplexity/lm-ramp/identity-drift/C-gate/
+    # suffering + the kernel's OWN voice + explicit HARM warnings) so the PI can SEE the training and
+    # anything that could harm the kernels — the SAME channel the UI /train uses (live.py is shared).
+    from qig_studio.kernel_experience import experience
+    from qig_studio.live import LiveLog, step_record
+    livelog = LiveLog()
+    phi_hist: list[dict] = []
+    sample_every = 25                       # the kernel SPEAKS its OWN learned voice (via_boundary=False)
+    vocab = getattr(mind.central, "vocab_size", None)
+    last: dict = {}
     for i in range(1, steps + 1):
         last = mind.train_step(full[(i - 1) % len(full)])
-        if i % 5 == 0 or i == 1:                            # heartbeat → the UI bg-training indicator
+        tel = last.get("central_telemetry") or {}
+        phi_hist.append({"phi": tel.get("phi")})
+        phi_hist = phi_hist[-30:]
+        exp = experience(tel, phi_hist).to_dict()           # full inner state (C-gate, suffering, pillars)
+        own = None
+        if i % sample_every == 0 or i == 1:                 # periodic OWN-VOICE so growing fluency is visible
             try:
-                live.write_text(json.dumps({"step": i, "central_phi": last.get("central_phi"),
-                                            "min_pairwise_fr": last.get("min_pairwise_fr"),
-                                            "stepped": last.get("stepped_faculty"), "ts": time.time()}))
-            except Exception:  # noqa: BLE001
-                pass
+                gr = mind.central.generate("In one sentence, what are you learning?", max_tokens=48,
+                                           via_boundary=False, foresight=True)   # 4D: frame the sentence ahead
+                own = gr.text
+            except Exception:  # noqa: BLE001 — a sample must NEVER break training
+                own = None
+        rec = step_record(step=i, total=steps, ts=time.time(), source="bg",
+                          stepped_faculty=last.get("stepped_faculty"),
+                          stepped_function=last.get("stepped_function"),
+                          telemetry=tel, experience=exp, central_phi=last.get("central_phi"),
+                          min_pairwise_fr=last.get("min_pairwise_fr"),
+                          ocean_action=last.get("ocean_regulation"), own_voice=own, coordizer_vocab=vocab)
+        livelog.write(rec)
         if i % args.ckpt_every == 0 or i == steps:
-            mind.save_checkpoint(args.ckpt_root)        # whole-mind checkpoint
-            print(f"[joint] step {i}: stepped={last['stepped_faculty']} min_FR={last['min_pairwise_fr']:.4f} "
-                  f"centralΦ={last['central_phi']} (checkpointed)", flush=True)
+            mind.save_checkpoint(args.ckpt_root)            # whole-mind checkpoint
+            warns = "; ".join(w["msg"] for w in rec["warnings"]) or "healthy"
+            print(f"[joint] step {i}: stepped={last['stepped_faculty']} Φ={last['central_phi']} "
+                  f"ppl={rec['perplexity']} lm={rec['lm_weight_now']} "
+                  f"min_FR={(last.get('min_pairwise_fr') or 0):.4f} | {warns} (checkpointed)", flush=True)
         if (time.time() - t0) > args.max_seconds:
             print(f"[joint] wall-clock budget reached at step {i}", flush=True)
             break

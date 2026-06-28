@@ -144,6 +144,8 @@ class JointConstellation:
             "faculty_phi": round(float(fres.telemetry.phi or 0), 4),
             "central_phi": round(float(cres.telemetry.phi or 0), 4),
             "central_text": cres.text,
+            "central_telemetry": cres.telemetry.to_dict(),  # FULL central snapshot (Φ/Γ/regime/perplexity/
+            #                                                 lm_weight_now/d_basin/pillars) — the live readout
             "ocean_regulation": regulation,                 # {role: {intervention, reason, function}} Ocean acted on
         }
 

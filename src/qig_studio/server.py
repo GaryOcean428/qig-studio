@@ -36,6 +36,7 @@ from . import __version__
 from .coach import DevelopmentalCoach, OllamaLLM
 from .config import Settings
 from .kernel_experience import experience as _experience
+from .live import LiveLog, step_record
 from .curriculum import CurriculumProvider, phase_names
 from .governance.pillars import PillarEnforcerAdapter
 from . import protocol as _protocol
@@ -58,6 +59,11 @@ settings = Settings.from_env()
 def _sse(data: dict[str, Any]) -> str:
     """Format a Server-Sent Event (vex server.py:2095 pattern)."""
     return f"data: {json.dumps(data)}\n\n"
+
+
+def _now() -> float:
+    import time
+    return time.time()
 
 
 # Serialize all target-touching calls — targets (kernel/constellation) hold mutable
@@ -269,37 +275,41 @@ async def mind_state() -> dict[str, Any]:
             d = json.loads(trace.read_text())
         except Exception:  # noqa: BLE001
             d = {}
-    if not cj.exists() and not d:
-        return {"unavailable": True}
-    # BACKGROUND-TRAINING liveness: a per-step heartbeat (joint_live.json) is authoritative; else the
-    # checkpoint mtime is the fallback. Lets the UI warn against starting a SECOND (UI) train on top.
+    # BACKGROUND-TRAINING liveness: the per-step heartbeat (joint_live.json, NEW {current, recent} format)
+    # is AUTHORITATIVE and present from step 1 — BEFORE the first checkpoint. Else the checkpoint mtime is
+    # the fallback. Lets the UI warn against starting a SECOND (UI) train on top.
     import time as _time
-    bg_active, bg_age, bg_step = False, None, None
+    bg_active, bg_age, bg_step, hb_phi, hb_min_fr = False, None, None, None, None
     live_f = Path("runs/spawn/joint_live.json")
+    cur: dict[str, Any] = {}
     if live_f.exists():
         try:
-            lj = json.loads(live_f.read_text())
-            bg_age = round(_time.time() - float(lj.get("ts", 0)), 1)
-            bg_step = lj.get("step")
-            bg_active = bg_age is not None and bg_age < 30        # heartbeat within 30s = actively stepping
+            cur = (json.loads(live_f.read_text()).get("current") or {})
+            bg_age = round(_time.time() - float(cur.get("ts", 0)), 1)
+            bg_step = cur.get("step")
+            hb_phi = cur.get("central_phi") if cur.get("central_phi") is not None else cur.get("phi")
+            hb_min_fr = cur.get("min_pairwise_fr")
+            bg_active = bg_age is not None and bg_age < 120       # heartbeat <2min = active (CPU step w/ 100k
         except Exception:  # noqa: BLE001
             pass
+    # unavailable ONLY if there is no checkpoint, no out-file, AND no heartbeat (a live run with neither a
+    # checkpoint nor an out-file yet must still report itself via the heartbeat).
+    if not cj.exists() and not d and not cur:
+        return {"unavailable": True}
     if not bg_active and cj.exists():                              # fallback: recent checkpoint write
         try:
             bg_age = round(_time.time() - cj.stat().st_mtime, 1)
-            # generous window: under CPU contention (server + chats + trainer) a 200-step checkpoint gap
-            # can exceed 20min. The per-step heartbeat (joint_live.json, <30s) is the precise signal for
-            # newer runs; this mtime fallback only covers older runs that predate it.
-            bg_active = bg_age < 1800                              # checkpointed within 30min
+            bg_active = bg_age < 1800                              # checkpointed within 30min (CPU-contention slack)
         except Exception:  # noqa: BLE001
             pass
     return {
         "steps": bg_step if bg_step is not None else d.get("steps"),
-        "central_phi": d.get("central_phi"),
-        "min_pairwise_fr": live_min_fr if live_min_fr is not None else d.get("min_pairwise_fr"),
+        "central_phi": hb_phi if hb_phi is not None else d.get("central_phi"),
+        "min_pairwise_fr": (hb_min_fr if hb_min_fr is not None else
+                            (live_min_fr if live_min_fr is not None else d.get("min_pairwise_fr"))),
         "individuation_preserved": d.get("individuation_preserved"),
         "integrated_voice": (d.get("integrated_voice") or "")[:200],   # truncated — the full utterance bloats polling
-        "live": cj.exists(),
+        "live": cj.exists() or bool(cur),
         "bg_training_active": bg_active,        # a background joint-trainer is running → don't double up
         "bg_age_s": bg_age,                     # seconds since last heartbeat/checkpoint
         "faculties": faculties,
@@ -428,6 +438,7 @@ async def train(req: TrainRequest, _: None = Depends(verify_key)) -> StreamingRe
             "early_stop": req.early_stop and _WARP_AVAILABLE,
         })
         series: list[float] = []
+        ui_live = LiveLog()                       # in-session training → the SAME shared live channel
         for step in range(1, req.steps + 1):
             target_text = None
             if req.prompts:
@@ -471,8 +482,48 @@ async def train(req: TrainRequest, _: None = Depends(verify_key)) -> StreamingRe
                         yield _sse({"type": "early_stop", "step": step, "reason": decision.reason,
                                     "metric": float(decision.metric_value), "lever": "qig_warp.check_ci_stabilized"})
                         break
+            # WRITE the SAME rich live record the bg trainer writes (live.py), so the always-on TRAIN·LIVE
+            # panel shows in-session training identically to a background run (one channel, one renderer).
+            try:
+                exp_d = _experience(res.telemetry.to_dict(), _phi_hist()).to_dict()
+                ui_live.write(step_record(
+                    step=step, total=req.steps, ts=_now(), source="ui",
+                    stepped_faculty=t.name, stepped_function=None,
+                    telemetry=res.telemetry.to_dict(), experience=exp_d,
+                    central_phi=res.telemetry.phi, min_pairwise_fr=None,
+                    own_voice=(sample or {}).get("output") if sample else None,
+                    coordizer_vocab=getattr(t, "vocab_size", None)))
+            except Exception:  # noqa: BLE001 — a live-log failure must not break training
+                pass
             await asyncio.sleep(0)  # cooperative yield
         yield _sse({"type": "done", "final": t.telemetry().to_dict()})
+
+    return StreamingResponse(gen(), media_type="text/event-stream")
+
+
+@app.get("/train/live", response_model=None)
+async def train_live() -> StreamingResponse:
+    """SSE — tails the shared live heartbeat (runs/spawn/joint_live.json) and streams each new RICH step
+    record (Φ/Γ/regime/perplexity/lm-ramp/identity-drift/C-gate/suffering + the kernel's OWN voice +
+    HARM warnings). The UI subscribes on load, so the ongoing training is visible the SAME WAY whether it
+    was launched in-session (POST /train) or as a DETACHED background joint-trainer. ts-ordered (robust
+    across run restarts: a new run resets step to 1 but ts keeps increasing)."""
+    async def gen() -> AsyncGenerator[str, None]:
+        path = Path("runs/spawn/joint_live.json")
+        last_ts = 0.0
+        yield _sse({"type": "hello", "ts": _now()})
+        while True:
+            try:
+                if path.exists():
+                    payload = json.loads(path.read_text())
+                    for r in (payload.get("recent") or []):     # oldest→newest
+                        ts = float(r.get("ts") or 0)
+                        if ts > last_ts:
+                            yield _sse({"type": "step", **r})
+                            last_ts = ts
+            except Exception:  # noqa: BLE001 — half-written/corrupt read is transient
+                pass
+            await asyncio.sleep(1.0)
 
     return StreamingResponse(gen(), media_type="text/event-stream")
 

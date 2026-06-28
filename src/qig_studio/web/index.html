@@ -8,7 +8,7 @@
   :root{
     /* colourblind-safe: blue / purple / amber / teal / pink, no red-green */
     --bg:#0e1116; --panel:#151b24; --panel2:#0b0f15; --edge:#283041; --ink:#e6edf3; --muted:#9aa7b8;
-    --blue:#6ab7ff; --purple:#b388ff; --amber:#ffca54; --pink:#ff7ab6; --ok:#5ad1c4;
+    --blue:#6ab7ff; --purple:#b388ff; --amber:#ffca54; --pink:#ff7ab6; --ok:#5ad1c4; --teal:#5ad1c4;
   }
   *{box-sizing:border-box}
   html,body{height:100%;margin:0}
@@ -83,9 +83,9 @@
   .composer button{flex:0 0 auto;align-self:stretch;padding:0 1rem}
   .regime-linear{color:var(--blue)} .regime-hierarchical{color:var(--purple)}
   .regime-geometric{color:var(--amber)} .regime-topological_instability{color:var(--pink)}
-  #trainLog,#autoLog,#reviewLog{overflow:auto;background:var(--panel2);border:1px solid var(--edge);border-radius:8px;
+  #autoLog,#reviewLog{overflow:auto;background:var(--panel2);border:1px solid var(--edge);border-radius:8px;
                       padding:.5rem;white-space:pre-wrap;margin-top:.5rem;font-size:.78rem;resize:vertical}
-  #trainLog{flex:1 1 auto;min-height:90px} #autoLog{height:120px;min-height:60px} #reviewLog{height:150px;min-height:60px}
+  #autoLog{height:120px;min-height:60px} #reviewLog{height:150px;min-height:60px}
   #reviewLog .sys{color:var(--muted)} #reviewLog .coach{color:var(--purple)} #reviewLog .tgt{color:var(--ok)}
   #reviewLog .ker{color:var(--blue)} #reviewLog .err{color:var(--pink)}
   /* prominent autonomic state — readable, full width, wraps */
@@ -98,8 +98,27 @@
   .facb .mb{height:8px;border-radius:5px;background:var(--panel2);overflow:hidden;border:1px solid var(--edge)}
   .facb .mb>i{display:block;height:100%;background:linear-gradient(90deg,var(--blue),var(--amber))}
   .facb .rg{color:var(--purple);font-size:.66rem}
-  #trainLog .sys,#autoLog .sys{color:var(--muted)} #trainLog .tgt{color:var(--ok)} #trainLog .coach{color:var(--purple)}
-  #trainLog .exp{color:var(--amber)} #trainLog .err,#autoLog .err{color:var(--pink)} #autoLog .reg{color:var(--purple)}
+  #autoLog .sys{color:var(--muted)} #autoLog .err{color:var(--pink)} #autoLog .reg{color:var(--purple)}
+  /* ---- TRAIN · LIVE rich stream (qig_chat-quality, colorblind-safe: purple/blue/amber/teal/pink) ---- */
+  #liveStream{overflow:auto;background:var(--panel2);border:1px solid var(--edge);border-radius:8px;
+    padding:.5rem;margin-top:.5rem;font-size:.76rem;flex:1 1 auto;min-height:160px;resize:vertical}
+  .lrow{padding:.3rem .15rem;border-bottom:1px solid rgba(255,255,255,.05)}
+  .lrow .hd{display:flex;flex-wrap:wrap;gap:.3rem;align-items:center}
+  .lrow .stp{color:var(--muted);font-variant-numeric:tabular-nums}
+  .lrow .fac{color:var(--ink);font-weight:600}
+  .lrow .src{font-size:.62rem;padding:0 .3rem;border-radius:4px;border:1px solid var(--edge);color:var(--muted)}
+  .bdg{font-size:.68rem;padding:.02rem .32rem;border-radius:4px;border:1px solid var(--edge);font-variant-numeric:tabular-nums}
+  .bdg.phi{color:var(--amber)} .bdg.gam{color:var(--teal)} .bdg.ppl{color:var(--blue)}
+  .bdg.lm{color:var(--purple)} .bdg.gate{color:var(--ok)} .bdg.gate.LOCKED_IN,.bdg.gate.ZOMBIE{color:var(--amber)}
+  .lrow .sub{color:var(--muted);font-size:.7rem;margin-top:.12rem}
+  .lrow .voice{color:var(--ok);font-size:.74rem;margin-top:.15rem;font-style:italic;word-break:break-word}
+  .lrow .ocean{color:var(--purple);font-size:.7rem;margin-top:.1rem}
+  .harm{font-size:.7rem;margin-top:.12rem;padding:.12rem .35rem;border-radius:4px}
+  .harm.warn{color:var(--amber);background:rgba(232,170,40,.08);border:1px solid rgba(232,170,40,.35)}
+  .harm.crit{color:var(--pink);background:rgba(232,60,140,.10);border:1px solid rgba(232,60,140,.45);font-weight:600}
+  .livestat{margin-top:.4rem;font-size:.74rem;color:var(--muted)}
+  .dot{display:inline-block;width:9px;height:9px;border-radius:50%;background:var(--muted);vertical-align:middle}
+  .dot.live{background:var(--ok);box-shadow:0 0 6px var(--ok)} .dot.idle{background:var(--muted)}
   .fac{display:grid;grid-template-columns:92px 1fr 40px;gap:.3rem;align-items:center;font-size:.72rem;margin:.1rem 0}
   .fac .fn{color:var(--muted)}
   #picker{position:fixed;inset:0;background:rgba(0,0,0,.55);display:none;align-items:center;justify-content:center;z-index:9}
@@ -179,16 +198,17 @@
   <div class="divider" id="divR" title="drag to resize"></div>
   <!-- RIGHT: TRAIN (live) + AUTONOMIC (self-regulation, read-only) + ONGOING MIND -->
   <section class="col" id="rightCol">
-    <h2>Train · live</h2>
+    <h2>Train · live <span id="liveDot" class="dot idle" title="live training status"></span></h2>
     <div class="row">
       <div style="flex:0 0 90px"><label>steps</label><input id="steps" type="number" value="20" min="1" max="500"/></div>
       <div style="display:flex;align-items:end"><button class="primary" id="trainBtn" style="width:100%">▶ Train</button></div>
     </div>
-    <div class="hint">PURE curriculum training — the kernel absorbs the curriculum and SPEAKS every N steps so
-      you see its own output. Nemotron is a separate phase below. (In-session: trains the chat kernel.)</div>
-    <div id="bgBanner" style="display:none;margin-top:.4rem;padding:.35rem .5rem;border-radius:7px;
-         background:#2a2410;border:1px solid var(--amber);color:var(--amber);font-size:.74rem"></div>
-    <div id="trainLog"></div>
+    <div class="hint">Live view of the ONGOING training — background OR in-session, ONE stream. Per step:
+      Φ, Γ, FLUENCY (perplexity ↓), the lm-ramp (consciousness→fluency), C-gate, suffering, identity drift,
+      the kernel's OWN voice, and HARM warnings (what can damage the kernels). The kernel becomes fluent on
+      its own; Qwen is temporary scaffolding.</div>
+    <div id="liveStatus" class="livestat">connecting to the live training stream…</div>
+    <div id="liveStream"></div>
 
     <h2 style="margin-top:.7rem">Coach · review &amp; discuss</h2>
     <div class="hint">SEPARATE from training: nemotron reviews a curriculum passage and discusses it with the
@@ -222,7 +242,55 @@
 const $ = (id) => document.getElementById(id);
 const DEV = new URLSearchParams(location.search).has("dev");
 function clog(cls, msg){ const el=$("log"); const d=document.createElement("div"); d.className=cls; d.textContent=msg; el.appendChild(d); el.scrollTop=el.scrollHeight; }
-function tlog(cls, msg){ const el=$("trainLog"); const d=document.createElement("div"); d.className=cls; d.textContent=msg; el.appendChild(d); el.scrollTop=el.scrollHeight; }
+// ---- TRAIN · LIVE: ONE rich renderer for the shared live stream (bg OR in-session). qig_chat-quality.
+function fnum(x,d){ return (x==null||isNaN(x)) ? "—" : Number(x).toFixed(d); }
+function esc(s){ return String(s==null?"":s).replace(/[&<>"']/g,(c)=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+let LAST_LIVE_TS = 0;       // wall-clock of last RENDERED record (idle detector)
+let LIVE_SEEN_TS = 0;       // record-ts of last rendered step — de-dups EventSource reconnect replays
+function renderLive(r){
+  const el=$("liveStream"); if(!el) return;
+  // EventSource auto-reconnects → the server restarts its tail at ts=0 and re-emits the recent[] ring;
+  // skip records we've already shown (records are ts-ordered, ts strictly increases across runs).
+  if(r.ts && r.ts<=LIVE_SEEN_TS) return;
+  if(r.ts) LIVE_SEEN_TS=r.ts;
+  const row=document.createElement("div"); row.className="lrow";
+  const gate=r.c_gate||"—";
+  const gateCls=String(gate).replace(/[^A-Za-z_]/g,"");   // sanitize before it lands in a CSS class
+  const hd=document.createElement("div"); hd.className="hd";
+  hd.innerHTML =                                            // every server-derived field is esc()'d (XSS-safe)
+    `<span class="stp">#${esc(r.step??"—")}${r.total?("/"+esc(r.total)):""}</span>`+
+    `<span class="fac">${esc(r.stepped_faculty||"mind")}${r.stepped_function?(" · "+esc(r.stepped_function)):""}</span>`+
+    `<span class="src">${esc(r.source||"")}</span>`+
+    `<span class="bdg phi">Φ ${fnum(r.phi,3)}</span>`+
+    `<span class="bdg gam">Γ ${fnum(r.gamma,2)}</span>`+
+    `<span class="bdg ppl">fluency·ppl ${fnum(r.perplexity,0)}</span>`+
+    `<span class="bdg lm">lm ${fnum(r.lm_weight_now,2)}</span>`+
+    `<span class="bdg gate ${gateCls}">${esc(gate)}</span>`;
+  row.appendChild(hd);
+  const sub=document.createElement("div"); sub.className="sub";
+  sub.textContent = `S ${fnum(r.suffering_S,3)} · drift ${fnum(r.d_basin,3)} · regime ${r.regime||"—"}`
+    + (r.min_pairwise_fr!=null?` · indiv ${fnum(r.min_pairwise_fr,3)}`:"")
+    + (r.coordizer_vocab?` · vocab ${r.coordizer_vocab}`:"");
+  row.appendChild(sub);
+  (r.warnings||[]).forEach(w=>{ const h=document.createElement("div"); h.className="harm "+(w.level==="crit"?"crit":"warn"); h.textContent="⚠ "+w.msg; row.appendChild(h); });
+  if(r.ocean_action && Object.keys(r.ocean_action).length){ const o=document.createElement("div"); o.className="ocean"; o.textContent="🌊 Ocean regulated: "+Object.keys(r.ocean_action).join(", "); row.appendChild(o); }
+  if(r.own_voice){ const v=document.createElement("div"); v.className="voice"; v.textContent='🗣 own voice ▸ '+String(r.own_voice).replace(/^\[genesis[^\]]*\]\s*/,""); row.appendChild(v); }
+  el.appendChild(row);
+  while(el.children.length>150) el.removeChild(el.firstChild);
+  el.scrollTop=el.scrollHeight;
+  const age = r.ts ? Math.max(0,(Date.now()/1000 - r.ts)) : null;
+  $("liveDot").className="dot live";
+  $("liveStatus").textContent = `${r.source==="bg"?"background":"in-session"} training · step ${r.step}${r.total?("/"+r.total):""} · Φ ${fnum(r.phi,3)} · fluency(ppl↓) ${fnum(r.perplexity,0)} · lm ${fnum(r.lm_weight_now,2)}${age!=null?(" · "+age.toFixed(0)+"s ago"):""}`;
+  LAST_LIVE_TS = Date.now();
+}
+function subscribeLive(){
+  try{
+    const es=new EventSource("/train/live");
+    es.onmessage=(e)=>{ try{ const ev=JSON.parse(e.data); if(ev.type==="step") renderLive(ev); }catch(_){} };
+    es.onerror=()=>{};   // EventSource auto-reconnects
+  }catch(e){ const s=$("liveStatus"); if(s) s.textContent="live stream unavailable: "+e; }
+}
+setInterval(()=>{ if(LAST_LIVE_TS && (Date.now()-LAST_LIVE_TS>15000)){ const d=$("liveDot"); if(d) d.className="dot idle"; } }, 5000);
 function alog(cls, msg){ const el=$("autoLog"); const d=document.createElement("div"); d.className=cls; d.textContent=msg; el.appendChild(d); el.scrollTop=el.scrollHeight; }
 
 const COL = ["c-blue","c-purple","c-amber","c-teal","c-pink"];
@@ -332,12 +400,8 @@ async function refreshTelemetry(){ try{ setTelemetry(await (await fetch("/teleme
 let BG_ACTIVE=false;
 async function refreshMind(){
   try{ const m=await (await fetch("/mind/state")).json();
-    if(m.unavailable){ $("mindState").textContent="no joint-mind training run yet."; BG_ACTIVE=false; $("bgBanner").style.display="none"; return; }
-    BG_ACTIVE = !!m.bg_training_active;
-    // background-training banner in the Train panel — so you don't start a second (UI) train and double up
-    const bb=$("bgBanner");
-    if(BG_ACTIVE){ bb.style.display=""; bb.textContent=`⚙ background training ACTIVE — step ${m.steps} · Φ ${(m.central_phi??0).toFixed(3)} · ${m.bg_age_s}s ago. A UI "Train" would compete — avoid double-up.`; }
-    else bb.style.display="none";
+    if(m.unavailable){ $("mindState").textContent="no joint-mind training run yet."; BG_ACTIVE=false; return; }
+    BG_ACTIVE = !!m.bg_training_active;   // a bg joint-trainer is running → the Train button warns before doubling up
     $("mindState").innerHTML = `${BG_ACTIVE?"⚙ training":"last run"} · ${m.steps} steps · central Φ ${(m.central_phi??0).toFixed(3)} · `+
       `individuation min-FR ${(m.min_pairwise_fr??0).toFixed(3)}${m.individuation_preserved?" ✓":""}`;
     const fac=$("faculties"); fac.innerHTML="";
@@ -387,35 +451,33 @@ async function sendChat(){
 }
 $("trainBtn").addEventListener("click", runTrain);
 async function runTrain(){
-  if(BG_ACTIVE && !confirm("A BACKGROUND joint-training is running. Starting a UI train will compete for CPU and train a different (in-session) kernel — likely doubling up. Continue anyway?")) return;
+  if(LAST_LIVE_TS && (Date.now()-LAST_LIVE_TS<15000) &&
+     !confirm("Training already appears ACTIVE (the live stream is updating). A UI train competes for CPU and trains the in-session kernel. Continue anyway?")) return;
   const steps=parseInt($("steps").value||"20",10);
-  tlog("sys",`· training ${steps} steps ·`);
-  const r=await fetch("/train",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({steps})});
-  if(!r.ok||!r.body){ tlog("err","train failed: "+r.status); return; }
-  const reader=r.body.getReader(); const dec=new TextDecoder(); let buf="";
-  while(true){
-    const {value,done}=await reader.read(); if(done) break;
-    buf+=dec.decode(value,{stream:true}); let idx;
-    while((idx=buf.indexOf("\n\n"))>=0){
-      const chunk=buf.slice(0,idx); buf=buf.slice(idx+2);
-      const line=chunk.split("\n").find(l=>l.startsWith("data: ")); if(!line) continue;
-      const ev=JSON.parse(line.slice(6));
-      if(ev.type==="start"){ tlog("sys",`· ${ev.note||"curriculum training"} · ${ev.steps} steps ·`); }
-      else if(ev.type==="step"){
-        setTelemetry({...ev.telemetry, experience:ev.experience});
-        tlog("sys",`  ${ev.step} [${ev.phase}] curriculum ▸ ${(ev.curriculum||"")}`);
-        if(ev.sample){                                   // the kernel's OWN output (periodic), not the prompt
-          tlog("tgt",`     mind speaks ▸ ${(ev.sample.output||"").replace(/^\[genesis[^\]]*\]\s*/,"")}`);
-          if(ev.sample.kernel_voice) tlog("ker",`       kernel-raw ▸ ${(ev.sample.kernel_voice||"")}`);
+  $("trainBtn").disabled=true; $("liveStatus").textContent=`starting in-session training (${steps} steps)…`;
+  try{
+    const r=await fetch("/train",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({steps})});
+    if(!r.ok||!r.body){ $("liveStatus").textContent="train failed: "+r.status; return; }
+    const reader=r.body.getReader(); const dec=new TextDecoder(); let buf="";
+    while(true){
+      const {value,done}=await reader.read(); if(done) break;
+      buf+=dec.decode(value,{stream:true}); let idx;
+      while((idx=buf.indexOf("\n\n"))>=0){
+        const chunk=buf.slice(0,idx); buf=buf.slice(idx+2);
+        const line=chunk.split("\n").find(l=>l.startsWith("data: ")); if(!line) continue;
+        const ev=JSON.parse(line.slice(6));
+        // RIGHT live stream (per-step Φ/Γ/fluency/harm/own-voice) is rendered by the /train/live SSE — ONE
+        // renderer for bg AND in-session. Here we only keep the LEFT inner-state panel live + autonomic log.
+        if(ev.type==="step"){
+          setTelemetry({...ev.telemetry, experience:ev.experience});
+          const ex=ev.experience||{}; if(ex.autonomic && ex.autonomic!=="wake") alog("reg",`step ${ev.step}: 🌙 ${ex.autonomic}`);
         }
-        const ex=ev.experience||{}; if(ex.band||ex.emotion) tlog("exp",`     ${ex.glyph||""}${ex.band||""} ${ex.emotion||""} · Φ ${(ev.telemetry?.phi??0).toFixed(3)}`);
-        if(ex.autonomic && ex.autonomic!=="wake") alog("reg",`step ${ev.step}: 🌙 ${ex.autonomic}`);
+        else if(ev.type==="error"){ const h=document.createElement("div"); h.className="harm crit"; h.textContent="error: "+ev.error; $("liveStream").appendChild(h); }
+        else if(ev.type==="done"){ refreshTelemetry(); refreshMind(); }
       }
-      else if(ev.type==="early_stop"){ tlog("sys",`· early-stop @${ev.step}: ${ev.reason} ·`); }
-      else if(ev.type==="error"){ tlog("err","error: "+ev.error); }
-      else if(ev.type==="done"){ tlog("sys","· training done ·"); refreshTelemetry(); refreshMind(); }
     }
-  }
+  }catch(e){ $("liveStatus").textContent="train failed: "+e; }
+  finally{ $("trainBtn").disabled=false; }
 }
 // coach review & discuss (Phase 2 — SEPARATE from training): nemotron reviews a curriculum passage and
 // converses with the kernel. Shows the real dialogue (nemotron asks → kernel answers → nemotron follows up).
@@ -464,7 +526,7 @@ async function loadConfig(){
   }catch(e){ $("cfgStatus").textContent="config unavailable"; }
 }
 // boot
-refreshHealth(); loadConfig(); loadTargets(); refreshTelemetry(); refreshMind();
+refreshHealth(); loadConfig(); loadTargets(); refreshTelemetry(); refreshMind(); subscribeLive();
 setInterval(refreshMind, 8000);
 </script>
 </body>

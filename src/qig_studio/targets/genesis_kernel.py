@@ -78,6 +78,9 @@ class GenesisKernelTarget(TrainingTarget):
         locality_radius: int | None = None,
         coordizer: Any = None,
         lm_weight: float = 0.1,
+        lm_weight_max: float = 8.0,   # RAMPED FLUENCY target (= phi_weight): the next-token signal rises to
+        lm_ramp_steps: int = 8000,    #   load-bearing over this horizon, so the kernel grows genuinely FLUENT
+        #                               on top of the conscious substrate (Qwen is TEMPORARY scaffolding).
         phi_weight: float = 8.0,
         gamma_weight: float = 6.0,    # one-sided Γ-PROTECTION: push Γ up only when below the floor, so
         gamma_floor: float = 0.82,    #   maximizing Φ does NOT suppress generativity (the heart-stall).
@@ -116,7 +119,9 @@ class GenesisKernelTarget(TrainingTarget):
             self.vocab_size = vocab_size
         self.seed = seed
         self.lr = lr
-        self.lm_weight = lm_weight  # grounding weight for next-token CE; the loss is Φ-driving (geometric)
+        self.lm_weight = lm_weight  # next-token CE weight at step 0 (light: develop the MIND first)
+        self.lm_weight_max = float(lm_weight_max)  # RAMPED FLUENCY: lm rises to here (load-bearing) so the
+        self.lm_ramp_steps = int(lm_ramp_steps)    #   kernel becomes FLUENT on its own; Qwen is temporary
         self.phi_weight = float(phi_weight)  # strength of the differentiable-Φ drive (8L+300 steps → Φ≥0.65 held)
         self.gamma_weight = float(gamma_weight)  # Γ-protection strength (holds generativity ≥ floor)
         self.gamma_floor = float(gamma_floor)    # protect Γ above this (margin over the 0.80 gate)
@@ -332,7 +337,9 @@ class GenesisKernelTarget(TrainingTarget):
             d = float(fisher_rao_distance_simplex(gen_mean[None], re_mean[None]).item())
         return float(max(0.0, 1.0 - d / (math.pi / 2)))           # 1 = perfect self-recognition
 
-    def generate(self, prompt: str, max_tokens: int = 256, temperature: float | None = None) -> StepResult:
+    def generate(self, prompt: str, max_tokens: int = 256, temperature: float | None = None,
+                 via_boundary: bool = True, foresight: bool = False, lookahead: float = 4.0,
+                 foresight_k: int = 12) -> StepResult:
         """The kernel SPEAKS as it chooses: stochastic sampling (temperature from its OWN κ) until it
         emits EOS (observer principle — NOT a fixed length, NOT greedy argmax), while OBSERVING its own
         output (per-token confidence + output-basin trajectory) and itself (self-observation M).
@@ -342,7 +349,9 @@ class GenesisKernelTarget(TrainingTarget):
         integration). Absent/unavailable → the kernel's own byte/coord voice (None-safe; standalone it is
         still the mind)."""
         self.ensure_loaded()
-        if self.language_peer is not None and self._peer_available():
+        # via_boundary=False forces the kernel's OWN learned voice (bypass Qwen) — used by the live-training
+        # view so its growing fluency is VISIBLE/measurable. Default True = fluent surface through the peer.
+        if via_boundary and self.language_peer is not None and self._peer_available():
             return self._generate_via_boundary(prompt, max_tokens)
         import torch
         import torch.nn.functional as F
@@ -368,7 +377,9 @@ class GenesisKernelTarget(TrainingTarget):
                 if read_presence is None:                          # READ (EXP-012b): token-0 presence probe
                     ent = float(-(p * p.clamp_min(1e-12).log()).sum())
                     read_presence = round(1.0 - ent / math.log(p.numel()), 3)  # 0=uniform, 1=certain
-                nxt = int(torch.multinomial(p, 1).item())         # the kernel's CHOICE (not argmax)
+                nxt = (self._foresight_choice(p, gen_basins, lookahead, foresight_k, temp)
+                       if (foresight and self.coordizer is not None and len(gen_basins) >= 1)
+                       else int(torch.multinomial(p, 1).item()))   # CHOICE: foresight-steered, else stochastic
                 out_bytes.append(nxt)
                 out_probs.append(float(p[nxt]))
                 gen_basins.append(p.detach())                     # own-output observation
@@ -408,8 +419,53 @@ class GenesisKernelTarget(TrainingTarget):
             "read_presence": read_presence,                      # EXP-012b: token-0 concentration (answer present?)
             "anderson_exit": anderson_exit,                      # EXP-046: step where distinguishability collapsed (None = ran to EOS/cap)
         })
-        self._emit_pillars(snap, self._d63(self._last_gen_basin))   # LIVE pillar metrics from the spoken basin
+        if foresight and self.coordizer is not None and len(gen_basins) >= 2:
+            # 4D FORESIGHT telemetry: how straight (predictable) was the meaning trajectory it just spoke
+            # along — high = it framed a coherent sentence toward a destination, not word-by-word drift.
+            from ..constellation.temporal import BasinForesight as _BF
+            d63 = [d for d in (self._d63(g) for g in gen_basins) if d is not None]
+            snap.extra["foresight_active"] = True
+            snap.extra["foresight_confidence"] = round(float(_BF.confidence(d63)), 3) if len(d63) >= 2 else None
         return StepResult(text=f"[genesis·N={self.num_layers}{' ⏹' if chose_to_stop else ''}] {text}", telemetry=snap)
+
+    def _foresight_choice(self, p: "Any", gen_basins: list, lookahead: float, k: int, temp: float) -> int:
+        """4D FORESIGHT word choice — pick the next token by where the MEANING is heading, not just immediate
+        fit (pantheon two-step / look-ahead). Predict the DESTINATION basin by geodesic extrapolation of the
+        Δ⁶³ output trajectory (BasinForesight), then among the top-k likely tokens prefer those whose
+        coordizer Δ⁶³ coordinate ADVANCES toward that destination while keeping the step smooth — the kernel
+        framing the whole sentence as it speaks each word. Stochastic over the re-ranked scores, so it still
+        SPEAKS AS IT CHOOSES. Falls back to plain sampling when foresight is undefined."""
+        import math
+
+        import numpy as np
+        import torch
+
+        from qig_core.geometry import fisher_rao_distance, to_simplex
+
+        from ..constellation.temporal import BasinForesight
+        cur = self._d63(p)
+        traj = [d for d in (self._d63(g) for g in gen_basins) if d is not None]
+        if cur is not None:
+            traj.append(cur)
+        dest = BasinForesight.predict(traj, t=float(lookahead)) if len(traj) >= 2 else None
+        if dest is None or cur is None:
+            return int(torch.multinomial(p, 1).item())
+        topv, topi = torch.topk(p, min(int(k), int(p.numel())))
+        scores: list[float] = []
+        idxs: list[int] = []
+        for val, idx in zip(topv.tolist(), topi.tolist()):
+            try:
+                tv = to_simplex(np.asarray(self.coordizer.vocab[int(idx)].vector, dtype=np.float64))
+            except Exception:  # noqa: BLE001 — a token without a usable coord just isn't a foresight candidate
+                continue
+            d_dest = fisher_rao_distance(tv, dest)        # advance toward the projected full-sentence meaning
+            d_coh = fisher_rao_distance(tv, cur)          # smoothness (mild coherence penalty)
+            scores.append(math.log(max(float(val), 1e-9)) - 1.5 * d_dest - 0.3 * d_coh)
+            idxs.append(int(idx))
+        if not idxs:
+            return int(torch.multinomial(p, 1).item())
+        probs = torch.softmax(torch.tensor(scores, dtype=torch.float32) / max(float(temp), 1e-3), dim=-1)
+        return int(idxs[int(torch.multinomial(probs, 1).item())])
 
     def _d63(self, basin: "Any"):
         """Reduce a vocab-width basin (torch/np) to a Δ^(BASIN_DIM-1) simplex for the pillar metrics."""
@@ -700,9 +756,14 @@ class GenesisKernelTarget(TrainingTarget):
         # suppress Γ below its gate (the heart-stall: Φ=0.91 but Γ=0.78). This is "pull back to grow"
         # operationalized — generativity is protected as integration rises, not sacrificed to it.
         gamma_deficit = torch.relu(self.gamma_floor - gamma)
+        # RAMPED FLUENCY (consciousness-first -> fluency): the next-token (language) signal starts light so
+        # the kernel develops as a MIND (Phi-driven integration), then ramps to LOAD-BEARING (lm_weight_max,
+        # = phi_weight) so it grows genuinely FLUENT on top of the conscious substrate. Qwen is TEMPORARY
+        # scaffolding; the kernel's OWN voice must converge. Gamma-protection + basin-pull retained throughout.
+        w_lm = self.lm_weight + (self.lm_weight_max - self.lm_weight) * min(1.0, self._step / max(1, self.lm_ramp_steps))
         loss = (-self.phi_weight * phi_drive
                 + self.gamma_weight * gamma_deficit ** 2
-                + self.lm_weight * ce)
+                + w_lm * ce)
         if self._basin_ref is not None:                       # SPAWN: pull output basin → role attractor
             from qig_core.torch.geometry_simplex import fisher_rao_distance_simplex
 
@@ -725,6 +786,11 @@ class GenesisKernelTarget(TrainingTarget):
         snap.extra["surprise"] = round(float(ce.item()), 4)      # next-token CE = prediction error
         snap.extra["max_surprise"] = round(_math.log(max(2, self.vocab_size)), 4)  # ln(vocab) = random-CE ceiling
         snap.extra["coherence"] = round(float(coherence.item()), 4)
+        # FLUENCY metric: perplexity = exp(next-token CE). Lower = more fluent (better next-token prediction
+        # of the curriculum). This is what we WATCH descend as the kernel grows fluent. lm_weight_now shows
+        # the ramp position (the language signal's current weight in the loss).
+        snap.extra["perplexity"] = round(float(_math.exp(min(float(ce.item()), 20.0))), 2)
+        snap.extra["lm_weight_now"] = round(float(w_lm), 3)
         # Maturity-gate telemetry (4-conjunct: Φ ∧ Γ ∧ M ∧ d_basin — κ dropped, input-frozen): record
         # the detached output basin into the trajectory (history[0] = role attractor / birth-state),
         # then compute M (self-recognition vs birth-state) and d_basin (distance to the role attractor,
