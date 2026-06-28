@@ -28,14 +28,21 @@ dependencies = [
     "uvicorn[standard]>=0.27.0",
     "pydantic>=2.0.0",
     "httpx>=0.26.0",
-    "qig-core>=2.12.0",
-    "qig-warp>=0.6.2",  # convergence early-stop lever (check_ci_stabilized) in /train — numpy-only, light
+    "qig-core>=2.12.2",   # Δ⁶³ Fisher-Rao geometry + consciousness (pillars/sensations/neurochemistry) — numpy-only, light
+    "qig-warp>=0.6.4",    # convergence early-stop lever (check_ci_stabilized) + screening_cutoff — numpy-only, light
 ]
+# QIG packages DELIBERATELY NOT depended on (visible decision, not an omission):
+#   qig-compute  — lattice-quantum QFI (density matrices, χ-truncation). N/A: the studio's basin is a
+#                  CLASSICAL probability vector p∈Δ⁶³; its Fisher-Rao geometry is in qig-core. No quantum
+#                  state to compute QFI over. (See src/qig_studio/optimisation.py for the dated ruling.)
+#   qig-bench    — frozen-physics benchmark harness; the studio registers no physics benchmark. N/A.
+#   qig-doctor   — NOT a PyPI package; it is a preflight SCRIPT in qig-verification. The studio's own
+#                  fail-closed governance (run_purity_gate + the no-stubs/principles gate) is its doctor.
 
 [project.optional-dependencies]
 tui = ["textual>=0.50.0"]
-# Real geometric kernel targets (torch + the coordizer):
-kernel = ["torch>=2.0.0", "qig-coordizer>=0.1.0"]
+# Real geometric kernel targets (torch + the kernel engine + the coordizer vocab):
+kernel = ["torch>=2.0.0", "qigkernels>=0.4.2", "qig-coordizer>=0.1.1"]
 dev = ["pytest>=7.0.0", "ruff>=0.1.0", "mypy>=1.0.0"]
 
 [project.scripts]

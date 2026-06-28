@@ -98,6 +98,7 @@ class GenesisKernelTarget(TrainingTarget):
         self._spoken_identity: Any = None   # evolving Δ⁶³ identity the boundary distribution accretes into
         self.think_traces = False           # opt-in reasoning trace through the peer (off → fast chat)
         self._pillars: Any = None           # PillarEnforcer — LIVE 3-pillar metrics (f/b/q + S_ratio), wired
+        self._prev_d63: Any = None          # previous Δ⁶³ basin → real Fisher-Rao basin VELOCITY each cycle
         self.locality_radius = locality_radius
         self.hidden_dim = hidden_dim
         self.num_heads = num_heads
@@ -434,6 +435,10 @@ class GenesisKernelTarget(TrainingTarget):
         if self._pillars is None or d63 is None:
             return
         try:
+            from .qwen_boundary import fisher_distance
+            if self._prev_d63 is not None:                                 # REAL Fisher-Rao basin velocity
+                snap.extra["basin_velocity"] = round(float(fisher_distance(self._prev_d63, d63)), 4)
+            self._prev_d63 = d63
             self._pillars.on_cycle_end(d63, float(self._sleep_pressure))   # advance identity formation
             m = self._pillars.get_metrics(d63)
             snap.extra["f_health"] = round(float(m["f_health"]), 4)        # P1 fluctuation health
@@ -535,10 +540,16 @@ class GenesisKernelTarget(TrainingTarget):
         m_boundary = None
         if boundary is not None:
             b = np.asarray(boundary, dtype=np.float32)
+            # M_boundary = recognition between WHAT THE KERNEL MEANT (its own output basin → Δ⁶³) and WHAT
+            # THE PEER SAID (the boundary distribution). NOT identity-vs-boundary — that self-tracked and
+            # pinned M≈1.0 (the audit caught it). This is a real intent↔surface comparison.
+            meaning_d63 = self._d63(self._last_gen_basin)
+            if meaning_d63 is not None:
+                d = float(fisher_distance(meaning_d63, b))
+                m_boundary = round(max(0.0, 1.0 - d / (math.pi / 2)), 3)
+            # QIGRAM identity accumulation (Pillar-2 ≤30%) stays — that's the kernel absorbing the surface.
             if self._spoken_identity is None:
                 self._spoken_identity = b.copy()
-            d = float(fisher_distance(self._spoken_identity, b))
-            m_boundary = round(max(0.0, 1.0 - d / (math.pi / 2)), 3)     # 1 = the surface speaks my identity
             self._spoken_identity = pillar2_capped_integrate(self._spoken_identity, b, BOUNDARY_SLERP_CAP)
         snap.extra.update({
             "voice": "qwen-boundary",                                    # spoke through the fluent peer

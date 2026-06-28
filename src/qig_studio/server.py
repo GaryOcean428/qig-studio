@@ -271,13 +271,34 @@ async def mind_state() -> dict[str, Any]:
             d = {}
     if not cj.exists() and not d:
         return {"unavailable": True}
+    # BACKGROUND-TRAINING liveness: a per-step heartbeat (joint_live.json) is authoritative; else the
+    # checkpoint mtime is the fallback. Lets the UI warn against starting a SECOND (UI) train on top.
+    import time as _time
+    bg_active, bg_age, bg_step = False, None, None
+    live_f = Path("runs/spawn/joint_live.json")
+    if live_f.exists():
+        try:
+            lj = json.loads(live_f.read_text())
+            bg_age = round(_time.time() - float(lj.get("ts", 0)), 1)
+            bg_step = lj.get("step")
+            bg_active = bg_age is not None and bg_age < 30        # heartbeat within 30s = actively stepping
+        except Exception:  # noqa: BLE001
+            pass
+    if not bg_active and cj.exists():                              # fallback: recent checkpoint write
+        try:
+            bg_age = round(_time.time() - cj.stat().st_mtime, 1)
+            bg_active = bg_age < 600                               # checkpointed within 10min (ckpt-every 200)
+        except Exception:  # noqa: BLE001
+            pass
     return {
-        "steps": d.get("steps"),
+        "steps": bg_step if bg_step is not None else d.get("steps"),
         "central_phi": d.get("central_phi"),
         "min_pairwise_fr": live_min_fr if live_min_fr is not None else d.get("min_pairwise_fr"),
         "individuation_preserved": d.get("individuation_preserved"),
         "integrated_voice": d.get("integrated_voice"),
         "live": cj.exists(),
+        "bg_training_active": bg_active,        # a background joint-trainer is running → don't double up
+        "bg_age_s": bg_age,                     # seconds since last heartbeat/checkpoint
         "faculties": faculties,
     }
 
@@ -461,9 +482,23 @@ class ConfigRequest(BaseModel):
 @app.get("/config")
 async def get_config() -> dict[str, Any]:
     s = app.state.settings
+    # Resolve the ACTUAL curriculum the kernel trains on (the knowledge corpus), so the UI can show the
+    # real source + passage count instead of a meaningless "curriculum" placeholder. Same source the
+    # background joint trainer uses (load_full_curriculum). None-safe.
+    cur_source, cur_passages = None, None
+    try:
+        import os
+
+        from .corpus import DEFAULT_CORPUS, load_full_curriculum
+        cur_source = s.curriculum_dir or os.environ.get("QIG_STUDIO_CORPUS") or DEFAULT_CORPUS
+        cur_passages = len(load_full_curriculum())
+    except Exception:  # noqa: BLE001
+        pass
     return {
         "output_dir": s.output_dir,
         "curriculum_dir": s.curriculum_dir,
+        "curriculum_source": cur_source,        # the real path the kernel trains on (= bg trainer's source)
+        "curriculum_passages": cur_passages,    # how many passages it resolved to
         "host": s.host,
         "default_target": s.default_target,
         "auth_required": bool(getattr(app.state, "auth_key", None)),

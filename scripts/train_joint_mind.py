@@ -58,8 +58,17 @@ def main() -> None:
     else:
         print(f"[joint] {'FRESH' if args.fresh else 'no checkpoint found'} — from-scratch kernels", flush=True)
     last = {}
+    live = Path("runs/spawn/joint_live.json")
+    live.parent.mkdir(parents=True, exist_ok=True)
     for i in range(1, steps + 1):
         last = mind.train_step(full[(i - 1) % len(full)])
+        if i % 5 == 0 or i == 1:                            # heartbeat → the UI bg-training indicator
+            try:
+                live.write_text(json.dumps({"step": i, "central_phi": last.get("central_phi"),
+                                            "min_pairwise_fr": last.get("min_pairwise_fr"),
+                                            "stepped": last.get("stepped_faculty"), "ts": time.time()}))
+            except Exception:  # noqa: BLE001
+                pass
         if i % args.ckpt_every == 0 or i == steps:
             mind.save_checkpoint(args.ckpt_root)        # whole-mind checkpoint
             print(f"[joint] step {i}: stepped={last['stepped_faculty']} min_FR={last['min_pairwise_fr']:.4f} "

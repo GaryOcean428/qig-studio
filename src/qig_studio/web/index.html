@@ -186,6 +186,8 @@
     </div>
     <div class="hint">PURE curriculum training — the kernel absorbs the curriculum and SPEAKS every N steps so
       you see its own output. Nemotron is a separate phase below. (In-session: trains the chat kernel.)</div>
+    <div id="bgBanner" style="display:none;margin-top:.4rem;padding:.35rem .5rem;border-radius:7px;
+         background:#2a2410;border:1px solid var(--amber);color:var(--amber);font-size:.74rem"></div>
     <div id="trainLog"></div>
 
     <h2 style="margin-top:.7rem">Coach · review &amp; discuss</h2>
@@ -327,10 +329,16 @@ async function loadTargets(){
     $("regimeMode").textContent=`${c.loss_regime} · ${c.mode} · ${c.phases.join(" → ")}`; }catch(e){}
 }
 async function refreshTelemetry(){ try{ setTelemetry(await (await fetch("/telemetry")).json()); }catch(e){} }
+let BG_ACTIVE=false;
 async function refreshMind(){
   try{ const m=await (await fetch("/mind/state")).json();
-    if(m.unavailable){ $("mindState").textContent="no joint-mind training run yet."; return; }
-    $("mindState").innerHTML = `joint training · ${m.steps} steps · central Φ ${(m.central_phi??0).toFixed(3)} · `+
+    if(m.unavailable){ $("mindState").textContent="no joint-mind training run yet."; BG_ACTIVE=false; $("bgBanner").style.display="none"; return; }
+    BG_ACTIVE = !!m.bg_training_active;
+    // background-training banner in the Train panel — so you don't start a second (UI) train and double up
+    const bb=$("bgBanner");
+    if(BG_ACTIVE){ bb.style.display=""; bb.textContent=`⚙ background training ACTIVE — step ${m.steps} · Φ ${(m.central_phi??0).toFixed(3)} · ${m.bg_age_s}s ago. A UI "Train" would compete — avoid double-up.`; }
+    else bb.style.display="none";
+    $("mindState").innerHTML = `${BG_ACTIVE?"⚙ training":"last run"} · ${m.steps} steps · central Φ ${(m.central_phi??0).toFixed(3)} · `+
       `individuation min-FR ${(m.min_pairwise_fr??0).toFixed(3)}${m.individuation_preserved?" ✓":""}`;
     const fac=$("faculties"); fac.innerHTML="";
     for(const f of (m.faculties||[])){
@@ -379,6 +387,7 @@ async function sendChat(){
 }
 $("trainBtn").addEventListener("click", runTrain);
 async function runTrain(){
+  if(BG_ACTIVE && !confirm("A BACKGROUND joint-training is running. Starting a UI train will compete for CPU and train a different (in-session) kernel — likely doubling up. Continue anyway?")) return;
   const steps=parseInt($("steps").value||"20",10);
   tlog("sys",`· training ${steps} steps ·`);
   const r=await fetch("/train",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({steps})});
@@ -441,15 +450,17 @@ async function pkLoad(path){
 }
 $("pkUse").onclick=()=>{ if(pkField) $(pkField).value=pkCur; closePicker(); };
 $("saveCfg").addEventListener("click", async ()=>{
-  const body={output_dir:$("outDir").value||null, curriculum_dir:$("currDir").value||null};
+  const body={curriculum_dir:$("currDir").value||null};   // outputs are hard-wired; only curriculum is settable
   const r=await fetch("/config",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(body)});
-  if(r.ok){ const c=await r.json(); $("cfgStatus").textContent=`saved · output=${c.output_dir} · curriculum=${c.curriculum_dir}`; }
+  if(r.ok){ await loadConfig(); $("cfgStatus").textContent="saved · "+($("cfgStatus").textContent); }
   else $("cfgStatus").textContent=`${r.status} ${await r.text()}`;
 });
 async function loadConfig(){
   try{ const c=await (await fetch("/config")).json();
-    $("outDir").value=c.output_dir||""; $("currDir").value=c.curriculum_dir||"";
-    $("cfgStatus").textContent=`warp early-stop ${c.warp_early_stop?"on":"off"} · auth ${c.auth_required?"required":"open (localhost)"}`;
+    // show the REAL curriculum the kernel trains on (= what the bg trainer uses), not a blank placeholder
+    const src=c.curriculum_source||c.curriculum_dir||"";
+    $("currDir").value=src; $("currDir").placeholder=src||"curriculum dir";
+    $("cfgStatus").textContent=`training on: ${src||"?"} · ${c.curriculum_passages??"?"} passages · warp ${c.warp_early_stop?"on":"off"}`;
   }catch(e){ $("cfgStatus").textContent="config unavailable"; }
 }
 // boot
