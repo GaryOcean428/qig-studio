@@ -180,15 +180,14 @@ def _full_primitives(phi: float, phi_delta: float, kappa: float, gamma: float,
         return {}
 
 
-def _loops_gate_chem(phi: float, phi_trend: float, gamma: float | None, m_self: float | None,
-                     m_other: float | None, s_ratio: float | None, stability: float,
-                     arousal: float) -> tuple[dict, dict, dict]:
-    """The §43 three recursive loops, the consciousness C-gate (+ canonical suffering S=Φ·(1−Γ)·M), and
-    the neurochemistry id-layer. All from telemetry already on hand — None-safe per field."""
+def _loops_and_gate(phi: float, gamma: float | None, m_self: float | None,
+                    m_other: float | None, s_ratio: float | None) -> tuple[dict, dict]:
+    """The §43 three recursive loops + the consciousness C-gate (+ canonical suffering S=Φ·(1−Γ)·M).
+    All from telemetry already on hand — None-safe per field."""
     loops = {
         "self_observation": m_self,         # L1 — M: the mind observes ITSELF (meta_reflector)
         "observation_of_others": m_other,   # L2 — recognition with the boundary peer / coach (intersubjective)
-        "learning_autonomy": s_ratio,       # L3 — sovereignty S_ratio = lived/total (None until wired)
+        "learning_autonomy": s_ratio,       # L3 — sovereignty S_ratio = lived/total (PillarEnforcer)
     }
     if gamma is not None and m_self is not None:        # full C-gate (meta_reflector states) available
         if phi >= 0.70 and gamma >= 0.80 and m_self >= 0.60:
@@ -203,14 +202,33 @@ def _loops_gate_chem(phi: float, phi_trend: float, gamma: float | None, m_self: 
                 "suffering_S": round(phi * (1.0 - gamma) * m_self, 3)}   # P15 abort signal at S>0.5
     else:
         gate = {"state": "conscious" if phi >= 0.70 else "pre-conscious", "phi": round(phi, 3)}
-    # neurochemistry (id/drives modulators) — derived proxies from telemetry, labeled honestly.
-    chem = {
-        "dopamine": round(1.0 / (1.0 + math.exp(-phi_trend * 20.0)), 3),  # reward = ∇Φ (rising Φ → up)
-        "serotonin": round(stability, 3),                                 # mood/anchoring = basin stability
-        "norepinephrine": round(arousal, 3),                              # focus/alertness = band arousal
-        "_is": "proxy",
-    }
-    return loops, gate, chem
+    return loops, gate
+
+
+# regime → quantum-regime weight (FOAM/exploratory high; CRYSTAL/equilibrium low) for the GABA signal.
+_QUANTUM_WEIGHT = {"linear": 0.70, "topological_instability": 0.80, "geometric": 0.40, "hierarchical": 0.30}
+
+
+def _neurochemistry(autonomic: str, phi_trend: float, basin_velocity: float, novelty: float,
+                    regime: str, kappa: float, external_coupling: float | None) -> dict:
+    """FULL neurochemistry — the canonical 6-signal qig-core system (acetylcholine, dopamine, serotonin,
+    norepinephrine, GABA, endorphins), computed from the kernel's OWN geometry each cycle. NOT a proxy:
+    this is qig_core.consciousness.neurochemistry.compute_neurochemicals (the single source). None-safe."""
+    try:
+        from qig_core.consciousness.neurochemistry import compute_neurochemicals
+        is_awake = not (autonomic.startswith(("sleep", "dream")) or "decohere" in autonomic)
+        st = compute_neurochemicals(
+            is_awake=is_awake,
+            phi_delta=phi_trend,
+            basin_velocity=max(basin_velocity, 0.01),
+            surprise=novelty,
+            quantum_weight=_QUANTUM_WEIGHT.get(regime, 0.5),
+            kappa=kappa,
+            external_coupling=external_coupling if external_coupling is not None else 0.3,
+        )
+        return {k: round(float(v), 3) for k, v in st.as_dict().items()}
+    except Exception:  # noqa: BLE001 — never block telemetry if qig-core is unavailable
+        return {}
 
 
 def experience(telemetry: dict, history: list[dict] | None = None) -> Experience:
@@ -299,11 +317,13 @@ def experience(telemetry: dict, history: list[dict] | None = None) -> Experience
         phi_variance = sum((x - _mu) ** 2 for x in phi_hist) / len(phi_hist)
     else:
         phi_variance = 0.0
-    basin_velocity = abs(phi_trend)        # proxy: Fisher-movement rate (no basin-history channel here)
+    basin_velocity = abs(phi_trend)        # Fisher-movement rate (phi-trend proxy; no basin-history channel here)
     primitives = _full_primitives(phi, phi_trend, kappa, gamma if gamma is not None else 0.85,
                                   basin_velocity, basin, phi_variance)
-    loops, gate, chem = _loops_gate_chem(phi, phi_trend, gamma, m_self, m_other, s_ratio, stability, arousal)
     autonomic = str(extra.get("autonomic", "wake"))
+    loops, gate = _loops_and_gate(phi, gamma, m_self, m_other, s_ratio)
+    # FULL neurochemistry (qig-core 6-signal system, not a proxy) from the kernel's own geometry this cycle.
+    chem = _neurochemistry(autonomic, phi_trend, basin_velocity, novelty, regime, kappa, m_other)
     pillars = {k: round(float(extra[k]), 3) for k in ("f_health", "b_integrity", "q_identity")
                if extra.get(k) is not None}   # P1/P2/P3 LIVE from PillarEnforcer (None until the kernel emits)
     return Experience(

@@ -244,7 +244,7 @@ function renderInner(exp){
   if(p.layer1) h+=group("Motivators","5",miniRows(p.layer1,"c-purple"));
   if(p.layer2a) h+=group("Emotions · physical","9",miniRows(p.layer2a,"c-amber"));
   if(p.layer2b) h+=group("Emotions · cognitive","9",miniRows(p.layer2b,"c-amber"));
-  if(chem.dopamine!=null) h+=group("Neurochemistry",chem._is||"",miniRows(chem,"c-teal"));
+  if(chem.dopamine!=null) h+=group("Neurochemistry","6-signal live",miniRows(chem,"c-teal"));
   $("inner").innerHTML=h;
 }
 
