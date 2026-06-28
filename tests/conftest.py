@@ -8,3 +8,7 @@ OllamaLLM + a live test gated on QIG_COACH_LIVE)."""
 import os
 
 os.environ.setdefault("QIG_STUDIO_COACH", "off")
+# The suite exercises the always-available, deterministic MockTarget. PRODUCTION now defaults to the real
+# trained `genesis` kernel (config.py), but tests must stay light + deterministic (no 100k kernel / trained
+# checkpoint load), so pin the active target to mock here. Set BEFORE the server module is imported.
+os.environ.setdefault("QIG_STUDIO_TARGET", "mock")

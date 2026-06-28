@@ -71,6 +71,8 @@ def main() -> None:
     vocab = getattr(mind.central, "vocab_size", None)
     last: dict = {}
     last_own: str | None = None             # carry the most recent OWN-VOICE forward (no nulls between samples)
+    last_gen_health: float | None = None    # carry gen-health/gen-ricci forward too (BUILD #3, no nulls)
+    last_gen_ricci: float | None = None
     prev_db: float | None = None            # previous d_basin → identity-drift VELOCITY (sudden jump = harm)
     for i in range(1, steps + 1):
         prompt = full[(i - 1) % len(full)]
@@ -90,10 +92,13 @@ def main() -> None:
                 last_own = gr.text
                 gx = gr.telemetry.extra or {}
                 if gx.get("gen_health") is not None:
-                    tel.setdefault("extra", {})["gen_health"] = gx.get("gen_health")
-                    tel["extra"]["gen_ricci"] = gx.get("gen_ricci")
+                    last_gen_health = gx.get("gen_health")
+                    last_gen_ricci = gx.get("gen_ricci")
             except Exception:  # noqa: BLE001 — a sample must NEVER break training
                 pass
+        if last_gen_health is not None:                     # carry forward → no null between samples
+            tel.setdefault("extra", {})["gen_health"] = last_gen_health
+            tel["extra"]["gen_ricci"] = last_gen_ricci
         # live per-faculty Φ (cheap: last value the joint step already recorded) — visible BEFORE checkpoint
         fphi = {r: (h[-1] if h else None) for r, h in getattr(mind, "_phi_hist", {}).items()}
         rec = step_record(step=i, total=steps, ts=time.time(), source="bg",

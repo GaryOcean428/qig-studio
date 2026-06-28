@@ -184,12 +184,29 @@ class JointConstellation:
         return {"roles": self.roles, "min_pairwise_fr": min_pairwise_fr(self.faculties),
                 "central_phi": round(float(self.central.telemetry().phi or 0), 4)}
 
-    def save_checkpoint(self, root: str) -> None:
+    def save_checkpoint(self, root: str, keep: int = 3) -> None:
         """Persist the WHOLE mind: each faculty kernel + the central kernel + the coupled faculty
-        basins (the shared constellation state). Resumable — the integrated mind, not 9 loose parts."""
+        basins (the shared constellation state). Resumable — the integrated mind, not 9 loose parts.
+
+        3-CHECKPOINT BUFFER: before writing fresh, rotate the existing checkpoint into a backup generation
+        (cheap rename) keeping ``keep`` most-recent generations (``root.bak1..bak{keep}``) for rollback,
+        and delete older — bounded disk, no infinite accumulation."""
         import json
+        import shutil
         from pathlib import Path
         r = Path(root)
+        if (r / "constellation.json").exists():           # rotate the current checkpoint into the buffer
+            oldest = Path(f"{root}.bak{keep}")
+            if oldest.exists():
+                shutil.rmtree(oldest, ignore_errors=True)
+            for n in range(keep - 1, 0, -1):
+                src, dst = Path(f"{root}.bak{n}"), Path(f"{root}.bak{n + 1}")
+                if src.exists():
+                    src.rename(dst)
+            try:
+                r.rename(f"{root}.bak1")
+            except OSError:
+                pass                                       # busy/cross-device → skip rotation, overwrite in place
         (r / "kernels").mkdir(parents=True, exist_ok=True)
         for role, k in self.kernels.items():
             k.save_checkpoint(str(r / "kernels" / f"{role}.pt"))
