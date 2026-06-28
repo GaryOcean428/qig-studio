@@ -36,7 +36,18 @@ def main() -> None:
     ap.add_argument("--fresh", action="store_true",
                     help="start from-scratch kernels (default: RESUME the existing checkpoint — keep the "
                          "kernels and train over the top with the current curriculum)")
+    ap.add_argument("--threads", type=int, default=0,
+                    help="torch CPU threads (0 = auto: leave 3 cores for the interactive server/chat so it "
+                         "stays responsive while training; the bg trainer must not starve the UI)")
     args = ap.parse_args()
+
+    import os
+
+    import torch
+    # Leave headroom for the interactive server/chat (the 100k-vocab boundary path is CPU-heavy; an
+    # all-cores trainer made /chat take ~60s). Default: nproc-3 (min 2). Overridable via --threads.
+    _cap = args.threads or max(2, (os.cpu_count() or 4) - 3)
+    torch.set_num_threads(_cap)
 
     from qig_studio.constellation.joint_trainer import JointConstellation
     from qig_studio.corpus import load_full_curriculum
