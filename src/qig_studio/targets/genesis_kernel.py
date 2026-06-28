@@ -838,7 +838,7 @@ class GenesisKernelTarget(TrainingTarget):
         # + pain/pleasure (downstream in experience()). Computed here so EVERY training path gets it (not
         # only the standalone launcher). ~25 forwards every _RICCI_EVERY steps, cached; written each step.
         if self.coordizer is not None:
-            if self._step % _RICCI_EVERY == 0 or self._step == 1:
+            if self._step % _RICCI_EVERY == 0 or self._last_ricci_sig is None:   # fire at once on fresh/resume
                 from ..curvature import RicciNormalizer, response_curvature
                 if self._ricci_norm is None:
                     self._ricci_norm = RicciNormalizer()
