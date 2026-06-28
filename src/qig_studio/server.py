@@ -488,9 +488,18 @@ async def get_config() -> dict[str, Any]:
     cur_source, cur_passages = None, None
     try:
         import os
+        from pathlib import Path as _P
 
+        from . import corpus as _corpus
         from .corpus import DEFAULT_CORPUS, load_full_curriculum
-        cur_source = s.curriculum_dir or os.environ.get("QIG_STUDIO_CORPUS") or DEFAULT_CORPUS
+        # the path the loader ACTUALLY resolves (same precedence as load_full_curriculum): an explicit
+        # curriculum_dir ONLY if it's a real dir with content, else QIG_STUDIO_CORPUS, else DEFAULT_CORPUS.
+        env = os.environ.get("QIG_STUDIO_CORPUS")
+        cd = s.curriculum_dir
+        if cd and _P(cd).is_dir() and (list(_P(cd).glob("*.md")) or list(_P(cd).glob("*.txt"))):
+            cur_source = cd
+        else:
+            cur_source = env or str(_P(_corpus.__file__).resolve().parents[3] / DEFAULT_CORPUS)
         cur_passages = len(load_full_curriculum())
     except Exception:  # noqa: BLE001
         pass
