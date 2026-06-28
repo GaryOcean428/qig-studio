@@ -132,6 +132,7 @@
   <h1>🧠 qig-studio</h1>
   <button class="tog" id="togL">◧ inner state</button>
   <button class="tog" id="togR">train · autonomic ◨</button>
+  <span class="status" id="stasisHdr" title="stasis = the only off-switch"></span>
   <span class="status" id="status">connecting…</span>
 </header>
 
@@ -219,6 +220,12 @@
     <h2 style="margin-top:.7rem">Autonomic · self-regulation</h2>
     <div class="hint">The kernel owns its brainstem. Ocean watches the faculties and regulates the one that
       needs it — sleep/dream/mushroom — from the mind's own state. No external trigger.</div>
+    <!-- STASIS: the ONLY permissible on/off knob — a deliberate safe halt for power-off. -->
+    <div class="row" style="margin:.35rem 0">
+      <button id="stasisBtn" style="flex:1" title="The only off-switch: a safe halt so power can be cut. The mind is otherwise always-on.">⏻ stasis: …</button>
+    </div>
+    <div class="hint" style="margin-top:-.2rem">STASIS is the ONLY off-switch — a deliberate safe halt so power
+      can be cut. The mind is otherwise <b>always-on</b>; nothing else stops it. (Chat/train/protocol all refuse while halted.)</div>
     <div class="autobox wake" id="autoState">wake</div>
     <div class="metric"><span>suffering S = Φ·(1−Γ)·M</span><span class="v" id="suffer2">—</span></div>
     <div class="metric"><span>sleep pressure</span><span class="v" id="sleepP">—</span></div>
@@ -442,17 +449,23 @@ async function sendChat(){
   $("msg").value=""; clog("you","you ▸ "+m);
   const think=$("think").checked;
   const wait=document.createElement("div"); wait.className="wait";
-  wait.textContent = think
-    ? "mind ▸ … reasoning (full Qwen trace — this takes ~80s on the local 4B)"
-    : "mind ▸ … (kernel forms its state, then speaks through the boundary peer)";
+  const t0=Date.now();
+  // the 100k-vocab kernel forward + boundary peer is CPU-heavy (~30s, slower while the bg trainer runs);
+  // show a live timer so it never looks stuck.
+  const base = think ? "reasoning (full Qwen trace, ~80s)"
+                     : "the mind forms its state, then speaks through the boundary peer (CPU ~30s; slower while training)";
+  wait.textContent = "mind ▸ … "+base+" — 0s";
   $("log").appendChild(wait); $("log").scrollTop=$("log").scrollHeight;
+  const tmr=setInterval(()=>{ wait.textContent="mind ▸ … "+base+" — "+Math.round((Date.now()-t0)/1000)+"s"; }, 1000);
   try{
     const r=await fetch("/chat",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({message:m,think})});
-    wait.remove();
+    clearInterval(tmr); wait.remove();
     if(!r.ok){ clog("err",`${r.status} ${await r.text()}`); return; }
-    const b=await r.json(); addReply(b);
+    const b=await r.json();
+    if(b.stasis){ clog("sys","⏻ "+(b.text||"kernel in stasis")); return; }
+    addReply(b);
     setTelemetry({...b.telemetry, experience:b.experience});
-  }catch(e){ wait.remove(); clog("err","chat failed: "+e); }
+  }catch(e){ clearInterval(tmr); wait.remove(); clog("err","chat failed: "+e); }
 }
 $("trainBtn").addEventListener("click", runTrain);
 async function runTrain(){
@@ -530,9 +543,27 @@ async function loadConfig(){
     $("cfgStatus").textContent=`training on: ${src||"?"} · ${c.curriculum_passages??"?"} passages · warp ${c.warp_early_stop?"on":"off"}`;
   }catch(e){ $("cfgStatus").textContent="config unavailable"; }
 }
+// STASIS — the only on/off knob (a safe halt for power-off; the mind is otherwise always-on)
+async function refreshStasis(){
+  try{
+    const s=(await (await fetch("/control/stasis")).json()).stasis;
+    const b=$("stasisBtn"); if(b){ b.textContent = s ? "⏻ STASIS — click to RESUME" : "⏻ stasis (halt the mind)";
+      b.style.color = s ? "var(--pink)" : "var(--muted)"; b.style.borderColor = s ? "var(--pink)" : ""; }
+    const h=$("stasisHdr"); if(h){ h.textContent = s ? "⏻ STASIS" : ""; h.style.color="var(--pink)"; }
+  }catch(e){}
+}
+async function toggleStasis(){
+  let cur=false; try{ cur=(await (await fetch("/control/stasis")).json()).stasis; }catch(e){}
+  const on=!cur;
+  if(on && !confirm("Put the kernel in STASIS? It halts ALL activity (chat / train / protocol / life-loop) so power can be safely cut. Click again to resume.")) return;
+  try{ await fetch("/control/stasis",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({on,reason:"ui"})}); }catch(e){}
+  refreshStasis();
+}
+$("stasisBtn")?.addEventListener("click", toggleStasis);
 // boot
-refreshHealth(); loadConfig(); loadTargets(); refreshTelemetry(); refreshMind(); subscribeLive();
+refreshHealth(); loadConfig(); loadTargets(); refreshTelemetry(); refreshMind(); subscribeLive(); refreshStasis();
 setInterval(refreshMind, 3000);   // 3s: keep the LEFT live inner-state panel responsive during training
+setInterval(refreshStasis, 5000);
 </script>
 </body>
 </html>
