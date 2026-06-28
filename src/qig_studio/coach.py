@@ -224,16 +224,23 @@ class DevelopmentalCoach:
         return note
 
 
-    def review_and_discuss(self, target, passage: str, turns: int = 3, max_tokens: int = 96) -> dict:
-        """PHASE 2 (SEPARATE from training): nemotron REVIEWS a curriculum passage and DISCUSSES it with
-        the kernel — after the kernel has trained on the curriculum. Nemotron explains/asks; the kernel
-        RESPONDS (its own voice, via the boundary peer); nemotron reads the response and FOLLOWS UP. A real
-        multi-turn conversation to check + deepen understanding — NOT mashed into training, NOT repeated
-        developmental questions. Each turn varies. Returns the dialogue + the kernel's telemetry per turn."""
+    def review_and_discuss(self, target, passage: str, turns: int = 3, max_tokens: int = 96,
+                           learn: bool = True, importance_threshold: float = 0.4) -> dict:
+        """PHASE 2 — nemotron QnA that is ALSO a LEARNING opportunity. Nemotron reviews a curriculum passage
+        and discusses it; the kernel RESPONDS in its own voice (via the boundary peer, which EXTENDS the
+        kernel — conditioned on the kernel's words + telemetry + the question); nemotron reads + FOLLOWS UP.
+
+        TWO things make this real continual learning, not just chat:
+        1. CONTEXT FEEDBACK: the kernel is given the running conversation (passage + prior Q/A) on every
+           follow-up, so it answers in context — not statelessly.
+        2. IMPORTANCE-GATED CONSOLIDATION: the kernel's OWN geometry decides what to learn — bounded novelty
+           (prediction-error = Fisher salience) scores each exchange; only exchanges at/above the threshold
+           are CONSOLIDATED (a real ``train_step`` on the exchange). Low-novelty (already-known/garbage) is
+           NOT learned — its own reasoning remembers key facts, not noise.
+        Returns the dialogue + per-turn importance/consolidated + total learned."""
         live = self.enabled and self.llm.is_available()
         provider = f"ollama:{self.llm.model}" if live else "keyword"
         passage = (passage or "").strip()
-        # nemotron opens: review the passage + ask the first understanding question
         if live:
             q = self.llm.complete(self._REVIEW_SYSTEM,
                                   f'Curriculum passage the student just studied:\n"{passage[:800]}"\n\n'
@@ -242,9 +249,27 @@ class DevelopmentalCoach:
             q = f"What is the key idea in: {passage[:120]}?"
         q = (q or "").strip() or f"What did you take from: {passage[:80]}?"
         dialogue: list[dict] = []
+        ctx: list[str] = [f"Studying this material: {passage[:300]}"]   # rolling conversation context
+        learned = 0
+        can_learn = learn and hasattr(target, "train_step")
         for _ in range(max(1, turns)):
-            kr = target.generate(q, max_tokens=max_tokens)          # the KERNEL answers in its own voice
+            convo = "\n".join(ctx[-7:])
+            kr = target.generate(f"{convo}\nCoach asks: {q}\nAnswer in your own words:", max_tokens=max_tokens)
             kx = kr.telemetry.extra or {}
+            # IMPORTANCE = the kernel's OWN bounded novelty (prediction-error on the exchange). Its geometry
+            # decides — high = novel/worth-learning, low = already-known/garbage.
+            sup, mx = kx.get("surprise"), kx.get("max_surprise")
+            importance = round(min(1.0, float(sup) / float(mx)), 3) if (sup is not None and mx) else None
+            consolidated = False
+            if can_learn and importance is not None and importance >= importance_threshold:
+                try:
+                    target.train_step(f"{passage[:200]} {q} {kr.text}")   # CONSOLIDATE (real learning step)
+                    consolidated = True
+                    learned += 1
+                except Exception:  # noqa: BLE001 — consolidation is best-effort; never break the discussion
+                    pass
+            ctx.append(f"Coach: {q}")
+            ctx.append(f"You: {kr.text}")
             if live:
                 fu = self.llm.complete(
                     self._REVIEW_SYSTEM,
@@ -256,8 +281,11 @@ class DevelopmentalCoach:
                 "coach_question": q,
                 "kernel_answer": kr.text,
                 "kernel_voice": kx.get("kernel_voice"),            # the kernel's OWN raw voice
+                "importance": importance,                          # the kernel's own salience for this exchange
+                "consolidated": consolidated,                      # did it LEARN this exchange?
                 "telemetry": kr.telemetry.to_dict(),
                 "experience": _experience(kr.telemetry.to_dict()).to_dict(),
             })
             q = (fu or "").strip() or "Tell me more."
-        return {"passage": passage[:400], "turns": dialogue, "coach_provider": provider}
+        return {"passage": passage[:400], "turns": dialogue, "coach_provider": provider,
+                "learned": learned, "importance_threshold": importance_threshold}
