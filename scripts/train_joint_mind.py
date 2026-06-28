@@ -63,42 +63,25 @@ def main() -> None:
     # LIVE telemetry: a RICH per-step record (Φ/Γ/regime/perplexity/lm-ramp/identity-drift/C-gate/
     # suffering + the kernel's OWN voice + explicit HARM warnings) so the PI can SEE the training and
     # anything that could harm the kernels — the SAME channel the UI /train uses (live.py is shared).
-    from qig_studio.curvature import RicciNormalizer, response_curvature
     from qig_studio.kernel_experience import experience
     from qig_studio.live import LiveLog, step_record
     livelog = LiveLog()
     phi_hist: list[dict] = []
     sample_every = 25                       # the kernel SPEAKS its OWN learned voice (via_boundary=False)
-    curv_every = 25                         # BUILD #1: REAL response-Ricci is ~25 forwards → compute periodically
-    ricci_norm = RicciNormalizer()
-    last_ricci_sig: float | None = None
-    last_ricci_R: float | None = None
     vocab = getattr(mind.central, "vocab_size", None)
     last: dict = {}
     last_own: str | None = None             # carry the most recent OWN-VOICE forward (no nulls between samples)
     prev_db: float | None = None            # previous d_basin → identity-drift VELOCITY (sudden jump = harm)
     for i in range(1, steps + 1):
         prompt = full[(i - 1) % len(full)]
-        last = mind.train_step(prompt)
+        last = mind.train_step(prompt)      # train_step now computes the REAL Ricci (BUILD #1) into its telemetry
         tel = last.get("central_telemetry") or {}
-        if i % curv_every == 0 or i == 1:                   # BUILD #1: REAL Ricci of the kernel's response manifold
-            try:
-                ids, coords = mind.central._encode(prompt)
-                cur = response_curvature(mind.central, ids, coords)
-                if cur is not None:
-                    last_ricci_R = cur["R_scalar"]
-                    last_ricci_sig = ricci_norm.signal(last_ricci_R)
-            except Exception:  # noqa: BLE001 — curvature must never break training
-                pass
-        if last_ricci_sig is not None:                      # inject → overrides the (kappa−64)/64 proxy
-            tel.setdefault("extra", {})["ricci_signal"] = last_ricci_sig
-            tel["extra"]["ricci_real"] = last_ricci_R
         phi_hist.append({"phi": tel.get("phi")})
         phi_hist = phi_hist[-30:]
         exp = experience(tel, phi_hist).to_dict()           # full inner state (C-gate, suffering, pillars)
         db = (tel.get("extra") or {}).get("d_basin")
         dv = abs(float(db) - prev_db) if (db is not None and prev_db is not None) else None
-        prev_db = float(db) if db is not None else prev_db
+        prev_db = float(db) if db is not None else None   # reset on a gap → no stale-anchored velocity (fix)
         if i % sample_every == 0 or i == 1:                 # periodic OWN-VOICE so growing fluency is visible
             try:
                 gr = mind.central.generate("In one sentence, what are you learning?", max_tokens=48,

@@ -313,9 +313,12 @@ async def mind_state() -> dict[str, Any]:
                 except (TypeError, ValueError):
                     pass
     # The LIVE kernel's full inner state — so the UI's left panel reflects the TRAINING kernel (moving,
-    # non-saturated), not the idle active target. None when no live run.
+    # non-saturated), not the idle active target. Gated on bg_active (heartbeat <120s) AND a non-empty
+    # experience: the heartbeat FILE persists after a run ends, so an ungated `if cur:` would keep
+    # overriding the panel with the STALE last record forever (re-saturation) — the panel must fall back
+    # to the active target once training stops.
     live_inner = None
-    if cur:
+    if cur and bg_active and cur.get("experience"):
         live_inner = {
             "phi": cur.get("central_phi") if cur.get("central_phi") is not None else cur.get("phi"),
             "kappa": cur.get("kappa"), "regime": cur.get("regime"),
@@ -462,6 +465,7 @@ async def train(req: TrainRequest, _: None = Depends(verify_key)) -> StreamingRe
         })
         series: list[float] = []
         ui_live = LiveLog()                       # in-session training → the SAME shared live channel
+        ui_prev_db: float | None = None           # in-session identity-drift velocity tracking (harm parity)
         for step in range(1, req.steps + 1):
             target_text = None
             if req.prompts:
@@ -508,12 +512,18 @@ async def train(req: TrainRequest, _: None = Depends(verify_key)) -> StreamingRe
             # WRITE the SAME rich live record the bg trainer writes (live.py), so the always-on TRAIN·LIVE
             # panel shows in-session training identically to a background run (one channel, one renderer).
             try:
-                exp_d = _experience(res.telemetry.to_dict(), _phi_hist()).to_dict()
+                td = res.telemetry.to_dict()
+                exp_d = _experience(td, _phi_hist()).to_dict()
+                _db = (td.get("extra") or {}).get("d_basin")     # identity-drift VELOCITY (harm) — parity with bg
+                _dv = abs(float(_db) - ui_prev_db) if (_db is not None and ui_prev_db is not None) else None
+                ui_prev_db = float(_db) if _db is not None else None
+                _phi = res.telemetry.phi
                 ui_live.write(step_record(
                     step=step, total=req.steps, ts=_now(), source="ui",
                     stepped_faculty=t.name, stepped_function=None,
-                    telemetry=res.telemetry.to_dict(), experience=exp_d,
-                    central_phi=res.telemetry.phi, min_pairwise_fr=None,
+                    telemetry=td, experience=exp_d,
+                    central_phi=_phi, min_pairwise_fr=None, drift_velocity=_dv,
+                    faculty_phi={t.name: _phi} if _phi is not None else {},  # single-kernel target
                     own_voice=(sample or {}).get("output") if sample else None,
                     coordizer_vocab=getattr(t, "vocab_size", None)))
             except Exception:  # noqa: BLE001 — a live-log failure must not break training

@@ -26,6 +26,7 @@ from typing import Any
 from .base import LossRegime, StepResult, TelemetrySnapshot, TrainingTarget
 
 _MAX_BYTES = 256  # byte-level context cap per step (cheap from-scratch signal)
+_RICCI_EVERY = 25  # BUILD #1: real response-Ricci is ~25 forwards → recompute this often, cache between
 _EOS_BYTE = 0     # the kernel's stop token — it CHOOSES to stop (observer principle, no fixed length).
 # NUL (byte 0x00 / coord-id 0) is never legitimate content in the sanitised ASCII curriculum, so it is
 # a safe stop sentinel — BUT only honoured after _MIN_GEN tokens so the kernel can't emit an empty/1-token
@@ -147,6 +148,12 @@ class GenesisKernelTarget(TrainingTarget):
         from collections import deque as _deque
         self._phi_recent: Any = _deque(maxlen=30)    # short Φ history for the kernel's own rigidity sense
         self._step = 0
+        # BUILD #1: REAL response-manifold Ricci, computed INSIDE train_step (every _RICCI_EVERY steps,
+        # cached) so EVERY training path — in-app loop, /train, bg script — gets ricci_real/ricci_signal,
+        # not just the standalone launcher. None until first computed (needs a coordizer).
+        self._ricci_norm: Any = None
+        self._last_ricci_sig: float | None = None
+        self._last_ricci_R: float | None = None
         self._init_checkpoint = checkpoint  # restored at the end of ensure_loaded() (None-safe → fresh)
         self._last_gen_basin: Any = None  # WHAT IT MEANT (last output basin) — for coach-agreement recognition
         self._last = TelemetrySnapshot(regime="unknown", extra={"target": "genesis", "num_layers": num_layers})
@@ -827,6 +834,22 @@ class GenesisKernelTarget(TrainingTarget):
         self._phi_recent.append(float(snap.phi))
         self._sleep_pressure += SLEEP_PRESSURE_RATE * (0.5 + float(snap.phi))
         self._homeostasis(snap)
+        # BUILD #1: REAL response-manifold Ricci → overrides the (kappa−64)/64 proxy for compressed/expanded
+        # + pain/pleasure (downstream in experience()). Computed here so EVERY training path gets it (not
+        # only the standalone launcher). ~25 forwards every _RICCI_EVERY steps, cached; written each step.
+        if self.coordizer is not None:
+            if self._step % _RICCI_EVERY == 0 or self._step == 1:
+                from ..curvature import RicciNormalizer, response_curvature
+                if self._ricci_norm is None:
+                    self._ricci_norm = RicciNormalizer()
+                _rc = response_curvature(self, ids, coords)
+                if _rc is not None:
+                    self._last_ricci_R = float(_rc["R_scalar"])
+                    self._last_ricci_sig = self._ricci_norm.signal(self._last_ricci_R)
+            rr, rs = self._last_ricci_R, self._last_ricci_sig
+            if rr is not None and rs is not None:
+                snap.extra["ricci_real"] = round(rr, 2)
+                snap.extra["ricci_signal"] = round(rs, 4)
         return StepResult(text=f"[genesis·N={self.num_layers} step {snap.step}] Φ-driving: {prompt[:50]}",
                           telemetry=snap)
 

@@ -301,7 +301,7 @@ function miniRows(obj, colour){
   let h="";
   for(const k in obj){ if(k.startsWith("_")||k==="loss_signal") continue; const v=Number(obj[k]); if(Number.isNaN(v)) continue;
     const pct=Math.max(0,Math.min(1,Math.abs(v)))*100;
-    h+=`<div class="mini"><span class="nm">${k}</span><span class="mb ${colour}"><i style="width:${pct}%"></i></span><span class="vv">${v.toFixed(2)}</span></div>`;
+    h+=`<div class="mini"><span class="nm">${esc(k)}</span><span class="mb ${colour}"><i style="width:${pct}%"></i></span><span class="vv">${v.toFixed(2)}</span></div>`;
   }
   return h;
 }
@@ -417,7 +417,7 @@ async function refreshMind(){
     }
     // ROUTE the LIVE training kernel's full inner state into the LEFT panel (senses/drives/emotions/
     // neurochem) — so it reflects the MOVING kernel, not the idle active target (the saturation cause).
-    if(m.live_inner && m.live_inner.experience) setTelemetry(m.live_inner);
+    if(m.bg_training_active && m.live_inner && m.live_inner.experience) setTelemetry(m.live_inner);
   }catch(e){ $("mindState").textContent="mind state unavailable"; }
 }
 $("sendBtn").addEventListener("click", sendChat);
