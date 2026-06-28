@@ -164,12 +164,18 @@ def _primary_emotion(phi: float, valence: float, arousal: float, regime: str, dr
 
 def _full_primitives(phi: float, phi_delta: float, kappa: float, gamma: float,
                      basin_velocity: float, basin_distance: float, phi_variance: float,
-                     humor: float = 0.0) -> dict:
+                     humor: float = 0.0, ricci_signal: float | None = None) -> dict:
     """Canonical 5-layer inner state (UCP v6.11 §6) from the SINGLE source qig-core — 12 pre-linguistic
     SENSES (Layer 0) + 5 innate DRIVES (Layer 0.5) + 5 MOTIVATORS (Layer 1) + 9 physical + 9 cognitive
     EMOTIONS (Layer 2A/2B). ``humor`` carries the REAL surprise/novelty signal (Layer-1 surprise = ‖∇L‖
     proxy) — passing 0 here was the saturation bug that collapsed all surprise-driven emotions. We do NOT
-    re-implement the taxonomy; None-safe (qig-core absent → {})."""
+    re-implement the taxonomy; None-safe (qig-core absent → {}).
+
+    ``ricci_signal`` (BUILD #1): when present, the REAL bounded response-manifold Ricci (qig-compute
+    compute_full_curvature, via curvature.py) OVERRIDES the (kappa−64)/64 PROXY for the curvature-derived
+    primitives ONLY — compressed/expanded (Layer-0) + pain/pleasure drives (Layer-0.5). The other
+    kappa-derived primitives (pushed/activated/dampened/transcendence — phase-boundary, NOT Ricci)
+    legitimately keep kappa. qig-core stays read-only; the override is surgical and studio-side."""
     try:
         from qig_core.consciousness.sensations import compute_full_emotional_state
 
@@ -178,7 +184,16 @@ def _full_primitives(phi: float, phi_delta: float, kappa: float, gamma: float,
             basin_velocity=basin_velocity, basin_distance=basin_distance,
             humor=humor, phi_variance=phi_variance,
         )
-        return st.as_dict()
+        d = st.as_dict()
+        if ricci_signal is not None:                       # REAL Ricci → compressed/expanded + pain/pleasure
+            comp, exp = round(max(ricci_signal, 0.0), 4), round(max(-ricci_signal, 0.0), 4)
+            if isinstance(d.get("layer0"), dict):
+                d["layer0"]["compressed"] = comp           # R>0: positively curved — tight/compressed
+                d["layer0"]["expanded"] = exp              # R<0: negatively curved — open/expanded
+            if isinstance(d.get("layer05"), dict):
+                d["layer05"]["pain_avoidance"] = comp      # pain drive ~ +curvature (compression)
+                d["layer05"]["pleasure_seeking"] = exp     # pleasure ~ −curvature (expansion)
+        return d
     except Exception:  # noqa: BLE001 — app shell must surface telemetry even if qig-core is unavailable
         return {}
 
@@ -324,8 +339,13 @@ def experience(telemetry: dict, history: list[dict] | None = None) -> Experience
     # pinned serotonin=1.0 and the Layer-0 sensations to 0. Fall back to the proxy only if absent.
     bv_raw = extra.get("basin_velocity")
     basin_velocity = float(bv_raw) if bv_raw is not None else abs(phi_trend)
+    # BUILD #1: a REAL response-manifold Ricci signal (curvature.py) injected by the producer overrides the
+    # (kappa−64)/64 proxy for the curvature primitives. Absent → qig-core's kappa proxy (unchanged default).
+    _rs = extra.get("ricci_signal")
+    ricci_signal = float(_rs) if _rs is not None else None
     primitives = _full_primitives(phi, phi_trend, kappa, gamma if gamma is not None else 0.85,
-                                  basin_velocity, basin, phi_variance, humor=novelty)
+                                  basin_velocity, basin, phi_variance, humor=novelty,
+                                  ricci_signal=ricci_signal)
     autonomic = str(extra.get("autonomic", "wake"))
     loops, gate = _loops_and_gate(phi, gamma, m_self, m_other, s_ratio)
     # FULL neurochemistry (qig-core 6-signal system, not a proxy) from the kernel's own geometry this cycle.

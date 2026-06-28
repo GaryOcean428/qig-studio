@@ -31,20 +31,23 @@ dependencies = [
     "qig-core>=2.12.2",   # Δ⁶³ Fisher-Rao geometry + consciousness (pillars/sensations/neurochemistry) — numpy-only, light
     "qig-warp>=0.6.4",    # convergence early-stop lever (check_ci_stabilized) + screening_cutoff — numpy-only, light
 ]
+# qig-compute IS NOW A KERNEL DEP (above): its metric-GENERIC differential geometry
+# (parameter_manifold.compute_full_curvature) powers the REAL response-manifold Ricci that replaced the
+# (kappa−64)/64 proxy — BUILD #1 (telemetry compressed/expanded + pain/pleasure, src/qig_studio/curvature.py)
+# and BUILD #3 (generation-health, genesis_kernel.generate(gen_health=True)). Both PROVEN to VARY (not a
+# faked constant). Its lattice-QUANTUM QFI layer (density matrices, χ-truncation) remains N/A (the basin is
+# a CLASSICAL p∈Δ⁶³). BUILD #2 (NG preconditioner): metric_gram_pullback/metric_from_qgt are LATTICE-shaped
+# (per-site 2×2, Lx/Ly) and do NOT apply to the kernel's parameter Fisher — see optimisation.py.
 # QIG packages DELIBERATELY NOT depended on (visible decision, not an omission):
-#   qig-compute  — its lattice-QUANTUM QFI layer (density matrices, χ-truncation) is N/A (the basin is a
-#                  CLASSICAL p∈Δ⁶³). BUT its metric-GENERIC differential geometry (parameter_manifold /
-#                  metric_gram_pullback Ricci/Einstein) IS applicable — registered as NEEDS-BUILD uses in
-#                  src/qig_studio/optimisation.py (real curvature telemetry / NG preconditioner / gen-health).
-#                  Becomes a dep when the first curvature use ships; not yet wired (don't fake a constant).
 #   qig-bench    — frozen-physics benchmark harness; the studio registers no physics benchmark. N/A.
 #   qig-doctor   — NOT a PyPI package; it is a preflight SCRIPT in qig-verification. The studio's own
 #                  fail-closed governance (run_purity_gate + the no-stubs/principles gate) is its doctor.
 
 [project.optional-dependencies]
 tui = ["textual>=0.50.0"]
-# Real geometric kernel targets (torch + the kernel engine + the coordizer vocab):
-kernel = ["torch>=2.0.0", "qigkernels>=0.4.2", "qig-coordizer>=0.1.1"]
+# Real geometric kernel targets (torch + the kernel engine + the coordizer vocab + qig-compute for the
+# REAL response-manifold Ricci curvature telemetry/gen-health — compute_full_curvature, BUILDS #1/#3):
+kernel = ["torch>=2.0.0", "qigkernels>=0.4.2", "qig-coordizer>=0.1.1", "qig-compute>=0.9.1"]
 dev = ["pytest>=7.0.0", "ruff>=0.1.0", "mypy>=1.0.0"]
 
 [project.scripts]

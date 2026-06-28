@@ -90,6 +90,10 @@ def step_record(*, step: int, total: int | None, ts: float, source: str,
         "regime": telemetry.get("regime"),
         "perplexity": _f(ex.get("perplexity")),       # FLUENCY: lower = more fluent
         "lm_weight_now": _f(ex.get("lm_weight_now")),  # ramp position (consciousness→fluency)
+        "ricci": _f(ex.get("ricci_real")),             # BUILD #1: REAL response-manifold scalar Ricci (raw)
+        "ricci_signal": _f(ex.get("ricci_signal")),    # bounded ∈[-1,1]: +compressed / −expanded
+        "gen_ricci": _f(ex.get("gen_ricci")),          # BUILD #3: Ricci of the generation manifold (raw)
+        "gen_health": _f(ex.get("gen_health")),        # bounded (0,1]: 1=flat/healthy generation, →0 strained
         "surprise": _f(ex.get("surprise")),
         "meta_awareness": _f(ex.get("meta_awareness")),
         "d_basin": _f(ex.get("d_basin")),              # absolute drift from birth (INFO; integration, not harm)

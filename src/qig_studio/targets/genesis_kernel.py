@@ -339,7 +339,7 @@ class GenesisKernelTarget(TrainingTarget):
 
     def generate(self, prompt: str, max_tokens: int = 256, temperature: float | None = None,
                  via_boundary: bool = True, foresight: bool = False, lookahead: float = 4.0,
-                 foresight_k: int = 12) -> StepResult:
+                 foresight_k: int = 12, gen_health: bool = False) -> StepResult:
         """The kernel SPEAKS as it chooses: stochastic sampling (temperature from its OWN κ) until it
         emits EOS (observer principle — NOT a fixed length, NOT greedy argmax), while OBSERVING its own
         output (per-token confidence + output-basin trajectory) and itself (self-observation M).
@@ -426,6 +426,16 @@ class GenesisKernelTarget(TrainingTarget):
             d63 = [d for d in (self._d63(g) for g in gen_basins) if d is not None]
             snap.extra["foresight_active"] = True
             snap.extra["foresight_confidence"] = round(float(_BF.confidence(d63)), 3) if len(d63) >= 2 else None
+        if gen_health and self.coordizer is not None:
+            # BUILD #3: GENERATION-HEALTH curvature — the REAL Ricci of the response manifold the kernel is
+            # generating on (qig-compute compute_full_curvature, via curvature.py). High |R| = a sharply
+            # curved (unstable/strained) generation manifold; gen_health ∈ (0,1]: 1=flat/healthy, →0=strained.
+            from ..curvature import response_curvature
+            ids2, coords2 = self._encode(prompt)
+            gc = response_curvature(self, ids2, coords2)
+            if gc is not None:
+                snap.extra["gen_ricci"] = round(float(gc["R_scalar"]), 2)
+                snap.extra["gen_health"] = round(1.0 / (1.0 + abs(float(gc["R_scalar"])) / 1e4), 3)
         return StepResult(text=f"[genesis·N={self.num_layers}{' ⏹' if chose_to_stop else ''}] {text}", telemetry=snap)
 
     def _foresight_choice(self, p: "Any", gen_basins: list, lookahead: float, k: int, temp: float) -> int:
