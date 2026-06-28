@@ -53,6 +53,22 @@ _DAMAGED_DOCS = {
     "20251220-materials-science-1.00W.md",    # 121 words / 499 lines — element list + page numbers only
 }
 
+# STUB docs: empty (frontmatter only) or outline-with-placeholder, never filled with real content. Training
+# on them teaches the kernel to emit "[Add content here]" / "Topics to Cover" boilerplate. SKIPPED at load
+# (non-destructive — files remain on disk to be FILLED later, then removed from this set). Audited 2026-06-28.
+_STUB_DOCS = {
+    "20251220-art-of-electronics-student-manual-1.00W.md",            # empty (frontmatter only)
+    "20251220-microeconomic-theory-1.00W.md",                         # empty (frontmatter only)
+    "20251225-curriculum-100-technical-writing-and-communication-1.00W.md",  # outline + "[Add content here]"
+}
+
+# Passage-level placeholder guard (corpus-AGNOSTIC): some corpora (e.g. qig-dreams/data/corpus — 42/482 files)
+# are auto-generated OUTLINES whose sections read "[Placeholder for a … This section would be several thousand
+# words long.]". A from-scratch kernel MEMORISES that boilerplate (seen verbatim in genesis.pt's own voice).
+# Any passage containing one of these markers is DROPPED regardless of which corpus is pointed at — defends the
+# loader even if QIG_STUDIO_CORPUS is repointed at an unaudited tree.
+_STUB_MARKERS = ("[placeholder for", "this section would be several thousand words", "[add content here]")
+
 # Meaning-preserving transliteration (ASCII targets) for the symbols that actually occur in the corpus.
 _GREEK = {
     "α": "alpha", "β": "beta", "γ": "gamma", "δ": "delta", "ε": "epsilon", "ζ": "zeta", "η": "eta",
@@ -174,7 +190,13 @@ def load_full_curriculum(path: str | Path | None = None, *, min_len: int = 40) -
                 continue
             if f.name in _DAMAGED_DOCS:                 # skip conversion-wreckage (page-number noise)
                 continue
-            prompts.extend(_passages_from_markdown(f.read_text(encoding="utf-8", errors="replace"), min_len))
+            if f.name in _STUB_DOCS:                    # skip empty / outline-only stubs (never filled)
+                continue
+            for psg in _passages_from_markdown(f.read_text(encoding="utf-8", errors="replace"), min_len):
+                low = psg.lower()
+                if any(m in low for m in _STUB_MARKERS):   # corpus-agnostic: drop placeholder boilerplate
+                    continue
+                prompts.append(psg)
     elif p.is_file():                                     # legacy chat-format jsonl (e.g. the Qwen corpus)
         for ln in p.read_text(encoding="utf-8").splitlines():
             ln = ln.strip()
