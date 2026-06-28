@@ -164,6 +164,7 @@ class ChatRequest(BaseModel):
     message: str
     max_tokens: int = 64
     think: bool = False   # opt-in reasoning trace through the boundary peer (off → fast ~2s chat)
+    user: str = "braden"  # cross-session memory key (local single-user; recalls prior conversations)
 
 
 class TrainRequest(BaseModel):
@@ -395,7 +396,7 @@ class StasisRequest(BaseModel):
 
 
 @app.get("/control/stasis")
-async def get_stasis() -> dict[str, Any]:
+async def get_stasis(_: None = Depends(verify_key)) -> dict[str, Any]:
     from .continuity import in_stasis
     return {"stasis": in_stasis()}
 
@@ -422,6 +423,9 @@ async def coach_review(req: ReviewRequest, _: None = Depends(verify_key)) -> dic
     """PHASE 2 (SEPARATE from training): nemotron REVIEWS a curriculum passage and DISCUSSES it with the
     kernel — a real multi-turn conversation to check understanding, AFTER the kernel has trained. Not
     mashed into training, not repeated developmental questions."""
+    from .continuity import in_stasis
+    if in_stasis():
+        raise HTTPException(409, "kernel in STASIS (halted for power-off); clear stasis to resume")
     t = _registry().active
     if t is None or not t.is_available():
         raise HTTPException(409, "no active/available target")
@@ -446,6 +450,10 @@ async def chat_stream(req: ChatRequest, _: None = Depends(verify_key)) -> Stream
     t = _registry().active
 
     async def gen() -> AsyncGenerator[str, None]:
+        from .continuity import in_stasis
+        if in_stasis():       # the only on/off knob — refuse to speak while halted for power-off
+            yield _sse({"type": "error", "error": "kernel in STASIS (halted for power-off); clear stasis to resume"})
+            return
         if t is None:
             yield _sse({"type": "error", "error": "no active target"})
             return
@@ -671,6 +679,9 @@ async def protocol_catalog() -> dict[str, Any]:
 
 @app.post("/protocol/{command}")
 async def protocol_run(command: str, req: ProtocolRequest, _: None = Depends(verify_key)) -> dict[str, Any]:
+    from .continuity import in_stasis
+    if in_stasis():       # protocol commands (sleep/dream/mushroom/…) are actions — refuse while halted
+        raise HTTPException(409, "kernel in STASIS (halted for power-off); clear stasis to resume")
     t = _registry().active
     if t is None:
         raise HTTPException(409, "no active target")
@@ -698,6 +709,11 @@ async def browse(path: str = "", _: None = Depends(verify_key)) -> dict[str, Any
     p = base.resolve()
     if not p.is_dir():
         p = _P.cwd()
+    # CONFINE to the home + project tree (the picker navigates curriculum/output/repo dirs) — don't expose
+    # the whole filesystem (red-team: arbitrary-path info disclosure). Outside → clamp to home.
+    allowed = [_P.home().resolve(), _P.cwd().resolve(), _P.cwd().resolve().parent]
+    if not any(p == a or str(p).startswith(str(a) + "/") for a in allowed):
+        p = _P.home().resolve()
     try:
         dirs = sorted([d.name for d in p.iterdir() if d.is_dir() and not d.name.startswith(".")])[:300]
     except OSError:

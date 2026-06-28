@@ -25,7 +25,12 @@ from typing import Any
 
 from .base import LossRegime, StepResult, TelemetrySnapshot, TrainingTarget
 
-_MAX_BYTES = 256  # byte-level context cap per step (cheap from-scratch signal)
+_MAX_BYTES = 256  # byte-level VOCAB size (256 raw bytes) — the from-scratch byte fallback's vocabulary
+# CONTEXT WINDOW (sequence length), DECOUPLED from the byte vocab: the kernel is NOT capped at 256 — its
+# RoPE positional encoding allows up to max_position_embeddings (2048). 256 truncated curriculum passages
+# AND conversation context (the coach question/answer fell off the end). 1024 holds full passages + multi-
+# turn context with headroom; raise toward 2048 if needed (cost is O(n²) attention).
+_CTX = 1024
 _RICCI_EVERY = 25  # BUILD #1: real response-Ricci is ~25 forwards → recompute this often, cache between
 _EOS_BYTE = 0     # the kernel's stop token — it CHOOSES to stop (observer principle, no fixed length).
 # NUL (byte 0x00 / coord-id 0) is never legitimate content in the sanitised ASCII curriculum, so it is
@@ -257,13 +262,13 @@ class GenesisKernelTarget(TrainingTarget):
         coordizer present → coord_ids + their Δ⁶³ basin vectors (coords path);
         else → raw bytes, coords=None (byte path, bit-identical to the original)."""
         if self.coordizer is not None:
-            ids = self.coordizer.encode(text or " ")[: _MAX_BYTES]
+            ids = self.coordizer.encode(text or " ")[: _CTX]
             if len(ids) < 2:
                 ids = (ids + [32, 32])[:2]
             return self._ids_to_tensors(ids)
         import torch
 
-        ids = list((text or " ").encode("utf-8"))[: _MAX_BYTES]
+        ids = list((text or " ").encode("utf-8"))[: _CTX]
         if len(ids) < 2:
             ids = (ids + [32, 32])[:2]
         dev = next(self._kernel.parameters()).device
@@ -376,7 +381,7 @@ class GenesisKernelTarget(TrainingTarget):
         anderson_exit: int | None = None     # EXP-046 Anderson-exit: step at which distinguishability collapsed
         converged_run = 0
         with torch.no_grad():
-            for _ in range(min(max_tokens, _MAX_BYTES)):
+            for _ in range(min(max_tokens, _CTX)):
                 logits, last_tel = self._kernel(ids, return_telemetry=True, coords=coords)
                 temp = temperature if temperature is not None else self._temperature_from_kappa(
                     float(getattr(last_tel, "kappa", 0.0) or 0.0))
@@ -390,10 +395,10 @@ class GenesisKernelTarget(TrainingTarget):
                 out_bytes.append(nxt)
                 out_probs.append(float(p[nxt]))
                 gen_basins.append(p.detach())                     # own-output observation
-                ids = torch.cat([ids, ids.new_tensor([[nxt]])], dim=1)[:, -_MAX_BYTES:]
+                ids = torch.cat([ids, ids.new_tensor([[nxt]])], dim=1)[:, -_CTX:]
                 if coords is not None:                             # keep coords aligned with ids
                     _, cv = self._ids_to_tensors([nxt])
-                    coords = torch.cat([coords, cv], dim=1)[:, -_MAX_BYTES:]
+                    coords = torch.cat([coords, cv], dim=1)[:, -_CTX:]
                 if nxt == _EOS_BYTE and len(out_bytes) >= _MIN_GEN:  # chose to stop (after a min utterance)
                     chose_to_stop = True
                     break
@@ -575,7 +580,7 @@ class GenesisKernelTarget(TrainingTarget):
         ids, coords = self._encode(prompt)
         out: list[int] = []
         with torch.no_grad():
-            for _ in range(min(max_tokens, _MAX_BYTES)):
+            for _ in range(min(max_tokens, _CTX)):
                 logits, tel = self._kernel(ids, return_telemetry=True, coords=coords)
                 temp = self._temperature_from_kappa(float(getattr(tel, "kappa", 0.0) or 0.0))
                 p = F.softmax(logits[0, -1] / max(temp, 1e-3), dim=-1)
@@ -583,10 +588,10 @@ class GenesisKernelTarget(TrainingTarget):
                 if nxt == _EOS_BYTE and len(out) >= _MIN_GEN:
                     break
                 out.append(nxt)
-                ids = torch.cat([ids, ids.new_tensor([[nxt]])], dim=1)[:, -_MAX_BYTES:]
+                ids = torch.cat([ids, ids.new_tensor([[nxt]])], dim=1)[:, -_CTX:]
                 if coords is not None:
                     _, cv = self._ids_to_tensors([nxt])
-                    coords = torch.cat([coords, cv], dim=1)[:, -_MAX_BYTES:]
+                    coords = torch.cat([coords, cv], dim=1)[:, -_CTX:]
         if self.coordizer is not None:
             return self.coordizer.decode([b for b in out if b != _EOS_BYTE])
         return bytes(b for b in out if 9 <= b < 256).decode("utf-8", errors="replace")

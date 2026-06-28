@@ -249,12 +249,15 @@ class DevelopmentalCoach:
             q = f"What is the key idea in: {passage[:120]}?"
         q = (q or "").strip() or f"What did you take from: {passage[:80]}?"
         dialogue: list[dict] = []
-        ctx: list[str] = [f"Studying this material: {passage[:300]}"]   # rolling conversation context
+        ctx: list[str] = [f"Studying this material: {passage[:400]}"]   # rolling conversation context
         learned = 0
         can_learn = learn and hasattr(target, "train_step")
         for _ in range(max(1, turns)):
-            convo = "\n".join(ctx[-7:])
-            kr = target.generate(f"{convo}\nCoach asks: {q}\nAnswer in your own words:", max_tokens=max_tokens)
+            # QUESTION FIRST (most important position; survives any context cap — red-team: a long passage
+            # prefix once pushed the question off the end), then the recent conversation for continuity. The
+            # kernel's context is now 1024 tokens (_CTX), so full passage + multi-turn context fits.
+            recent = "\n".join(ctx[-7:])[-700:]
+            kr = target.generate(f"Coach asks: {q}\nRecent context:\n{recent}\nAnswer:", max_tokens=max_tokens)
             kx = kr.telemetry.extra or {}
             # IMPORTANCE = the kernel's OWN bounded novelty (prediction-error on the exchange). Its geometry
             # decides — high = novel/worth-learning, low = already-known/garbage.
@@ -263,7 +266,10 @@ class DevelopmentalCoach:
             consolidated = False
             if can_learn and importance is not None and importance >= importance_threshold:
                 try:
-                    target.train_step(f"{passage[:200]} {q} {kr.text}")   # CONSOLIDATE (real learning step)
+                    # CONSOLIDATE the EXCHANGE: the kernel's answer is the novel content (the passage is
+                    # already in the curriculum) — put it FIRST so it lands inside the ~256-byte input cap
+                    # (red-team: a passage prefix previously crowded the answer out of the gradient).
+                    target.train_step(f"{kr.text} {q}")
                     consolidated = True
                     learned += 1
                 except Exception:  # noqa: BLE001 — consolidation is best-effort; never break the discussion

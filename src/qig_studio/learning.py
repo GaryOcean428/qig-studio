@@ -496,7 +496,10 @@ class ContinuousLearningLoop:
         return rec
 
     def run(self, n: int | None = None) -> LoopSummary:
+        from .continuity import in_stasis
         for _ in range(n if n is not None else self.max_steps):
+            if in_stasis():       # the only on/off knob — an always-on loop MUST halt for power-off
+                break
             self.step()
         return self.summary()
 
