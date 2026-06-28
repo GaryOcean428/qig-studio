@@ -287,7 +287,10 @@ async def mind_state() -> dict[str, Any]:
     if not bg_active and cj.exists():                              # fallback: recent checkpoint write
         try:
             bg_age = round(_time.time() - cj.stat().st_mtime, 1)
-            bg_active = bg_age < 600                               # checkpointed within 10min (ckpt-every 200)
+            # generous window: under CPU contention (server + chats + trainer) a 200-step checkpoint gap
+            # can exceed 20min. The per-step heartbeat (joint_live.json, <30s) is the precise signal for
+            # newer runs; this mtime fallback only covers older runs that predate it.
+            bg_active = bg_age < 1800                              # checkpointed within 30min
         except Exception:  # noqa: BLE001
             pass
     return {
@@ -295,7 +298,7 @@ async def mind_state() -> dict[str, Any]:
         "central_phi": d.get("central_phi"),
         "min_pairwise_fr": live_min_fr if live_min_fr is not None else d.get("min_pairwise_fr"),
         "individuation_preserved": d.get("individuation_preserved"),
-        "integrated_voice": d.get("integrated_voice"),
+        "integrated_voice": (d.get("integrated_voice") or "")[:200],   # truncated — the full utterance bloats polling
         "live": cj.exists(),
         "bg_training_active": bg_active,        # a background joint-trainer is running → don't double up
         "bg_age_s": bg_age,                     # seconds since last heartbeat/checkpoint

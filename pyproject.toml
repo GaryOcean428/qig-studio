@@ -32,9 +32,11 @@ dependencies = [
     "qig-warp>=0.6.4",    # convergence early-stop lever (check_ci_stabilized) + screening_cutoff — numpy-only, light
 ]
 # QIG packages DELIBERATELY NOT depended on (visible decision, not an omission):
-#   qig-compute  — lattice-quantum QFI (density matrices, χ-truncation). N/A: the studio's basin is a
-#                  CLASSICAL probability vector p∈Δ⁶³; its Fisher-Rao geometry is in qig-core. No quantum
-#                  state to compute QFI over. (See src/qig_studio/optimisation.py for the dated ruling.)
+#   qig-compute  — its lattice-QUANTUM QFI layer (density matrices, χ-truncation) is N/A (the basin is a
+#                  CLASSICAL p∈Δ⁶³). BUT its metric-GENERIC differential geometry (parameter_manifold /
+#                  metric_gram_pullback Ricci/Einstein) IS applicable — registered as NEEDS-BUILD uses in
+#                  src/qig_studio/optimisation.py (real curvature telemetry / NG preconditioner / gen-health).
+#                  Becomes a dep when the first curvature use ships; not yet wired (don't fake a constant).
 #   qig-bench    — frozen-physics benchmark harness; the studio registers no physics benchmark. N/A.
 #   qig-doctor   — NOT a PyPI package; it is a preflight SCRIPT in qig-verification. The studio's own
 #                  fail-closed governance (run_purity_gate + the no-stubs/principles gate) is its doctor.
