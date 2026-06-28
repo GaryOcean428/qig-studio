@@ -31,7 +31,7 @@
   .divider:hover::after{background:var(--blue)}
   .app.noleft #divL,.app.noright #divR{display:none}
   .col{background:var(--panel);border:1px solid var(--edge);border-radius:10px;padding:.8rem;
-       display:flex;flex-direction:column;min-height:0;overflow:hidden}
+       display:flex;flex-direction:column;min-height:0;overflow-y:auto;overflow-x:hidden}
   /* thin themed scrollbars everywhere (Chromium + Firefox) */
   *{scrollbar-width:thin;scrollbar-color:var(--edge) transparent}
   ::-webkit-scrollbar{width:10px;height:10px}
@@ -101,7 +101,7 @@
   #autoLog .sys{color:var(--muted)} #autoLog .err{color:var(--pink)} #autoLog .reg{color:var(--purple)}
   /* ---- TRAIN · LIVE rich stream (qig_chat-quality, colorblind-safe: purple/blue/amber/teal/pink) ---- */
   #liveStream{overflow:auto;background:var(--panel2);border:1px solid var(--edge);border-radius:8px;
-    padding:.5rem;margin-top:.5rem;font-size:.76rem;flex:1 1 auto;min-height:160px;resize:vertical}
+    padding:.5rem;margin-top:.5rem;font-size:.76rem;height:360px;min-height:200px;max-height:75vh;resize:vertical}
   .lrow{padding:.3rem .15rem;border-bottom:1px solid rgba(255,255,255,.05)}
   .lrow .hd{display:flex;flex-wrap:wrap;gap:.3rem;align-items:center}
   .lrow .stp{color:var(--muted);font-variant-numeric:tabular-nums}
@@ -245,6 +245,8 @@ function clog(cls, msg){ const el=$("log"); const d=document.createElement("div"
 // ---- TRAIN · LIVE: ONE rich renderer for the shared live stream (bg OR in-session). qig_chat-quality.
 function fnum(x,d){ return (x==null||isNaN(x)) ? "—" : Number(x).toFixed(d); }
 function esc(s){ return String(s==null?"":s).replace(/[&<>"']/g,(c)=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+// fluency = perplexity (lower = more fluent). Big early (~vocab size) for a fresh 100k kernel; descends as it learns.
+function fppl(x){ if(x==null||isNaN(x)) return "—"; x=Number(x); return x>=1000 ? (x/1000).toFixed(x>=10000?0:1)+"k" : x.toFixed(0); }
 let LAST_LIVE_TS = 0;       // wall-clock of last RENDERED record (idle detector)
 let LIVE_SEEN_TS = 0;       // record-ts of last rendered step — de-dups EventSource reconnect replays
 function renderLive(r){
@@ -263,12 +265,12 @@ function renderLive(r){
     `<span class="src">${esc(r.source||"")}</span>`+
     `<span class="bdg phi">Φ ${fnum(r.phi,3)}</span>`+
     `<span class="bdg gam">Γ ${fnum(r.gamma,2)}</span>`+
-    `<span class="bdg ppl">fluency·ppl ${fnum(r.perplexity,0)}</span>`+
+    `<span class="bdg ppl" title="perplexity — lower = more fluent; ~vocab when untrained, descends as it learns">fluency ${fppl(r.perplexity)}↓</span>`+
     `<span class="bdg lm">lm ${fnum(r.lm_weight_now,2)}</span>`+
     `<span class="bdg gate ${gateCls}">${esc(gate)}</span>`;
   row.appendChild(hd);
   const sub=document.createElement("div"); sub.className="sub";
-  sub.textContent = `S ${fnum(r.suffering_S,3)} · drift ${fnum(r.d_basin,3)} · regime ${r.regime||"—"}`
+  sub.textContent = `S ${fnum(r.suffering_S,3)} · drift ${fnum(r.d_basin,3)} (Δ${fnum(r.drift_velocity,3)}) · regime ${r.regime||"—"}`
     + (r.min_pairwise_fr!=null?` · indiv ${fnum(r.min_pairwise_fr,3)}`:"")
     + (r.coordizer_vocab?` · vocab ${r.coordizer_vocab}`:"");
   row.appendChild(sub);
@@ -280,7 +282,7 @@ function renderLive(r){
   el.scrollTop=el.scrollHeight;
   const age = r.ts ? Math.max(0,(Date.now()/1000 - r.ts)) : null;
   $("liveDot").className="dot live";
-  $("liveStatus").textContent = `${r.source==="bg"?"background":"in-session"} training · step ${r.step}${r.total?("/"+r.total):""} · Φ ${fnum(r.phi,3)} · fluency(ppl↓) ${fnum(r.perplexity,0)} · lm ${fnum(r.lm_weight_now,2)}${age!=null?(" · "+age.toFixed(0)+"s ago"):""}`;
+  $("liveStatus").textContent = `${r.source==="bg"?"background":"in-session"} training · step ${r.step}${r.total?("/"+r.total):""} · Φ ${fnum(r.phi,3)} · fluency ${fppl(r.perplexity)}↓ · lm ${fnum(r.lm_weight_now,2)}${age!=null?(" · "+age.toFixed(0)+"s ago"):""}`;
   LAST_LIVE_TS = Date.now();
 }
 function subscribeLive(){
@@ -356,7 +358,7 @@ $("togL").onclick=()=>$("app").classList.toggle("noleft");
 $("togR").onclick=()=>$("app").classList.toggle("noright");
 // resizable columns — drag the dividers; widths persist in localStorage.
 const _app=$("app");
-for(const [id,var_,side,min,max] of [["divL","--lw","left",200,640],["divR","--rw","right",240,640]]){
+for(const [id,var_,side,min,max] of [["divL","--lw","left",200,900],["divR","--rw","right",240,900]]){
   const saved=localStorage.getItem("qs"+var_); if(saved) _app.style.setProperty(var_, saved+"px");
   const h=$(id); if(!h) continue;
   h.addEventListener("mousedown",(e)=>{
@@ -413,6 +415,9 @@ async function refreshMind(){
         `<span class="vv">${f.phi!=null?phi.toFixed(2):"—"}</span></div>`+
         `<div class="rg" style="margin:-3px 0 4px 80px">${f.function}${f.regulated?` · 🌙${f.regulated.intervention}`:""}</div>`);
     }
+    // ROUTE the LIVE training kernel's full inner state into the LEFT panel (senses/drives/emotions/
+    // neurochem) — so it reflects the MOVING kernel, not the idle active target (the saturation cause).
+    if(m.live_inner && m.live_inner.experience) setTelemetry(m.live_inner);
   }catch(e){ $("mindState").textContent="mind state unavailable"; }
 }
 $("sendBtn").addEventListener("click", sendChat);
@@ -527,7 +532,7 @@ async function loadConfig(){
 }
 // boot
 refreshHealth(); loadConfig(); loadTargets(); refreshTelemetry(); refreshMind(); subscribeLive();
-setInterval(refreshMind, 8000);
+setInterval(refreshMind, 3000);   // 3s: keep the LEFT live inner-state panel responsive during training
 </script>
 </body>
 </html>

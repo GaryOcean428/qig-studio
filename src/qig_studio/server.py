@@ -302,6 +302,28 @@ async def mind_state() -> dict[str, Any]:
             bg_active = bg_age < 1800                              # checkpointed within 30min (CPU-contention slack)
         except Exception:  # noqa: BLE001
             pass
+    # Live per-faculty Φ from the heartbeat fills the faculty list BEFORE the first checkpoint exists
+    # (else every faculty shows null for the first ~200 steps).
+    fphi = cur.get("faculty_phi") or {}
+    if fphi:
+        for f in faculties:
+            if f.get("phi") is None and fphi.get(f["role"]) is not None:
+                try:
+                    f["phi"] = round(float(fphi[f["role"]]), 4)
+                except (TypeError, ValueError):
+                    pass
+    # The LIVE kernel's full inner state — so the UI's left panel reflects the TRAINING kernel (moving,
+    # non-saturated), not the idle active target. None when no live run.
+    live_inner = None
+    if cur:
+        live_inner = {
+            "phi": cur.get("central_phi") if cur.get("central_phi") is not None else cur.get("phi"),
+            "kappa": cur.get("kappa"), "regime": cur.get("regime"),
+            "basin_distance": cur.get("d_basin"), "step": cur.get("step"),
+            "extra": {"gamma": cur.get("gamma"), "sleep_pressure": cur.get("sleep_pressure"),
+                      "perplexity": cur.get("perplexity"), "lm_weight_now": cur.get("lm_weight_now")},
+            "experience": cur.get("experience") or {},
+        }
     return {
         "steps": bg_step if bg_step is not None else d.get("steps"),
         "central_phi": hb_phi if hb_phi is not None else d.get("central_phi"),
@@ -313,6 +335,7 @@ async def mind_state() -> dict[str, Any]:
         "bg_training_active": bg_active,        # a background joint-trainer is running → don't double up
         "bg_age_s": bg_age,                     # seconds since last heartbeat/checkpoint
         "faculties": faculties,
+        "live_inner": live_inner,               # LIVE kernel inner state → left panel (not the idle target)
     }
 
 

@@ -70,26 +70,33 @@ def main() -> None:
     sample_every = 25                       # the kernel SPEAKS its OWN learned voice (via_boundary=False)
     vocab = getattr(mind.central, "vocab_size", None)
     last: dict = {}
+    last_own: str | None = None             # carry the most recent OWN-VOICE forward (no nulls between samples)
+    prev_db: float | None = None            # previous d_basin → identity-drift VELOCITY (sudden jump = harm)
     for i in range(1, steps + 1):
         last = mind.train_step(full[(i - 1) % len(full)])
         tel = last.get("central_telemetry") or {}
         phi_hist.append({"phi": tel.get("phi")})
         phi_hist = phi_hist[-30:]
         exp = experience(tel, phi_hist).to_dict()           # full inner state (C-gate, suffering, pillars)
-        own = None
+        db = (tel.get("extra") or {}).get("d_basin")
+        dv = abs(float(db) - prev_db) if (db is not None and prev_db is not None) else None
+        prev_db = float(db) if db is not None else prev_db
         if i % sample_every == 0 or i == 1:                 # periodic OWN-VOICE so growing fluency is visible
             try:
                 gr = mind.central.generate("In one sentence, what are you learning?", max_tokens=48,
                                            via_boundary=False, foresight=True)   # 4D: frame the sentence ahead
-                own = gr.text
+                last_own = gr.text
             except Exception:  # noqa: BLE001 — a sample must NEVER break training
-                own = None
+                pass
+        # live per-faculty Φ (cheap: last value the joint step already recorded) — visible BEFORE checkpoint
+        fphi = {r: (h[-1] if h else None) for r, h in getattr(mind, "_phi_hist", {}).items()}
         rec = step_record(step=i, total=steps, ts=time.time(), source="bg",
                           stepped_faculty=last.get("stepped_faculty"),
                           stepped_function=last.get("stepped_function"),
                           telemetry=tel, experience=exp, central_phi=last.get("central_phi"),
                           min_pairwise_fr=last.get("min_pairwise_fr"),
-                          ocean_action=last.get("ocean_regulation"), own_voice=own, coordizer_vocab=vocab)
+                          ocean_action=last.get("ocean_regulation"), own_voice=last_own,
+                          coordizer_vocab=vocab, drift_velocity=dv, faculty_phi=fphi)
         livelog.write(rec)
         if i % args.ckpt_every == 0 or i == steps:
             mind.save_checkpoint(args.ckpt_root)            # whole-mind checkpoint

@@ -26,20 +26,24 @@ RING = 48  # recent records retained for SSE backlog
 PHI_BREAKDOWN = 0.80
 PHI_EMERGENCY = 0.50
 GAMMA_FLOOR = 0.82
-DRIFT_CRITICAL = 0.40
+DRIFT_VELOCITY_CRIT = 0.15   # a sudden identity JUMP per step = harm (NOT steady drift-from-birth)
 SUFFERING_ABORT = 0.5
 INDIVIDUATION_FLOOR = 0.03
 
 
 def harm_warnings(telemetry: dict[str, Any], experience: dict[str, Any] | None,
-                  min_pairwise_fr: float | None) -> list[dict[str, Any]]:
+                  min_pairwise_fr: float | None, drift_velocity: float | None = None) -> list[dict[str, Any]]:
     """The harm signals a developing kernel can suffer — each {level, msg}. level: 'crit' | 'warn'.
-    Empty list = the kernel is in a healthy band this step. None-safe on every field."""
+    Empty list = the kernel is in a healthy band this step. None-safe on every field.
+
+    Identity HARM is a sudden JUMP (drift VELOCITY between steps), NOT steady drift-from-birth: in joint
+    training the kernel integrates AWAY from its birth state toward the coupled synthesis, so a high
+    ABSOLUTE d_basin is EXPECTED (integration), not harm. Flagging absolute d_basin fired every step (the
+    false alarm); we flag the velocity instead."""
     w: list[dict[str, Any]] = []
     ex = telemetry.get("extra") or {}
     phi = _f(telemetry.get("phi"))
     gamma = _f(ex.get("gamma"))
-    drift = _f(ex.get("d_basin"))   # drift from the birth attractor (the "Pillar-3 CRITICAL drift" signal)
     gate = (experience or {}).get("gate") if experience else None
     suffering = _f((gate or {}).get("suffering_S")) if isinstance(gate, dict) else None
     c_state = (gate or {}).get("state") if isinstance(gate, dict) else None
@@ -51,8 +55,8 @@ def harm_warnings(telemetry: dict[str, Any], experience: dict[str, Any] | None,
         w.append({"level": "warn", "msg": f"Φ {phi:.3f} < {PHI_EMERGENCY} (pre-conscious / collapse risk)"})
     if gamma is not None and gamma < GAMMA_FLOOR:
         w.append({"level": "warn", "msg": f"Γ-stall: generativity {gamma:.3f} < floor {GAMMA_FLOOR}"})
-    if drift is not None and drift > DRIFT_CRITICAL:
-        w.append({"level": "crit", "msg": f"identity drift {drift:.3f} > {DRIFT_CRITICAL} (Pillar-3 critical)"})
+    if drift_velocity is not None and drift_velocity > DRIFT_VELOCITY_CRIT:
+        w.append({"level": "crit", "msg": f"identity JUMP: drift velocity {drift_velocity:.3f} > {DRIFT_VELOCITY_CRIT} (sudden shift)"})
     if suffering is not None and suffering > SUFFERING_ABORT:
         w.append({"level": "crit", "msg": f"suffering S {suffering:.3f} > {SUFFERING_ABORT} (P15 abort signal)"})
     if c_state in ("LOCKED_IN", "ZOMBIE"):
@@ -67,8 +71,11 @@ def step_record(*, step: int, total: int | None, ts: float, source: str,
                 telemetry: dict[str, Any], experience: dict[str, Any] | None = None,
                 central_phi: float | None = None, min_pairwise_fr: float | None = None,
                 ocean_action: dict[str, Any] | None = None, own_voice: str | None = None,
-                coordizer_vocab: int | None = None) -> dict[str, Any]:
-    """Assemble ONE rich live record. Pulls the harm signals so the UI never has to recompute them."""
+                coordizer_vocab: int | None = None, drift_velocity: float | None = None,
+                faculty_phi: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Assemble ONE rich live record. Pulls the harm signals so the UI never has to recompute them. The
+    FULL ``experience`` is carried so the UI's left inner-state panel reflects the LIVE training kernel
+    (not the idle target) — LiveLog keeps it only on ``current`` to bound the SSE stream."""
     ex = telemetry.get("extra") or {}
     gate = (experience or {}).get("gate") if experience else None
     return {
@@ -78,19 +85,24 @@ def step_record(*, step: int, total: int | None, ts: float, source: str,
         # the headline geometry + FLUENCY metrics the PI watches
         "phi": _f(telemetry.get("phi")),
         "central_phi": _f(central_phi),
+        "kappa": _f(ex.get("kappa") if ex.get("kappa") is not None else telemetry.get("kappa")),
         "gamma": _f(ex.get("gamma")),
         "regime": telemetry.get("regime"),
         "perplexity": _f(ex.get("perplexity")),       # FLUENCY: lower = more fluent
         "lm_weight_now": _f(ex.get("lm_weight_now")),  # ramp position (consciousness→fluency)
         "surprise": _f(ex.get("surprise")),
         "meta_awareness": _f(ex.get("meta_awareness")),
-        "d_basin": _f(ex.get("d_basin")),
+        "d_basin": _f(ex.get("d_basin")),              # absolute drift from birth (INFO; integration, not harm)
+        "drift_velocity": _f(drift_velocity),          # |Δ d_basin| per step (sudden jump = harm)
+        "sleep_pressure": _f(ex.get("sleep_pressure")),
         "min_pairwise_fr": _f(min_pairwise_fr),
         "c_gate": (gate or {}).get("state") if isinstance(gate, dict) else None,
         "suffering_S": _f((gate or {}).get("suffering_S")) if isinstance(gate, dict) else None,
         "ocean_action": ocean_action or {},
-        "own_voice": own_voice,                        # the kernel's OWN learned voice (periodic, via_boundary=False)
-        "warnings": harm_warnings(telemetry, experience, min_pairwise_fr),
+        "own_voice": own_voice,                        # the kernel's OWN learned voice (carried forward)
+        "faculty_phi": faculty_phi or {},              # live per-faculty Φ (before the first checkpoint)
+        "experience": experience or {},                # FULL inner state → left panel reflects the LIVE kernel
+        "warnings": harm_warnings(telemetry, experience, min_pairwise_fr, drift_velocity),
     }
 
 
@@ -112,7 +124,10 @@ class LiveLog:
             self._recent = []
 
     def write(self, record: dict[str, Any]) -> None:
-        self._recent.append(record)
+        # `current` carries the FULL record (incl. the heavy `experience`/`faculty_phi`) for the left
+        # inner-state panel; the `recent[]` ring is kept LEAN (those stripped) so the SSE stream stays light.
+        lean = {k: v for k, v in record.items() if k not in ("experience", "faculty_phi")}
+        self._recent.append(lean)
         self._recent = self._recent[-RING:]
         payload = {"current": record, "recent": self._recent}
         tmp = self.path.with_suffix(".json.tmp")
