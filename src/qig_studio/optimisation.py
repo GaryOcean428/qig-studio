@@ -27,16 +27,26 @@ Honestly NOT applicable (capability analysis, not laziness):
     • metric-GENERIC differential geometry (``geometry/parameter_manifold.compute_full_curvature``,
       ``geometry/metric_gram_pullback.ricci_scalar_gram``, christoffel/Ricci/Einstein) — APPLICABLE.
       These take a METRIC TENSOR, not a quantum state, so they give REAL scalar curvature of ANY
-      Riemannian manifold, including the kernel's information geometry. Registered genuine uses
-      (each a real metric-construction + validation — an EXP, not a 1-line swap; do NOT fake-wire a
-      constant — the bare Δ⁶³ simplex is constant-curvature, so the varying signal is the kernel's
-      PARAMETER/OUTPUT Fisher manifold):
-        1. TELEMETRY — replace the (κ−64)/64 Ricci PROXY in Layer-0 sensations (compressed/expanded) +
-           Layer-0.5 drives (pain/pleasure = ±curvature) with REAL Ricci via compute_full_curvature on
-           a reduced output-Fisher patch.
-        2. TRAINING — richer natural-gradient preconditioner: metric_gram_pullback / metric_from_qgt give
-           a PSD Fisher metric beyond the diagonal NaturalGradientDescent uses (lives in qigkernels).
-        3. INFERENCE — generation-health curvature: Ricci of the output-distribution trajectory.
+      Riemannian manifold, including the kernel's information geometry. Status after building (2026-06-28):
+        1. TELEMETRY — SHIPPED (commit 412aad3): the (κ−64)/64 Ricci PROXY (constant when κ is stable —
+           it gave compressed/expanded the SAME 0.679 every prompt) is replaced by the REAL scalar Ricci
+           of the kernel's RESPONSE manifold (``curvature.py`` → compute_full_curvature on a 2-direction
+           input-perturbation Fisher patch). Overrides compressed/expanded (Layer-0) + pain/pleasure
+           (Layer-0.5) ONLY; κ-derived phase fields keep κ. PROVEN to VARY (0.466/0.572/0.583 vs the
+           constant 0.679). RicciNormalizer (EMA signed-log) keeps the bounded signal varying — no faked
+           constant. The "varying signal lives in the kernel's nonlinearity, NOT the constant-curvature
+           bare simplex" caveat was the design key.
+        3. INFERENCE — SHIPPED (412aad3): generation-health curvature, ``generate(gen_health=True)`` →
+           gen_ricci + gen_health∈(0,1] (1=flat/healthy, →0 strained). PROVEN to VARY.
+        2. TRAINING — RETIRED as MISIDENTIFIED (honest finding, 2026-06-28; NOT cargo-culted): the named
+           functions ``metric_gram_pullback`` / ``metric_from_qgt`` are LATTICE-specific (a per-site 2×2
+           metric field, N = Lx·Ly) — they do NOT apply to the kernel's parameter Fisher. And a FULL PSD
+           Fisher over the kernel's MILLIONS of parameters is O(P²) — infeasible (this is exactly WHY the
+           kernel uses the DIAGONAL natural gradient, which IS the tractable, geometrically-correct Fisher
+           preconditioner). A low-rank/K-FAC-style PSD enrichment is a possible FUTURE qigkernels EXP
+           (unproven — would need an A/B control before claiming improvement, per the frame-after-controls
+           rule), but it is NOT a qig-compute use. Forcing the lattice function here = the cargo-cult the
+           rules forbid; so #2 is honestly closed, not faked.
 - **qig-bench** — a FROZEN-PHYSICS benchmark harness; ``format_table`` is bound to the package's
   registered ``BENCHMARKS``. No genesis benchmark to register; forcing one = cargo-cult.
 - **qig-doctor** — not a package (it is ``qig-verification/scripts/qig_doctor.py``).
