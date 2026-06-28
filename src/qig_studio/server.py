@@ -132,6 +132,17 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             f"refusing to bind non-loopback host '{settings.host}' without QIG_STUDIO_KEY "
             "(fail-closed auth — council red-team P0-F2)"
         )
+    # BOOT WARMUP: eagerly load + warm the active target off the event loop so the FIRST /telemetry is
+    # LIVE (Φ/κ/regime/pillars populated), not a misleading step-0 zero state. None-safe: a target whose
+    # backend is absent just stays cold (degrades, never blocks boot).
+    async def _warm() -> None:
+        t = app.state.registry.active
+        if t is not None and t.is_available():
+            try:
+                await asyncio.get_event_loop().run_in_executor(None, t.ensure_loaded)
+            except Exception:  # noqa: BLE001 — warmup is best-effort
+                pass
+    asyncio.create_task(_warm())
     yield
     # (no special shutdown for Phase 1)
 

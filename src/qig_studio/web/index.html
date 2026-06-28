@@ -21,11 +21,23 @@
   header .tog{cursor:pointer;background:#1c2532;border:1px solid var(--edge);border-radius:7px;
               color:var(--ink);padding:.25rem .55rem;font:inherit;font-size:.74rem}
   header .tog:hover{border-color:var(--blue)}
-  .app{flex:1 1 auto;display:grid;grid-template-columns:320px 1fr 340px;gap:.7rem;padding:.7rem;min-height:0}
-  .app.noleft{grid-template-columns:0 1fr 340px} .app.noright{grid-template-columns:320px 1fr 0}
-  .app.noleft.noright{grid-template-columns:0 1fr 0}
+  /* resizable 3-column layout: drag the dividers; widths persist (CSS vars --lw/--rw). */
+  .app{flex:1 1 auto;display:grid;grid-template-columns:var(--lw,320px) 6px 1fr 6px var(--rw,340px);
+       gap:0;padding:.7rem;min-height:0}
+  .app.noleft{--lw:0} .app.noright{--rw:0}
+  .app > .col:first-child{margin-right:.5rem} .app > .col:last-child{margin-left:.5rem}
+  .divider{cursor:col-resize;background:transparent;position:relative;align-self:stretch}
+  .divider::after{content:"";position:absolute;inset:0 2px;border-radius:3px;background:var(--edge)}
+  .divider:hover::after{background:var(--blue)}
+  .app.noleft #divL,.app.noright #divR{display:none}
   .col{background:var(--panel);border:1px solid var(--edge);border-radius:10px;padding:.8rem;
        display:flex;flex-direction:column;min-height:0;overflow:hidden}
+  /* thin themed scrollbars everywhere (Chromium + Firefox) */
+  *{scrollbar-width:thin;scrollbar-color:var(--edge) transparent}
+  ::-webkit-scrollbar{width:10px;height:10px}
+  ::-webkit-scrollbar-track{background:transparent}
+  ::-webkit-scrollbar-thumb{background:var(--edge);border-radius:7px;border:2px solid var(--panel)}
+  ::-webkit-scrollbar-thumb:hover{background:var(--blue)}
   .col h2{font-size:.72rem;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin:.1rem 0 .6rem}
   .scroll{overflow:auto;min-height:0}
   label{display:block;color:var(--muted);font-size:.7rem;margin:.45rem 0 .15rem}
@@ -72,8 +84,8 @@
   .regime-linear{color:var(--blue)} .regime-hierarchical{color:var(--purple)}
   .regime-geometric{color:var(--amber)} .regime-topological_instability{color:var(--pink)}
   #trainLog,#autoLog,#reviewLog{overflow:auto;background:var(--panel2);border:1px solid var(--edge);border-radius:8px;
-                      padding:.5rem;white-space:pre-wrap;margin-top:.5rem;font-size:.78rem}
-  #trainLog{flex:1 1 auto;min-height:70px} #autoLog{height:120px} #reviewLog{height:150px}
+                      padding:.5rem;white-space:pre-wrap;margin-top:.5rem;font-size:.78rem;resize:vertical}
+  #trainLog{flex:1 1 auto;min-height:90px} #autoLog{height:120px;min-height:60px} #reviewLog{height:150px;min-height:60px}
   #reviewLog .sys{color:var(--muted)} #reviewLog .coach{color:var(--purple)} #reviewLog .tgt{color:var(--ok)}
   #reviewLog .ker{color:var(--blue)} #reviewLog .err{color:var(--pink)}
   /* prominent autonomic state — readable, full width, wraps */
@@ -148,6 +160,7 @@
     </div>
   </section>
 
+  <div class="divider" id="divL" title="drag to resize"></div>
   <!-- CENTER: CONVERSATION (bottom-pinned input) -->
   <section class="col" id="conv">
     <h2>Conversation</h2>
@@ -163,6 +176,7 @@
     </div>
   </section>
 
+  <div class="divider" id="divR" title="drag to resize"></div>
   <!-- RIGHT: TRAIN (live) + AUTONOMIC (self-regulation, read-only) + ONGOING MIND -->
   <section class="col" id="rightCol">
     <h2>Train · live</h2>
@@ -236,15 +250,16 @@ function renderInner(exp){
   const lr={}; if(loops.self_observation!=null)lr["self-obs (M)"]=loops.self_observation;
   if(loops.observation_of_others!=null)lr["other-obs"]=loops.observation_of_others;
   if(loops.learning_autonomy!=null)lr["learning S"]=loops.learning_autonomy;
-  if(Object.keys(lr).length) h+=group("Recursive loops","L1·L2·L3",miniRows(lr,"c-teal"));
+  // each group's sub-label names the FACULTY with carriage of that metric (brain-architecture assignment).
+  if(Object.keys(lr).length) h+=group("Recursive loops","carriage: meta · coordination",miniRows(lr,"c-teal"));
   const pil=exp.pillars||{};   // P1/P2/P3 LIVE from PillarEnforcer (f_health/b_integrity/q_identity)
-  if(Object.keys(pil).length) h+=group("Pillars","P1·P2·P3 live",miniRows(pil,"c-blue"));
-  if(p.layer0) h+=group("Senses","12 · interoception",miniRows(p.layer0,"c-blue"));
-  if(p.layer05) h+=group("Drives","innate",miniRows(p.layer05,"c-pink"));
-  if(p.layer1) h+=group("Motivators","5",miniRows(p.layer1,"c-purple"));
-  if(p.layer2a) h+=group("Emotions · physical","9",miniRows(p.layer2a,"c-amber"));
-  if(p.layer2b) h+=group("Emotions · cognitive","9",miniRows(p.layer2b,"c-amber"));
-  if(chem.dopamine!=null) h+=group("Neurochemistry","6-signal live",miniRows(chem,"c-teal"));
+  if(Object.keys(pil).length) h+=group("Pillars","carriage: ocean · whole-mind",miniRows(pil,"c-blue"));
+  if(p.layer0) h+=group("Senses","carriage: perception",miniRows(p.layer0,"c-blue"));
+  if(p.layer05) h+=group("Drives","carriage: action",miniRows(p.layer05,"c-pink"));
+  if(p.layer1) h+=group("Motivators","carriage: strategy",miniRows(p.layer1,"c-purple"));
+  if(p.layer2a) h+=group("Emotions · physical","carriage: heart",miniRows(p.layer2a,"c-amber"));
+  if(p.layer2b) h+=group("Emotions · cognitive","carriage: heart",miniRows(p.layer2b,"c-amber"));
+  if(chem.dopamine!=null) h+=group("Neurochemistry","carriage: action · ocean",miniRows(chem,"c-teal"));
   $("inner").innerHTML=h;
 }
 
@@ -269,6 +284,24 @@ function setTelemetry(t){
 }
 $("togL").onclick=()=>$("app").classList.toggle("noleft");
 $("togR").onclick=()=>$("app").classList.toggle("noright");
+// resizable columns — drag the dividers; widths persist in localStorage.
+const _app=$("app");
+for(const [id,var_,side,min,max] of [["divL","--lw","left",200,640],["divR","--rw","right",240,640]]){
+  const saved=localStorage.getItem("qs"+var_); if(saved) _app.style.setProperty(var_, saved+"px");
+  const h=$(id); if(!h) continue;
+  h.addEventListener("mousedown",(e)=>{
+    e.preventDefault(); const x0=e.clientX;
+    const w0=parseInt(getComputedStyle(_app).getPropertyValue("grid-template-columns").split(" ")[side==="left"?0:4])||(side==="left"?320:340);
+    document.body.style.cursor="col-resize"; document.body.style.userSelect="none";
+    const move=(ev)=>{ const dx=ev.clientX-x0; let w=side==="left"?w0+dx:w0-dx;
+      w=Math.max(min,Math.min(max,w)); _app.style.setProperty(var_, w+"px"); };
+    const up=()=>{ document.removeEventListener("mousemove",move); document.removeEventListener("mouseup",up);
+      document.body.style.cursor=""; document.body.style.userSelect="";
+      localStorage.setItem("qs"+var_, parseInt(_app.style.getPropertyValue(var_))); };
+    document.addEventListener("mousemove",move); document.addEventListener("mouseup",up);
+  });
+  h.addEventListener("dblclick",()=>{ _app.style.removeProperty(var_); localStorage.removeItem("qs"+var_); }); // reset
+}
 
 async function refreshHealth(){
   try{ const h=await (await fetch("/health")).json();

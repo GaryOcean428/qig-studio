@@ -214,6 +214,22 @@ class GenesisKernelTarget(TrainingTarget):
             except Exception as exc:  # noqa: BLE001 — shell None-safety (spine tenet)
                 print(f"⚠️  genesis checkpoint '{self._init_checkpoint}' not loaded ({exc}); using fresh kernel")
 
+        # WARMUP: one forward pass so telemetry() is LIVE immediately (Φ/κ/regime/pillars populated) — the
+        # UI otherwise shows a misleading step-0 zero state that reads as "unwired" before any interaction.
+        try:
+            import torch
+            import torch.nn.functional as F
+            ids, coords = self._encode("warmup")
+            with torch.no_grad():
+                logits, tel = self._kernel(ids, return_telemetry=True, coords=coords)
+                meaning = F.softmax(logits[0], dim=-1).mean(0)
+                self._last_gen_basin = (meaning / meaning.sum()).detach()
+            snap = self._snap(tel, None)
+            self._emit_pillars(snap, self._d63(meaning))
+            self._last = snap
+        except Exception:  # noqa: BLE001 — warmup is best-effort; never block boot
+            pass
+
     def _resize_basin(self, ref: "Any", size: int) -> "Any":
         """Map a 64-D Δ⁶³ template onto the vocab-width simplex (logits live in Δ^{vocab-1}). Repeat-tile
         then clamp non-negative — the caller's to_simplex_prob makes it a true Δ point. Pure simplex
