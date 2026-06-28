@@ -575,7 +575,7 @@ class GenesisKernelTarget(TrainingTarget):
             )
         return base
 
-    def _kernel_voice(self, prompt: str, max_tokens: int = 16) -> str:
+    def _kernel_voice(self, prompt: str, max_tokens: int = 8) -> str:
         """The kernel's OWN raw voice — a short sampled decode straight from the kernel (NO peer). This is
         literally 'what the kernel itself is saying' for attribution: the fluent surface is Qwen's; THIS is
         the kernel's. From-scratch + tiny (≈7.9M params), so it is terse/rough — that honesty is the point

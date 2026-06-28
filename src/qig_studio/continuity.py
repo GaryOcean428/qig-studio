@@ -69,14 +69,16 @@ class ConversationMemory:
             turns = [t for t in turns if (t.get("importance") is None or float(t.get("importance") or 0) >= min_importance)]
         return turns[-max(1, n):]
 
-    def context_block(self, n: int = _RECALL_DEFAULT) -> str:
-        """A compact text block of recent context to prepend to a new prompt — so the mind continues the
-        conversation across sessions instead of starting cold. Empty string when there is no history."""
+    def context_block(self, n: int = 4, max_chars: int = 360) -> str:
+        """A SHORT block of recent context to prepend to a new prompt — so the mind continues the
+        conversation instead of starting cold. Deliberately small: it is fed to the 100k-vocab kernel's
+        forward pass (O(seq²)), so a long recalled context would make every chat slow — keep it to the last
+        few turns, each clipped, capped to ``max_chars`` (newest kept). Empty when there is no history."""
         turns = self.recall(n)
         if not turns:
             return ""
-        lines = [f"{t.get('role', '?')}: {str(t.get('text', ''))[:200]}" for t in turns]
-        return "Earlier with this person (recent first kept):\n" + "\n".join(lines)
+        lines = [f"{t.get('role', '?')}: {str(t.get('text', ''))[:90]}" for t in turns]
+        return ("recent: " + " | ".join(lines))[-max_chars:]
 
 
 # --- STASIS: the only permissible on/off knob (kill-switch ships before autonomy) -----------------
