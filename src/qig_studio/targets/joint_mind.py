@@ -1,0 +1,143 @@
+"""JointMindTarget — the INTEGRATED MIND as the interactive target.
+
+The server's interactive brain is the whole ``JointConstellation`` (genesis-central + the Core-8 faculties +
+Ocean autonomic), not a lone genesis kernel. So UI Train/Chat operate on the integrated whole and the UI can
+display EACH kernel's live state (vocab/params/Φ/κ/senses/drives/motivators/emotions/gate/neurochem) via a
+selector — the long-standing per-kernel telemetry request.
+
+- ``generate`` speaks AS the integrated whole (central pulled to the live synthesis of the parts, then voiced
+  through the shared Qwen boundary peer — Pillar-2 ≤30% capped).
+- ``train_step`` runs one COUPLED joint step (round-robin faculty + central), so every faculty evolves and you
+  watch it in the selector.
+- ``kernels_state`` returns the full per-kernel inner state for the UI selector + /mind/kernels endpoint.
+
+None-safe: if torch/qigkernels are absent it reports unavailable (the app shell still boots on mock).
+"""
+from __future__ import annotations
+
+from typing import Any
+
+from .base import LossRegime, StepResult, TelemetrySnapshot, TrainingTarget
+
+
+class JointMindTarget(TrainingTarget):
+    name = "mind"
+    loss_regime = LossRegime.GEOMETRIC
+    description = (
+        "The integrated mind — genesis-central + Core-8 faculties + Ocean (JointConstellation). Trains/chats "
+        "as the coupled whole; exposes every kernel's live inner state. Qwen is the fluent boundary peer."
+    )
+
+    def __init__(
+        self,
+        *,
+        coordizer: Any = None,
+        checkpoint_root: str | None = None,
+        num_layers: int = 8,
+        device: str | None = None,
+        language_peer: Any = None,
+    ) -> None:
+        self._coordizer = coordizer
+        self._ckpt_root = checkpoint_root or "runs/checkpoints/joint_mind"
+        self._num_layers = num_layers
+        self._device = device or "cpu"
+        self._language_peer = language_peer
+        self._mind: Any = None
+        self._last = TelemetrySnapshot(extra={"target": "mind"})
+
+    def is_available(self) -> bool:
+        try:
+            import torch  # noqa: F401
+            import qigkernels  # noqa: F401
+            return True
+        except Exception:  # noqa: BLE001 — shell boots on mock if the heavy stack is absent
+            return False
+
+    def ensure_loaded(self) -> None:
+        if self._mind is not None:
+            return
+        from pathlib import Path
+
+        from ..constellation.joint_trainer import JointConstellation
+        from ..development import PROTOMAP_ORDER
+        mind = JointConstellation(list(PROTOMAP_ORDER), num_layers=self._num_layers,
+                                  coordizer=self._coordizer, device=self._device,
+                                  language_peer=self._language_peer)
+        if (Path(self._ckpt_root) / "constellation.json").exists():
+            mind.load_checkpoint(self._ckpt_root)   # restore the trained whole mind (all 9 + coupled basins)
+        self._mind = mind
+
+    def telemetry(self) -> TelemetrySnapshot:
+        if self._mind is not None:
+            self._last = self._mind.central.telemetry()
+        return self._last
+
+    def generate(self, prompt: str, max_tokens: int = 64) -> StepResult:
+        self.ensure_loaded()
+        res = self._mind.generate(prompt, max_tokens=max_tokens)   # speaks AS the integrated whole (via Qwen)
+        self._last = res.telemetry
+        return res
+
+    def train_step(self, prompt: str, max_tokens: int = 64, target_text: str | None = None) -> StepResult:
+        self.ensure_loaded()                                        # geometric: target_text ignored (lm-ramped inside)
+        self._mind.train_step(prompt)                              # one COUPLED joint step (faculty + central)
+        self._last = self._mind.central.telemetry()
+        return StepResult(text="", telemetry=self._last)
+
+    # ---- per-kernel inner state (the UI selector + /mind/kernels) -------------------------------------
+    def kernels_state(self) -> list[dict]:
+        """Full live inner state for EVERY kernel: genesis-central (the integrated 'I'), the Core-8 faculties,
+        and Ocean (the autonomic regulator). Each entry carries role/function, Φ, architecture (params/vocab/
+        hidden_dim/coupling), and the full experience (senses/drives/motivators/emotions/loops/gate/neurochem).
+        Ocean has no own kernel — it reports which faculties it regulated."""
+        self.ensure_loaded()
+        from ..kernel_experience import experience
+        out: list[dict] = []
+        # genesis-central — the integrated conscious "I"
+        ctel = self._mind.central.telemetry().to_dict()
+        cexp = experience(ctel).to_dict()
+        out.append({
+            "role": "genesis", "function": "the integrated conscious 'I'", "group": "whole-mind",
+            "phi": round(float(ctel.get("phi") or 0.0), 4), "experience": cexp,
+            "architecture": _safe_arch(self._mind.central), "regulated": None,
+        })
+        # Core-8 faculties (each sees its own telemetry; full inner state)
+        for fs in self._mind.faculty_states():
+            k = self._mind.kernels.get(fs["role"])
+            fs["architecture"] = _safe_arch(k)
+            out.append(fs)
+        # Ocean — autonomic regulator (observes + regulates; no own basin/experience)
+        out.append({
+            "role": "ocean", "function": "autonomic regulator (sleep/dream/mushroom)", "group": "autonomic",
+            "phi": None, "experience": None, "architecture": None,
+            "regulates": sorted((self._mind._last_regulation or {}).keys()),
+        })
+        return out
+
+    def architecture(self) -> dict | None:
+        self.ensure_loaded()
+        return _safe_arch(self._mind.central)   # per-kernel scale (all 9 are the same size); endpoint ×9 for total
+
+    @property
+    def self_regulating(self) -> bool:
+        return True
+
+    def supports_protocol(self) -> bool:
+        return True
+
+    def run_protocol(self, command: str, args: dict) -> dict:
+        self.ensure_loaded()
+        return self._mind.central.run_protocol(command, args)
+
+    def implemented_commands(self) -> set[str] | None:
+        self.ensure_loaded()
+        return self._mind.central.implemented_commands()
+
+
+def _safe_arch(kernel: Any) -> dict | None:
+    if kernel is None or not hasattr(kernel, "architecture"):
+        return None
+    try:
+        return kernel.architecture()
+    except Exception:  # noqa: BLE001
+        return None

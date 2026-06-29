@@ -5,6 +5,7 @@ from __future__ import annotations
 from .base import TargetInfo, TrainingTarget
 from .constellation_target import ConstellationTarget
 from .genesis_kernel import GenesisKernelTarget
+from .joint_mind import JointMindTarget
 from .kernel_target import KernelTarget
 from .mock_target import MockTarget
 from .qwen_local import QwenLocalTarget
@@ -80,6 +81,11 @@ def default_registry(
     r.register(GenesisKernelTarget(num_layers=genesis_num_layers, device=device,
                                    coordizer=coordizer, checkpoint=genesis_kernel_checkpoint,
                                    language_peer=qwen_peer))
+    # The INTEGRATED MIND — the whole JointConstellation (genesis-central + Core-8 faculties + Ocean) as one
+    # interactive target. Shares the coordizer + Qwen boundary peer; restores the trained joint_mind ckpt.
+    # This is the default brain: UI Train/Chat operate on the coupled whole, per-kernel telemetry is live.
+    r.register(JointMindTarget(coordizer=coordizer, checkpoint_root=constellation_checkpoint,
+                               num_layers=genesis_num_layers, device=device, language_peer=qwen_peer))
     r.register(KernelTarget(checkpoint=kernel_checkpoint, device=device))
     r.register(ConstellationTarget(checkpoint=constellation_checkpoint, device=device))
     r.register(qwen_peer)

@@ -41,7 +41,7 @@ class JointConstellation:
     constellation state (numpy basins), and trains them JOINTLY (coupled each step)."""
 
     def __init__(self, roles: list[str], *, num_layers: int = 8, coordizer: Any = None,
-                 device: str | None = "cpu", f_sync: float = 0.25) -> None:
+                 device: str | None = "cpu", f_sync: float = 0.25, language_peer: Any = None) -> None:
         from ..targets.genesis_kernel import GenesisKernelTarget
 
         self.roles = list(roles)
@@ -62,7 +62,8 @@ class JointConstellation:
         # (it is born OF the whole); it trains toward the live synthesis each step.
         self.central = GenesisKernelTarget(num_layers=num_layers, role="genesis",
                                            basin_template=frechet_mean(births), coordizer=coordizer,
-                                           device=device, seed=_seed("genesis"))
+                                           device=device, seed=_seed("genesis"),
+                                           language_peer=language_peer)
         self.central.ensure_loaded()
         # OCEAN — the autonomic regulator. It OBSERVES every faculty's telemetry and regulates the one
         # that needs it (fires that faculty's OWN sleep/dream/mushroom). Internal autonomic oversight,

@@ -375,6 +375,26 @@ async def mind_architecture() -> dict[str, Any]:
     }
 
 
+@app.get("/mind/kernels")
+async def mind_kernels() -> dict[str, Any]:
+    """LIVE per-kernel inner state for the UI selector: genesis-central (the integrated 'I'), the Core-8
+    faculties (perception/heart/memory/action/strategy/ethics/coordination/meta), and Ocean (autonomic).
+    Each carries role/function, Φ, architecture (params/vocab/hidden_dim/coupling), and the FULL experience
+    (senses/drives/motivators/emotions/loops/gate/neurochem). Only the integrated-mind target exposes this;
+    other targets return available:false (the UI then shows the single active kernel only)."""
+    t = _registry().active
+    if t is None or not hasattr(t, "kernels_state"):
+        return {"available": False, "active": (t.name if t else None),
+                "reason": "the active target is not the integrated mind (select 'mind')", "kernels": []}
+    if not t.is_available():
+        return {"available": False, "active": t.name, "reason": f"target '{t.name}' unavailable", "kernels": []}
+    try:
+        kernels = await _run_target(t.kernels_state)
+    except Exception as exc:  # noqa: BLE001 — never 500 the telemetry panel
+        return {"available": False, "active": t.name, "reason": f"kernels_state failed: {exc}", "kernels": []}
+    return {"available": True, "active": t.name, "kernels": kernels}
+
+
 @app.get("/curriculum")
 async def curriculum() -> dict[str, Any]:
     t = _registry().active

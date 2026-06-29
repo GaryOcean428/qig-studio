@@ -14,7 +14,7 @@ class Settings:
     device: str | None = None  # cuda/cpu/mps; None = auto
     kernel_checkpoint: str | None = None
     constellation_checkpoint: str | None = None
-    default_target: str = "genesis"   # the REAL trained kernel by default (mock is the fallback)
+    default_target: str = "mind"   # the INTEGRATED MIND (whole constellation) by default (mock is the fallback)
     server_url: str = "http://127.0.0.1:8800"
     auth_key: str | None = None  # X-Studio-Key shared secret; required for non-loopback bind
     output_dir: str = "outputs"  # where snapshots/exports land (user-nominatable)
@@ -63,7 +63,7 @@ class Settings:
             device=os.environ.get("QIG_STUDIO_DEVICE") or None,
             kernel_checkpoint=os.environ.get("QIG_STUDIO_KERNEL_CKPT") or None,
             constellation_checkpoint=_d("QIG_STUDIO_CONSTELLATION_CKPT", _const_ckpt),
-            default_target=os.environ.get("QIG_STUDIO_TARGET", "genesis"),
+            default_target=os.environ.get("QIG_STUDIO_TARGET", "mind"),
             server_url=os.environ.get("QIG_STUDIO_URL", f"http://{host}:{port}"),
             auth_key=os.environ.get("QIG_STUDIO_KEY") or None,
             output_dir=os.environ.get("QIG_STUDIO_OUTPUT_DIR", "outputs"),

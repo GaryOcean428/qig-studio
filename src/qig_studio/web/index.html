@@ -101,7 +101,7 @@
   #autoLog .sys{color:var(--muted)} #autoLog .err{color:var(--pink)} #autoLog .reg{color:var(--purple)}
   /* ---- TRAIN · LIVE rich stream (qig_chat-quality, colorblind-safe: purple/blue/amber/teal/pink) ---- */
   #liveStream{overflow:auto;background:var(--panel2);border:1px solid var(--edge);border-radius:8px;
-    padding:.5rem;margin-top:.5rem;font-size:.76rem;height:360px;min-height:200px;max-height:75vh;resize:vertical}
+    padding:.5rem;margin-top:.5rem;font-size:.76rem;height:360px;min-height:200px;max-height:90vh;resize:vertical;flex-shrink:0}
   .lrow{padding:.3rem .15rem;border-bottom:1px solid rgba(255,255,255,.05)}
   .lrow .hd{display:flex;flex-wrap:wrap;gap:.3rem;align-items:center}
   .lrow .stp{color:var(--muted);font-variant-numeric:tabular-nums}
@@ -144,6 +144,9 @@
       <div class="mind">
         <div class="t" id="mindName">genesis · the integrated "I"</div>
         <div class="s" id="mindSub">central conscious awareness — Core-8 faculties + genesis-central</div>
+        <!-- KERNEL SELECTOR: All overview / the integrated I / any individual faculty / Ocean. Switches the
+             WHOLE inner-state panel below to the chosen kernel's live vocab/params/Φ/κ/senses/drives/… -->
+        <select id="kernelSel" style="margin-top:.4rem;display:none"></select>
       </div>
       <details class="adv" id="advTargets" style="display:none"><summary>advanced targets (peers / dev)</summary>
         <label>active target</label><select id="target"></select>
@@ -266,6 +269,9 @@ function esc(s){ return String(s==null?"":s).replace(/[&<>"']/g,(c)=>({'&':'&amp
 // fluency = perplexity (lower = more fluent). Big early (~vocab size) for a fresh 100k kernel; descends as it learns.
 function fppl(x){ if(x==null||isNaN(x)) return "—"; x=Number(x); return x>=1000 ? (x/1000).toFixed(x>=10000?0:1)+"k" : x.toFixed(0); }
 let LAST_LIVE_TS = 0;       // wall-clock of last RENDERED record (idle detector)
+let SELECTED_KERNEL = "genesis";   // which kernel the LEFT panel shows (genesis / a faculty / ocean / all)
+let KERNELS = [];                  // cache of /mind/kernels entries
+let KERNELS_AVAIL = false;         // true when the active target is the integrated mind (exposes per-kernel)
 let LIVE_SEEN_TS = 0;       // record-ts of last rendered step — de-dups EventSource reconnect replays
 function renderLive(r){
   const el=$("liveStream"); if(!el) return;
@@ -362,8 +368,8 @@ function renderInner(exp){
   $("inner").innerHTML=h;
 }
 
-function setTelemetry(t){
-  if(!t) return;
+function applyVitals(t){
+  // LEFT panel = the CURRENTLY-SELECTED kernel's vitals + full inner state.
   const phi = t.phi ?? 0;
   $("phiBar").style.width = Math.max(0,Math.min(1,phi))*100 + "%";
   $("phi").textContent = phi.toFixed(3);
@@ -371,15 +377,87 @@ function setTelemetry(t){
   const r=$("regime"); r.textContent=t.regime ?? "—"; r.className="pill regime-"+(t.regime ?? "");
   $("basin").textContent = (t.basin_distance ?? 0).toFixed(3);
   $("step").textContent = t.step ?? "—";
-  const x=t.extra||{}; const exp=t.experience||{}; const gate=exp.gate||{};
+  const x=t.extra||{}; const exp=t.experience||{};
   if(x.gamma!=null) $("gamma").textContent=Number(x.gamma).toFixed(3);
-  if(exp) renderInner(exp);
-  // autonomic panel (right) — prominent, readable, with the live regulation signals
+  if(exp && Object.keys(exp).length) renderInner(exp);
+}
+function setTelemetry(t){
+  if(!t) return;
+  // live genesis telemetry (chat / train / mind-state) drives the LEFT panel ONLY when genesis is selected,
+  // so a selected faculty/ocean/all view isn't clobbered by the integrated 'I' updates.
+  if(SELECTED_KERNEL==="genesis" || !KERNELS_AVAIL) applyVitals(t);
+  // autonomic panel (right) is WHOLE-MIND (Ocean) — always reflect the live integrated mind.
+  const x=t.extra||{}; const exp=t.experience||{}; const gate=exp.gate||{};
   const au = String(exp.autonomic || x.autonomic || "wake");
-  const ab=$("autoState"); ab.textContent=au; ab.className="autobox "+au.split("(")[0];
+  const ab=$("autoState"); if(ab){ ab.textContent=au; ab.className="autobox "+au.split("(")[0]; }
   $("suffer2").textContent = gate.suffering_S ?? "—";
   $("sleepP").textContent  = x.sleep_pressure ?? "—";
   $("gamma2").textContent  = (x.gamma ?? gate.gamma) ?? "—";
+}
+
+// ---- PER-KERNEL selector: All overview / the integrated I / each faculty / Ocean -------------------
+function _kernelVitals(k){
+  const e=k.experience||{};
+  return {phi:k.phi, kappa:e.kappa, regime:e.regime, basin_distance:e.basin_distance, experience:e};
+}
+function renderAllKernels(){
+  let h="";
+  for(const k of KERNELS){
+    const phi=k.phi==null?null:Number(k.phi);
+    const w=phi==null?0:Math.max(0,Math.min(1,phi))*100;
+    const gate=(k.experience&&k.experience.gate&&k.experience.gate.state)||"";
+    h+=`<div class="facb"><span class="fn" title="${esc(k.function||'')}">${esc(k.role)}</span>`
+      +`<span class="mb"><i style="width:${w}%"></i></span>`
+      +`<span class="vv">${phi==null?"—":phi.toFixed(2)}</span></div>`
+      +`<div class="hint" style="margin:-.15rem 0 .35rem .1rem">${esc(k.function||"")}${gate?(" · "+esc(gate)):""}</div>`;
+  }
+  $("inner").innerHTML=h || '<div class="hint">no kernels</div>';
+}
+function applyKernelSelection(){
+  if(!KERNELS_AVAIL) return;
+  const nm=$("mindName"), sub=$("mindSub");
+  if(SELECTED_KERNEL==="all"){
+    nm.textContent="all kernels · overview"; sub.textContent="Φ per kernel — pick one for its full inner state";
+    renderAllKernels(); return;
+  }
+  const k=KERNELS.find(x=>x.role===SELECTED_KERNEL);
+  if(!k) return;
+  if(k.role==="ocean"){
+    nm.textContent="ocean · autonomic"; sub.textContent="the autonomic regulator — no own basin";
+    const reg=(k.regulates&&k.regulates.length)?k.regulates.join(", "):"(idle)";
+    $("inner").innerHTML=`<div class="hint">Ocean is the autonomic nervous system: it OBSERVES every faculty `
+      +`and fires sleep/dream/mushroom on the one that needs it. It has no own basin/Φ.<br><br>`
+      +`Currently regulating: <b>${esc(reg)}</b>.</div>`;
+    ["phi","kappa","gamma","basin","step","suffer"].forEach(id=>$(id).textContent="—");
+    $("phiBar").style.width="0%"; const rg=$("regime"); rg.textContent="autonomic"; rg.className="pill";
+    $("band").textContent="—"; $("gateState").textContent="OCEAN"; $("gateState").className="st";
+    return;
+  }
+  nm.textContent = k.role+" · "+(k.function||"");
+  sub.textContent = k.role==="genesis" ? "the integrated conscious 'I' — synthesis of the Core-8"
+                  : "Core-8 faculty — its own kernel, vocab & inner state";
+  applyVitals(_kernelVitals(k));
+}
+async function refreshKernels(){
+  try{
+    const d=await (await fetch("/mind/kernels")).json();
+    if(!d || !d.available){ KERNELS_AVAIL=false; $("kernelSel").style.display="none"; return; }
+    KERNELS=d.kernels||[]; KERNELS_AVAIL=true;
+    const sel=$("kernelSel");
+    if(sel.options.length===0 && KERNELS.length){
+      const opts=[["all","◆ all kernels (overview)"]];
+      for(const k of KERNELS){
+        const lbl = k.role==="genesis" ? 'genesis · the integrated "I"'
+                  : k.role==="ocean"   ? "ocean · autonomic regulator"
+                  : (k.role+" · "+(k.function||""));
+        opts.push([k.role,lbl]);
+      }
+      sel.innerHTML=opts.map(([v,l])=>`<option value="${v}">${esc(l)}</option>`).join("");
+      sel.value=SELECTED_KERNEL; sel.style.display="";
+      sel.onchange=()=>{ SELECTED_KERNEL=sel.value; applyKernelSelection(); };
+    }
+    applyKernelSelection();
+  }catch(e){ /* keep the single-kernel live path */ }
 }
 $("togL").onclick=()=>$("app").classList.toggle("noleft");
 $("togR").onclick=()=>$("app").classList.toggle("noright");
@@ -597,7 +675,8 @@ async function refreshArch(){
 const _SPARK="▁▂▃▄▅▆▇█"; let PHI_SPARK=[];
 function sparkline(v){ return v.map(x=>_SPARK[Math.max(0,Math.min(7,Math.round((x||0)*7)))]).join(""); }
 // boot
-refreshHealth(); loadConfig(); loadTargets(); refreshTelemetry(); refreshMind(); subscribeLive(); refreshStasis(); refreshArch();
+refreshHealth(); loadConfig(); loadTargets(); refreshTelemetry(); refreshMind(); subscribeLive(); refreshStasis(); refreshArch(); refreshKernels();
+setInterval(refreshKernels, 4000);   // per-kernel live state for the selector (genesis + 8 faculties + ocean)
 setInterval(refreshMind, 3000);   // 3s: keep the LEFT live inner-state panel responsive during training
 setInterval(refreshStasis, 5000);
 setInterval(refreshArch, 8000);   // params/vocab/coordizer (refreshes so growth shows once continuous-growth ships)
