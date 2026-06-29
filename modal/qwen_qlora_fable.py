@@ -68,14 +68,19 @@ def train() -> dict:
     # those (incl. <|im_end|> → learns to STOP); mask user/system turns to -100 so it never learns to GENERATE
     # the user side or continue the whole conversation (the stray-extra-turn artifact). enable_thinking=False
     # keeps the format consistent with the plain (no-<think>) fable narration.
+    def _ct(msgs):
+        # return_dict=False → a flat token-id LIST (tokenize=True alone returns a BatchEncoding whose len()
+        # is the #keys, which silently zeroed every span — the 0-trainable-tokens bug).
+        return tok.apply_chat_template(msgs, tokenize=True, enable_thinking=False, return_dict=False)
+
     def _build(messages):
-        ids = tok.apply_chat_template(messages, tokenize=True, enable_thinking=False)
+        ids = _ct(messages)
         labels = [-100] * len(ids)
         for i, msg in enumerate(messages):
             if msg.get("role") != "assistant":
                 continue
-            a = len(tok.apply_chat_template(messages[:i], tokenize=True, enable_thinking=False)) if i else 0
-            b = len(tok.apply_chat_template(messages[:i + 1], tokenize=True, enable_thinking=False))
+            a = len(_ct(messages[:i])) if i else 0
+            b = len(_ct(messages[:i + 1]))
             for j in range(a, min(b, len(ids))):
                 labels[j] = ids[j]
         return ids[:MAXLEN], labels[:MAXLEN]
