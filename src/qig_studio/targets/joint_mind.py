@@ -80,8 +80,19 @@ class JointMindTarget(TrainingTarget):
 
     def train_step(self, prompt: str, max_tokens: int = 64, target_text: str | None = None) -> StepResult:
         self.ensure_loaded()                                        # geometric: target_text ignored (lm-ramped inside)
-        self._mind.train_step(prompt)                              # one COUPLED joint step (faculty + central)
-        self._last = self._mind.central.telemetry()
+        info = self._mind.train_step(prompt)                       # one COUPLED joint step (faculty + central)
+        self._last = self._mind.central.telemetry()                # central surprise/max_surprise in .extra
+        # surface the stepped faculty's OWN surprise too, so MASTERY is tracked per kernel (central every step,
+        # the round-robin faculty when it steps). central's own surprise is already in self._last.extra.
+        role = (info or {}).get("stepped_faculty")
+        if role and role in self._mind.kernels:
+            try:
+                fx = self._mind.kernels[role].telemetry().extra or {}
+                self._last.extra["stepped_faculty"] = role
+                self._last.extra["faculty_surprise"] = fx.get("surprise")
+                self._last.extra["faculty_max_surprise"] = fx.get("max_surprise")
+            except Exception:  # noqa: BLE001 — mastery is best-effort, never break the step
+                pass
         return StepResult(text="", telemetry=self._last)
 
     # ---- per-kernel inner state (the UI selector + /mind/kernels) -------------------------------------

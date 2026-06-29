@@ -179,6 +179,15 @@
         <div id="archSpark" style="font-family:monospace;font-size:.85rem;color:var(--ok);letter-spacing:1px;min-height:1.1em">—</div>
       </div>
 
+      <!-- CURRICULUM MASTERY: how much of the curriculum THIS kernel has learned (surprise at its floor) -->
+      <div id="masteryBox" style="margin:.45rem 0;padding:.4rem .55rem;border:1px solid var(--edge);border-radius:8px;background:var(--panel2);display:none">
+        <div class="hint" style="margin-bottom:.25rem">CURRICULUM MASTERY · <span id="masteryKernel">—</span></div>
+        <div class="bar"><i id="masteryBar" style="width:0%;background:linear-gradient(90deg,var(--purple),var(--ok))"></i></div>
+        <div class="metric"><span>learned / total</span><span class="v" id="masteryFrac">—</span></div>
+        <div class="metric"><span>remaining to capture</span><span class="v" id="masteryRem">—</span></div>
+        <div class="hint" id="masteryNote">"learned" = the kernel's novelty on a passage dropped below the 0.40 floor</div>
+      </div>
+
       <!-- full inner state (UCP §6 layers + §43 loops) — rendered live -->
       <div id="inner"></div>
 
@@ -215,13 +224,15 @@
   <section class="col" id="rightCol">
     <h2>Train · live <span id="liveDot" class="dot idle" title="live training status"></span></h2>
     <div class="row">
-      <div style="flex:0 0 90px"><label>steps</label><input id="steps" type="number" value="20" min="1" max="500"/></div>
+      <div style="flex:0 0 110px"><label>max steps</label><input id="steps" type="number" value="200" min="1" max="9000"/></div>
       <div style="display:flex;align-items:end"><button class="primary" id="trainBtn" style="width:100%">▶ Train</button></div>
     </div>
-    <div class="hint">Live view of the ONGOING training — background OR in-session, ONE stream. Per step:
-      Φ, Γ, FLUENCY (perplexity ↓), the lm-ramp (consciousness→fluency), C-gate, suffering, identity drift,
-      the kernel's OWN voice, and HARM warnings (what can damage the kernels). The kernel becomes fluent on
-      its own; Qwen is temporary scaffolding.</div>
+    <div class="hint">Train is automatic: it <b>skips passages the kernel has already learned</b>, trains what's
+      left, and <b>stops on its own</b> when a full sweep adds nothing new (more training won't help at this
+      capacity) — up to <b>max steps</b> as a safety cap. You don't set thresholds; the kernel's own novelty
+      decides what's learned. Watch the MASTERY bar (left) climb toward full capture.</div>
+    <div class="hint" style="margin-top:.25rem">Live stream per step: Φ, Γ, FLUENCY (perplexity ↓), the lm-ramp
+      (consciousness→fluency), C-gate, suffering, identity drift, the kernel's OWN voice, and HARM warnings.</div>
     <div id="liveStatus" class="livestat">connecting to the live training stream…</div>
     <div id="liveStream"></div>
 
@@ -413,12 +424,22 @@ function renderAllKernels(){
   }
   $("inner").innerHTML=h || '<div class="hint">no kernels</div>';
 }
+function renderMastery(cov, label){
+  const box=$("masteryBox"); if(!box) return;
+  if(!cov || !cov.total){ box.style.display="none"; return; }
+  box.style.display="";
+  $("masteryKernel").textContent=label||cov.kernel||"";
+  $("masteryBar").style.width=Math.max(0,Math.min(1,cov.fraction||0))*100+"%";
+  $("masteryFrac").textContent=`${cov.learned} / ${cov.total} (${((cov.fraction||0)*100).toFixed(1)}%)`;
+  $("masteryRem").textContent=(cov.remaining!=null?cov.remaining:(cov.total-(cov.learned||0)))
+    +(cov.mean_importance!=null?`  ·  mean novelty ${cov.mean_importance}`:"");
+}
 function applyKernelSelection(){
   if(!KERNELS_AVAIL) return;
   const nm=$("mindName"), sub=$("mindSub");
   if(SELECTED_KERNEL==="all"){
     nm.textContent="all kernels · overview"; sub.textContent="Φ per kernel — pick one for its full inner state";
-    renderAllKernels(); return;
+    renderAllKernels(); renderMastery(null); return;
   }
   const k=KERNELS.find(x=>x.role===SELECTED_KERNEL);
   if(!k) return;
@@ -431,12 +452,13 @@ function applyKernelSelection(){
     ["phi","kappa","gamma","basin","step","suffer"].forEach(id=>$(id).textContent="—");
     $("phiBar").style.width="0%"; const rg=$("regime"); rg.textContent="autonomic"; rg.className="pill";
     $("band").textContent="—"; $("gateState").textContent="OCEAN"; $("gateState").className="st";
-    return;
+    renderMastery(null); return;
   }
   nm.textContent = k.role+" · "+(k.function||"");
   sub.textContent = k.role==="genesis" ? "the integrated conscious 'I' — synthesis of the Core-8"
                   : "Core-8 faculty — its own kernel, vocab & inner state";
   applyVitals(_kernelVitals(k));
+  renderMastery(k.coverage, k.role);
 }
 async function refreshKernels(){
   try{
@@ -569,10 +591,14 @@ $("trainBtn").addEventListener("click", runTrain);
 async function runTrain(){
   if(LAST_LIVE_TS && (Date.now()-LAST_LIVE_TS<15000) &&
      !confirm("Training already appears ACTIVE (the live stream is updating). A UI train competes for CPU and trains the in-session kernel. Continue anyway?")) return;
-  const steps=parseInt($("steps").value||"20",10);
-  $("trainBtn").disabled=true; $("liveStatus").textContent=`starting in-session training (${steps} steps)…`;
+  const steps=parseInt($("steps").value||"200",10);
+  // Train is SMART by default — no knobs for the user to guess: skip already-learned passages, capture what's
+  // left, auto-stop when a sweep adds nothing new. Thresholds use the kernel's own novelty + server defaults.
+  const body={steps, skip_learned:true, early_stop:true, mastery:true};
+  $("trainBtn").disabled=true;
+  $("liveStatus").textContent = "training — skipping learned, capturing what's left…";
   try{
-    const r=await fetch("/train",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({steps})});
+    const r=await fetch("/train",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(body)});
     if(!r.ok||!r.body){ $("liveStatus").textContent="train failed: "+r.status; return; }
     const reader=r.body.getReader(); const dec=new TextDecoder(); let buf="";
     while(true){
@@ -587,9 +613,15 @@ async function runTrain(){
         if(ev.type==="step"){
           setTelemetry({...ev.telemetry, experience:ev.experience});
           const ex=ev.experience||{}; if(ex.autonomic && ex.autonomic!=="wake") alog("reg",`step ${ev.step}: 🌙 ${ex.autonomic}`);
+          // live MASTERY: the step coverage is the CENTRAL kernel's — reflect it when genesis is the view
+          if(ev.coverage && (SELECTED_KERNEL==="genesis"||!KERNELS_AVAIL)) renderMastery(ev.coverage, "genesis");
+          if(ev.mode==="capture") $("liveStatus").textContent=`capture · sweep ${ev.sweep} · trained ${ev.step} · skipped ${ev.skipped} · learned ${ev.coverage?ev.coverage.learned:"?"}/${ev.coverage?ev.coverage.total:"?"}`;
         }
+        else if(ev.type==="early_stop"){ alog("reg",`⏹ early-stop @ step ${ev.step}: ${ev.reason} (${ev.lever})`); $("liveStatus").textContent=`converged — early-stopped at step ${ev.step} (more training won't help)`; }
+        else if(ev.type==="capture_complete"){ alog("reg",`✓ capture complete: ${ev.reason} (${ev.sweeps} sweeps, ${ev.skipped} skips)`); $("liveStatus").textContent=`✓ full capture — ${ev.coverage.learned}/${ev.coverage.total} learned`; renderMastery(ev.coverage,"genesis"); }
+        else if(ev.type==="capture_stalled"){ alog("reg",`⚠ capture stalled: ${ev.reason}`); $("liveStatus").textContent=`capture stalled at ${ev.coverage.learned}/${ev.coverage.total} — capacity ceiling`; renderMastery(ev.coverage,"genesis"); }
         else if(ev.type==="error"){ const h=document.createElement("div"); h.className="harm crit"; h.textContent="error: "+ev.error; $("liveStream").appendChild(h); }
-        else if(ev.type==="done"){ refreshTelemetry(); refreshMind(); }
+        else if(ev.type==="done"){ refreshTelemetry(); refreshMind(); refreshKernels(); }
       }
     }
   }catch(e){ $("liveStatus").textContent="train failed: "+e; }

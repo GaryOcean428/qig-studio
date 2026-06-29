@@ -38,6 +38,7 @@ from .config import Settings
 from .kernel_experience import experience as _experience
 from .live import LiveLog, step_record
 from .curriculum import CurriculumProvider, phase_names
+from .mastery import Mastery
 from .governance.pillars import PillarEnforcerAdapter
 from . import protocol as _protocol
 from .governance.purity import PurityGateError, run_purity_gate
@@ -174,6 +175,8 @@ class TrainRequest(BaseModel):
     early_stop: bool = False  # qig-warp check_ci_stabilized convergence early-stop (opt-in)
     early_stop_window: int = 5  # rolling window; early-stop cannot fire before window+1 steps
     early_stop_threshold: float = 0.05  # relative-change threshold for stabilization
+    mastery: bool = True  # track per-kernel per-passage learned-state (curriculum coverage)
+    skip_learned: bool = False  # CAPTURE mode: skip already-learned passages, sweep until full capture / stall
     confirm: bool = False  # REQUIRED for LANGUAGE targets (each step triggers a remote training job)
 
 
@@ -392,7 +395,43 @@ async def mind_kernels() -> dict[str, Any]:
         kernels = await _run_target(t.kernels_state)
     except Exception as exc:  # noqa: BLE001 — never 500 the telemetry panel
         return {"available": False, "active": t.name, "reason": f"kernels_state failed: {exc}", "kernels": []}
+    # enrich with curriculum MASTERY coverage (learned/total) per kernel — one poll feeds the selector + bar
+    try:
+        total = _curriculum_total()
+        m = Mastery()
+        for k in kernels:
+            k["coverage"] = m.coverage(k.get("role", ""), total=total)
+    except Exception:  # noqa: BLE001 — coverage is additive; never break the panel
+        pass
     return {"available": True, "active": t.name, "kernels": kernels}
+
+
+_CURR_TOTAL: int | None = None
+
+
+def _curriculum_total() -> int | None:
+    """Curriculum passage count (the mastery denominator), cached — load_full_curriculum parses ~100 files."""
+    global _CURR_TOTAL
+    if _CURR_TOTAL is None:
+        try:
+            from .corpus import load_full_curriculum
+            _CURR_TOTAL = len(load_full_curriculum())
+        except Exception:  # noqa: BLE001
+            _CURR_TOTAL = None
+    return _CURR_TOTAL
+
+
+@app.get("/mind/mastery")
+async def mind_mastery() -> dict[str, Any]:
+    """Curriculum COVERAGE per kernel: how many passages each has LEARNED (novelty at its floor) vs the
+    curriculum size — the 'is the material learned / what's left' readout. Reads the persisted mastery store."""
+    total = _curriculum_total()
+    m = Mastery()
+    ks = m.kernels()
+    if not ks:
+        return {"available": False, "total": total, "reason": "no training recorded yet", "kernels": []}
+    return {"available": True, "total": total, "learned_threshold": 0.40,
+            "kernels": [m.coverage(k, total=total) for k in ks]}
 
 
 @app.get("/curriculum")
@@ -565,70 +604,148 @@ async def train(req: TrainRequest, _: None = Depends(verify_key)) -> StreamingRe
         series: list[float] = []
         ui_live = LiveLog()                       # in-session training → the SAME shared live channel
         ui_prev_db: float | None = None           # in-session identity-drift velocity tracking (harm parity)
-        for step in range(1, req.steps + 1):
-            target_text = None
-            if req.prompts:
-                prompt = req.prompts[(step - 1) % len(req.prompts)]
-            elif is_language:
-                prompt, target_text = provider.next_pair(step)  # PAIRED (lm_loss signal)
-            else:
-                prompt = provider.next_prompt(step)  # the curriculum passage
+        # MASTERY: per-kernel per-passage learned-state. Central kernel name is "genesis" for the mind target
+        # (the integrated 'I'), else the single target's name. Coverage total = the curriculum size.
+        mastery = Mastery() if (req.mastery or req.skip_learned) else None
+        central_name = "genesis" if t.name == "mind" else t.name
+        passages = [] if is_language else (req.prompts or provider.passages())
+        curr_total = len(passages) if passages else None
+        # SKIP/CAPTURE mode needs the passage list; falls back to step-cycling if unavailable (generator curriculum).
+        do_skip = bool(req.skip_learned and passages and not is_language)
+
+        def _record(prompt: str, ex: dict, step: int) -> dict | None:
+            if mastery is None:
+                return None
+            mastery.record(central_name, prompt, ex.get("surprise"), ex.get("max_surprise"), step=step)
+            role = ex.get("stepped_faculty")          # the round-robin faculty that stepped (mind target)
+            if role:
+                mastery.record(role, prompt, ex.get("faculty_surprise"), ex.get("faculty_max_surprise"), step=step)
+            return mastery.coverage(central_name, total=curr_total)
+
+        def _write_live(step: int, total: int | None, td: dict, sample: dict | None, phi) -> None:
+            nonlocal ui_prev_db
             try:
-                res = await _run_target(t.train_step, prompt, req.max_tokens, target_text)
-            except Exception as exc:
-                yield _sse({"type": "error", "error": str(exc), "step": step})
-                return
-            _PHI_HISTORY.append(float(res.telemetry.phi or 0.0))
-            # periodically the kernel SPEAKS (pure generation) so its OWN output is visible as it learns
-            sample = None
-            if step % sample_every == 0 or step == req.steps:
-                try:
-                    gr = await _run_target(t.generate, "In one sentence, what are you learning?", req.max_tokens)
-                    sx = gr.telemetry.extra or {}
-                    sample = {"output": gr.text, "kernel_voice": sx.get("kernel_voice")}
-                except Exception:  # noqa: BLE001 — a sample failure must not break training
-                    sample = None
-            yield _sse({
-                "type": "step",
-                "step": step,
-                "phase": "paired" if is_language else CurriculumProvider.phase_for(step),
-                "curriculum": (prompt or "")[:240],   # the ACTUAL curriculum passage being learned
-                "telemetry": res.telemetry.to_dict(),
-                "experience": _experience(res.telemetry.to_dict(), _phi_hist()).to_dict(),
-                "sample": sample,                      # the kernel's OWN output (periodic), not the prompt
-            })
-            if req.early_stop and _WARP_AVAILABLE:
-                metric = res.telemetry.phi if not is_language else res.telemetry.loss
-                if metric is not None:
-                    series.append(float(metric))
-                    decision = check_ci_stabilized(
-                        series, window=req.early_stop_window, rel_change_threshold=req.early_stop_threshold
-                    )
-                    if bool(decision.should_stop):
-                        yield _sse({"type": "early_stop", "step": step, "reason": decision.reason,
-                                    "metric": float(decision.metric_value), "lever": "qig_warp.check_ci_stabilized"})
-                        break
-            # WRITE the SAME rich live record the bg trainer writes (live.py), so the always-on TRAIN·LIVE
-            # panel shows in-session training identically to a background run (one channel, one renderer).
-            try:
-                td = res.telemetry.to_dict()
                 exp_d = _experience(td, _phi_hist()).to_dict()
-                _db = (td.get("extra") or {}).get("d_basin")     # identity-drift VELOCITY (harm) — parity with bg
+                _db = (td.get("extra") or {}).get("d_basin")
                 _dv = abs(float(_db) - ui_prev_db) if (_db is not None and ui_prev_db is not None) else None
                 ui_prev_db = float(_db) if _db is not None else None
-                _phi = res.telemetry.phi
                 ui_live.write(step_record(
-                    step=step, total=req.steps, ts=_now(), source="ui",
-                    stepped_faculty=t.name, stepped_function=None,
-                    telemetry=td, experience=exp_d,
-                    central_phi=_phi, min_pairwise_fr=None, drift_velocity=_dv,
-                    faculty_phi={t.name: _phi} if _phi is not None else {},  # single-kernel target
+                    step=step, total=total or step, ts=_now(), source="ui",
+                    stepped_faculty=(td.get("extra") or {}).get("stepped_faculty") or t.name,
+                    stepped_function=None, telemetry=td, experience=exp_d,
+                    central_phi=phi, min_pairwise_fr=None, drift_velocity=_dv,
+                    faculty_phi={t.name: phi} if phi is not None else {},
                     own_voice=(sample or {}).get("output") if sample else None,
                     coordizer_vocab=getattr(t, "vocab_size", None)))
             except Exception:  # noqa: BLE001 — a live-log failure must not break training
                 pass
-            await asyncio.sleep(0)  # cooperative yield
-        yield _sse({"type": "done", "final": t.telemetry().to_dict()})
+
+        async def _sample_if_due(due: bool) -> dict | None:
+            if not due:
+                return None
+            try:
+                gr = await _run_target(t.generate, "In one sentence, what are you learning?", req.max_tokens)
+                sx = gr.telemetry.extra or {}
+                return {"output": gr.text, "kernel_voice": sx.get("kernel_voice")}
+            except Exception:  # noqa: BLE001 — a sample failure must not break training
+                return None
+
+        def _step_event(step: int, total: int | None, prompt: str, td: dict, sample, cov, extra=None) -> dict:
+            ev = {"type": "step", "step": step, "total": total,
+                  "phase": "paired" if is_language else CurriculumProvider.phase_for(step),
+                  "curriculum": (prompt or "")[:240], "telemetry": td,
+                  "experience": _experience(td, _phi_hist()).to_dict(), "sample": sample}
+            if cov is not None:
+                ev["coverage"] = cov
+            if extra:
+                ev.update(extra)
+            return ev
+
+        if do_skip:
+            assert mastery is not None   # do_skip ⇒ req.skip_learned ⇒ mastery was created (invariant)
+            # CAPTURE: sweep the curriculum, SKIP passages the central kernel already learned, train the rest.
+            # Repeat until ALL are learned (full capture), a whole sweep learns nothing new (capacity ceiling),
+            # or the step budget is hit. Ensures nothing left is silently missed.
+            budget = req.steps if req.steps and req.steps > 0 else 10**9
+            trained = skipped = sweeps = 0
+            stop = False
+            while trained < budget and not stop:
+                sweeps += 1
+                learned_this_sweep = any_unlearned = 0
+                for prompt in passages:
+                    if trained >= budget:
+                        break
+                    if mastery.is_learned(central_name, prompt):
+                        skipped += 1
+                        continue
+                    any_unlearned = 1
+                    try:
+                        res = await _run_target(t.train_step, prompt, req.max_tokens, None)
+                    except Exception as exc:
+                        yield _sse({"type": "error", "error": str(exc), "step": trained + 1})
+                        return
+                    trained += 1
+                    _PHI_HISTORY.append(float(res.telemetry.phi or 0.0))
+                    td = res.telemetry.to_dict()
+                    ex = td.get("extra") or {}
+                    cov = _record(prompt, ex, trained)
+                    if mastery.is_learned(central_name, prompt):
+                        learned_this_sweep += 1
+                    sample = await _sample_if_due(trained % sample_every == 0)
+                    yield _sse(_step_event(trained, curr_total, prompt, td, sample, cov,
+                                           {"sweep": sweeps, "skipped": skipped, "mode": "capture"}))
+                    _write_live(trained, curr_total, td, sample, res.telemetry.phi)
+                    await asyncio.sleep(0)
+                if not any_unlearned:
+                    yield _sse({"type": "capture_complete", "reason": "all curriculum passages learned",
+                                "coverage": mastery.coverage(central_name, curr_total),
+                                "sweeps": sweeps, "skipped": skipped})
+                    stop = True
+                elif learned_this_sweep == 0:
+                    yield _sse({"type": "capture_stalled",
+                                "reason": "a full sweep learned nothing new — remaining passages are at this "
+                                          "kernel's current capacity ceiling (bigger kernel / more vocab needed)",
+                                "coverage": mastery.coverage(central_name, curr_total), "sweeps": sweeps})
+                    stop = True
+        else:
+            for step in range(1, req.steps + 1):
+                target_text = None
+                if req.prompts:
+                    prompt = req.prompts[(step - 1) % len(req.prompts)]
+                elif is_language:
+                    prompt, target_text = provider.next_pair(step)  # PAIRED (lm_loss signal)
+                else:
+                    prompt = provider.next_prompt(step)  # the curriculum passage
+                try:
+                    res = await _run_target(t.train_step, prompt, req.max_tokens, target_text)
+                except Exception as exc:
+                    yield _sse({"type": "error", "error": str(exc), "step": step})
+                    return
+                _PHI_HISTORY.append(float(res.telemetry.phi or 0.0))
+                td = res.telemetry.to_dict()
+                ex = td.get("extra") or {}
+                cov = _record(prompt, ex, step)
+                sample = await _sample_if_due(step % sample_every == 0 or step == req.steps)
+                yield _sse(_step_event(step, req.steps, prompt, td, sample, cov))
+                if req.early_stop and _WARP_AVAILABLE:
+                    metric = res.telemetry.phi if not is_language else res.telemetry.loss
+                    if metric is not None:
+                        series.append(float(metric))
+                        decision = check_ci_stabilized(
+                            series, window=req.early_stop_window, rel_change_threshold=req.early_stop_threshold
+                        )
+                        if bool(decision.should_stop):
+                            yield _sse({"type": "early_stop", "step": step, "reason": decision.reason,
+                                        "metric": float(decision.metric_value), "lever": "qig_warp.check_ci_stabilized"})
+                            break
+                _write_live(step, req.steps, td, sample, res.telemetry.phi)
+                await asyncio.sleep(0)  # cooperative yield
+        if mastery is not None:
+            mastery.save()
+        done = {"type": "done", "final": t.telemetry().to_dict()}
+        if mastery is not None:
+            done["coverage"] = mastery.coverage(central_name, curr_total)
+        yield _sse(done)
 
     return StreamingResponse(gen(), media_type="text/event-stream")
 

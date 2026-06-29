@@ -163,3 +163,9 @@ class CurriculumProvider:
 
     def mode(self) -> str:
         return "basin-driving" if self.loss_regime == LossRegime.GEOMETRIC else "paired"
+
+    def passages(self) -> list[str]:
+        """The FULL ordered list of curriculum passages (geometric targets). Empty when the curriculum is a
+        generator (real DevelopmentalCurriculum) rather than a fixed file list — skip/mastery need the list,
+        so they fall back to step-cycling when this is empty."""
+        return list(self._file_prompts or [])
