@@ -49,12 +49,24 @@ class JointConstellation:
         self._rr = 0
         self.kernels: dict[str, Any] = {}
         self.faculties: list[Faculty] = []
+        # ACTIVE-KERNEL GPU RESIDENCY (design notes 2026-06-29): the full constellation does NOT fit on a
+        # 4GB card at 100k+ vocab. But per joint step only the central (every step — the main always-active
+        # learner) + ONE round-robin faculty actually train. So put the central on the GPU (fast every step)
+        # and the 8 faculties on CPU (each trains 1/N steps → tolerable). Kernels exchange only numpy basins,
+        # so there are NO cross-device tensor ops. device="cuda" → residency; otherwise uniform `device`.
+        import torch as _torch
+        _resident = (device == "cuda") and _torch.cuda.is_available()
+        _fac_dev = "cpu" if _resident else device
+        _cen_dev = "cuda" if _resident else device
+        if _resident:
+            print(f"[joint] GPU residency: central→cuda (4GB), {len(self.roles)} faculties→cpu (round-robin)",
+                  flush=True)
         births: list[np.ndarray] = []
         for role in self.roles:
             birth = seed_birth_basin(_seed(role))
             births.append(birth)
             k = GenesisKernelTarget(num_layers=num_layers, role=role, basin_template=birth,
-                                    coordizer=coordizer, device=device, seed=_seed(role))
+                                    coordizer=coordizer, device=_fac_dev, seed=_seed(role))
             k.ensure_loaded()
             self.kernels[role] = k
             self.faculties.append(Faculty(role=role, basin=birth.copy(), birth=birth.copy()))
@@ -62,7 +74,7 @@ class JointConstellation:
         # (it is born OF the whole); it trains toward the live synthesis each step.
         self.central = GenesisKernelTarget(num_layers=num_layers, role="genesis",
                                            basin_template=frechet_mean(births), coordizer=coordizer,
-                                           device=device, seed=_seed("genesis"),
+                                           device=_cen_dev, seed=_seed("genesis"),
                                            language_peer=language_peer)
         self.central.ensure_loaded()
         # OCEAN — the autonomic regulator. It OBSERVES every faculty's telemetry and regulates the one

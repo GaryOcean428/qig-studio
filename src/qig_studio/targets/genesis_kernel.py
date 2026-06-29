@@ -30,7 +30,10 @@ _MAX_BYTES = 256  # byte-level VOCAB size (256 raw bytes) — the from-scratch b
 # RoPE positional encoding allows up to max_position_embeddings (2048). 256 truncated curriculum passages
 # AND conversation context (the coach question/answer fell off the end). 1024 holds full passages + multi-
 # turn context with headroom; raise toward 2048 if needed (cost is O(n²) attention).
-_CTX = 1024
+# Env-configurable (QIG_STUDIO_CTX): on a small (4GB) GPU the per-step logits tensor is seq×vocab, so at a
+# large vocab (150k) seq=1024 OOMs (614MB forward + 614MB backward + the gamma/Ricci intermediate over 150k).
+# Lower it (e.g. 384) to fit the full 150k constellation on the card — vocab/model unchanged, just the seq cap.
+_CTX = int(__import__("os").environ.get("QIG_STUDIO_CTX", "1024"))
 _RICCI_EVERY = 25  # BUILD #1: real response-Ricci is ~25 forwards → recompute this often, cache between
 _EOS_BYTE = 0     # the kernel's stop token — it CHOOSES to stop (observer principle, no fixed length).
 # NUL (byte 0x00 / coord-id 0) is never legitimate content in the sanitised ASCII curriculum, so it is
@@ -880,7 +883,15 @@ class GenesisKernelTarget(TrainingTarget):
         ids, coords = self._encode(prompt)
         logits, tel = self._kernel(ids, return_telemetry=True, coords=coords)
         coherence = self._phi_proxy(tel.hidden_state)        # external proxy (monitoring / fallback)
-        gamma = self._gamma_proxy(logits)                    # differentiable generation-health (in-graph)
+        # gamma is a differentiable loss term (Γ-protection below) but its FR over the full per-position
+        # vocab distributions materialises several [seq, vocab] tensors. On a small (4GB) GPU at 150k vocab
+        # that overflows, so gradient-checkpoint it: the intermediates are recomputed in backward instead of
+        # retained — identical value+gradient, ~700MB less peak. Plain call when not on CUDA (no benefit).
+        if logits.is_cuda:
+            from torch.utils.checkpoint import checkpoint as _ckpt
+            gamma = _ckpt(self._gamma_proxy, logits, use_reentrant=False)
+        else:
+            gamma = self._gamma_proxy(logits)                # differentiable generation-health (in-graph)
         ce = F.cross_entropy(logits[0, :-1], ids[0, 1:])      # content grounding (surprise signal too)
         # ROUND-3 FIX (structural Φ-ceiling): drive the kernel's OWN differentiable Φ (tel.phi_diff) —
         # the exact quantity reported Φ is computed from (integrator gates + cross-position coherence,

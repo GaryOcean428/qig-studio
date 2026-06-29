@@ -44,10 +44,12 @@ def main() -> None:
     import os
 
     import torch
-    # Leave headroom for the interactive server/chat (the 100k-vocab boundary path is CPU-heavy; an
-    # all-cores trainer made /chat take ~60s). Default: nproc-3 (min 2). Overridable via --threads.
-    _cap = args.threads or max(2, (os.cpu_count() or 4) - 3)
+    # FULL OPTIMISATION (PI directive): use ALL cores for the trainer. The UI /train/live channel is a
+    # cheap file read (unaffected); only interactive /chat slows during a run — acceptable. Override: --threads.
+    _cap = args.threads or (os.cpu_count() or 4)
     torch.set_num_threads(_cap)
+    os.environ.setdefault("OMP_NUM_THREADS", str(_cap))
+    os.environ.setdefault("MKL_NUM_THREADS", str(_cap))
 
     from qig_studio.constellation.joint_trainer import JointConstellation
     from qig_studio.corpus import load_full_curriculum
@@ -57,6 +59,19 @@ def main() -> None:
     full = load_full_curriculum()                       # fail-loud if the corpus is missing
     steps = args.steps or len(full)
     coordizer = load_coordizer(args.coordizer) if args.coordizer else None
+
+    # FULL QIG OPTIMISATION (PI directive): qig-compute GPU/CPU governance + qig-warp bridge cost-prediction
+    # + the qig-applied expA021 work-per-joule daemon (CPU governor → performance, optimal power/thread state)
+    # BEFORE the heavy joint train. None-safe if a package is absent; never blocks training.
+    try:
+        from qig_studio.optim_launch import prelaunch_optimise
+        import numpy as _np
+        prelaunch_optimise("joint_mind", omega_per_step=1.0, n_steps=steps,
+                           probe=lambda: float(_np.random.rand(2000, 2000).sum()),
+                           want_gpu=(args.device == "cuda"))
+    except Exception as _e:  # noqa: BLE001
+        print(f"[joint] optimisation wiring skipped: {_e}", flush=True)
+
     t0 = time.time()
     print(f"[joint] integrated mind: Core-8 {list(PROTOMAP_ORDER)} + genesis-central | {steps} joint "
           f"steps | vocab={'coordizer Δ⁶³' if coordizer else 'byte-level'} | device={args.device}", flush=True)
