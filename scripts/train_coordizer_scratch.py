@@ -84,6 +84,14 @@ def main() -> None:
         print("[coord] corpus too small — abort.", flush=True)
         sys.exit(1)
 
+    # QIG OPTIMISATION GATE (mandatory pre-launch): qig-compute GPU governance + qig-warp bridge cost
+    # prediction + the qig-applied expA021 work-per-joule optimizer. The coordizer trainer ITSELF already
+    # uses qig-warp check_ci_stabilized for its convergence batch-accept gate (trainer.py:368).
+    from qig_studio.optim_launch import prelaunch_optimise
+    import numpy as _np
+    prelaunch_optimise("coordizer", omega_per_step=1.0, n_steps=vocab,
+                       probe=lambda: float(_np.random.rand(1500, 1500).sum()), want_gpu=False)
+
     print(f"[coord] training coordizer to {vocab:,} vocab (from scratch)…", flush=True)
     Path(args.checkpoint_dir).mkdir(parents=True, exist_ok=True)
     trainer = CoordinzerTrainer(target_vocab_size=vocab)
