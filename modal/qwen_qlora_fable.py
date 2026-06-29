@@ -27,12 +27,15 @@ IMAGE = (
     modal.Image.from_registry("nvidia/cuda:12.4.1-devel-ubuntu22.04", add_python="3.11")
     .uv_pip_install(
         "torch",
+        "torchvision",       # the Qwen3.5 AutoTokenizer pulls in a VL image processor that imports torchvision+PIL
+        "pillow",
         "transformers>=4.44",
         "peft>=0.12",
         "bitsandbytes>=0.43",
         "trl>=0.11",
         "datasets>=2.18",
         "accelerate>=0.30",
+        "sentencepiece",     # some Qwen tokenizer paths need it
     )
     .add_local_file(_FABLE, "/data/fable.jsonl")
 )
