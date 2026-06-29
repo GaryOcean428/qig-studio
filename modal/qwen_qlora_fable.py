@@ -52,7 +52,7 @@ def train() -> dict:
     from datasets import Dataset
     from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
     from transformers import (AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig,
-                              DataCollatorForLanguageModeling, Trainer, TrainingArguments)
+                              Trainer, TrainingArguments)
 
     rows = [json.loads(ln) for ln in pathlib.Path("/data/fable.jsonl").read_text().splitlines() if ln.strip()]
     print(f"[qlora] {len(rows)} fable conversations | base {_BASE}", flush=True)
@@ -60,9 +60,42 @@ def train() -> dict:
     tok = AutoTokenizer.from_pretrained(_BASE)
     if tok.pad_token is None:
         tok.pad_token = tok.eos_token
-    texts = [tok.apply_chat_template(r["messages"], tokenize=False) for r in rows]
-    ds = Dataset.from_dict({"text": texts}).map(
-        lambda ex: tok(ex["text"], truncation=True, max_length=2048), batched=True, remove_columns=["text"])
+    MAXLEN = 2048
+
+    # COMPLETION-ONLY masking (manual — Qwen3.5's template has no {% generation %} markers, so the built-in
+    # assistant-token mask is unusable). Prefix-diff: for each assistant turn, the tokens between the render
+    # of messages[:i] and messages[:i+1] are that turn (header + content + <|im_end|>). Train labels ONLY on
+    # those (incl. <|im_end|> → learns to STOP); mask user/system turns to -100 so it never learns to GENERATE
+    # the user side or continue the whole conversation (the stray-extra-turn artifact). enable_thinking=False
+    # keeps the format consistent with the plain (no-<think>) fable narration.
+    def _build(messages):
+        ids = tok.apply_chat_template(messages, tokenize=True, enable_thinking=False)
+        labels = [-100] * len(ids)
+        for i, msg in enumerate(messages):
+            if msg.get("role") != "assistant":
+                continue
+            a = len(tok.apply_chat_template(messages[:i], tokenize=True, enable_thinking=False)) if i else 0
+            b = len(tok.apply_chat_template(messages[:i + 1], tokenize=True, enable_thinking=False))
+            for j in range(a, min(b, len(ids))):
+                labels[j] = ids[j]
+        return ids[:MAXLEN], labels[:MAXLEN]
+
+    examples = []
+    for r in rows:
+        ids, labels = _build(r["messages"])
+        if any(lbl != -100 for lbl in labels):      # keep only convs with at least one trainable assistant token
+            examples.append({"input_ids": ids, "attention_mask": [1] * len(ids), "labels": labels})
+    ds = Dataset.from_list(examples)
+    print(f"[qlora] completion-only: {len(ds)} examples | "
+          f"trainable tokens {sum(sum(1 for x in e['labels'] if x!=-100) for e in examples):,}", flush=True)
+
+    def _collate(batch):
+        m = max(len(b["input_ids"]) for b in batch)
+        pad = tok.pad_token_id
+        def _p(x, v): return x + [v] * (m - len(x))
+        return {"input_ids": torch.tensor([_p(b["input_ids"], pad) for b in batch]),
+                "attention_mask": torch.tensor([_p(b["attention_mask"], 0) for b in batch]),
+                "labels": torch.tensor([_p(b["labels"], -100) for b in batch])}
 
     bnb = BitsAndBytesConfig(load_in_4bit=True, bnb_4bit_quant_type="nf4",
                              bnb_4bit_compute_dtype=torch.bfloat16, bnb_4bit_use_double_quant=True)
@@ -76,8 +109,7 @@ def train() -> dict:
     args = TrainingArguments(output_dir="/tmp/out", num_train_epochs=5, per_device_train_batch_size=1,
                              gradient_accumulation_steps=8, learning_rate=1e-4, warmup_steps=10,
                              logging_steps=2, bf16=True, optim="paged_adamw_8bit", report_to=[], save_strategy="no")
-    trainer = Trainer(model=model, train_dataset=ds, args=args,
-                      data_collator=DataCollatorForLanguageModeling(tok, mlm=False))
+    trainer = Trainer(model=model, train_dataset=ds, args=args, data_collator=_collate)
     trainer.train()
     model.save_pretrained("/out/fable-adapter")
     tok.save_pretrained("/out/fable-adapter")
