@@ -26,10 +26,16 @@ import sys
 import time
 from pathlib import Path
 
-# default rounded corpus: everyday narrative (TinyStories) + the user's agentic/coding add (claude-fable-5).
+# FULL rounded corpus — every shortlist dataset reachable via the light datasets-server rows API, spanning
+# the registers the academic curriculum lacks: everyday narrative, general prose, conversational, emotional
+# dialogue, and the user's agentic/coding traces. (daily_dialog is OMITTED — it is a legacy script-only
+# dataset with no rows-API/parquet source; it would need the heavy `datasets` lib + deprecated script exec.)
 _DEFAULT_SPECS = [
     {"dataset": "roneneldan/TinyStories", "config": "default", "split": "train", "text_fields": ("text",)},
-    {"dataset": "armand0e/claude-fable-5-claude-code", "config": "default", "split": "train"},
+    {"dataset": "Salesforce/wikitext", "config": "wikitext-103-raw-v1", "split": "train", "text_fields": ("text",)},
+    {"dataset": "Anthropic/hh-rlhf", "config": "default", "split": "train", "text_fields": ("chosen",)},
+    {"dataset": "Estwld/empathetic_dialogues_llm", "config": "default", "split": "train", "text_fields": ("conversations",)},
+    {"dataset": "armand0e/claude-fable-5-claude-code", "config": "default", "split": "train", "text_fields": ("messages", "prompt")},
 ]
 _FERTILITY_PROBE = [
     "Hey, how are you doing today? I was thinking we could grab a coffee tomorrow.",

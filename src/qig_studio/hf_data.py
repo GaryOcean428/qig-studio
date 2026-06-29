@@ -14,15 +14,37 @@ ROWS_API = "https://datasets-server.huggingface.co/rows"
 _PAGE = 100   # the rows API caps length per call at 100
 
 
+def _flatten(v: object) -> str:
+    """Text out of any row value: str (parse if it's a JSON list/dict), message-dict {role,content}→content,
+    list→joined, dict→joined values. Handles chat/agent-trace rows (fable `messages`, empathetic
+    `conversations`) that arrive as nested structures or JSON strings."""
+    import json
+    if isinstance(v, str):
+        s = v.strip()
+        if s[:1] in "[{":                       # a JSON-encoded list/dict (e.g. fable `messages`)
+            try:
+                return _flatten(json.loads(s))
+            except Exception:  # noqa: BLE001 — not JSON; use the raw string
+                return v
+        return v
+    if isinstance(v, dict):
+        c = v.get("content")
+        if isinstance(c, str) and c.strip():    # a chat message {role, content}
+            return c
+        return "\n".join(_flatten(x) for x in v.values())
+    if isinstance(v, list):
+        return "\n".join(_flatten(x) for x in v)
+    return ""
+
+
 def _row_text(row: dict, fields: tuple[str, ...]) -> str:
-    """Extract text from a row: first matching field, else join all string values (handles chat/trace rows)."""
+    """Text from a row: first matching field (structure-aware), else flatten all values."""
     for f in fields:
-        v = row.get(f)
-        if isinstance(v, str) and v.strip():
-            return v
-    # fallback: concatenate any string-valued fields (e.g. agent-trace / conversation rows)
-    parts = [str(v) for v in row.values() if isinstance(v, str) and v.strip()]
-    return "\n".join(parts)
+        if f in row:
+            t = _flatten(row[f]).strip()
+            if t:
+                return t
+    return "\n".join(_flatten(v) for v in row.values()).strip()
 
 
 def load_hf_passages(
