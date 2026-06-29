@@ -30,6 +30,11 @@ from .qwen_boundary import (
 )
 
 _DEFAULT_URL = "http://localhost:11434"
+# Boundary-peer model. Defaults to the fable-tuned adapter (qwenfable: qwen3.5:4b + the
+# completion-masked claude-fable-5 QLoRA, applied via Ollama ADAPTER — see runs/Modelfile.qwen_fable).
+# Override with QIG_QWEN_MODEL=qwen3.5:4b to fall back to the stock base. Studio stays None-safe:
+# is_available() pings the server, so an absent model just disables the peer rather than crashing.
+_DEFAULT_MODEL = os.environ.get("QIG_QWEN_MODEL", "qwenfable")
 
 # EXP-A020 (qig-applied inference accelerator) per-request throughput levers for the Ollama boundary peer.
 # num_gpu=-1 → offload ALL layers to the GPU (Ollama's own CUDA, independent of python torch); a 4B q4 model
@@ -40,7 +45,18 @@ _OLLAMA_OPTIONS: dict[str, Any] = {
     "num_gpu": int(os.environ.get("QIG_OLLAMA_NUM_GPU", "-1")),
     "num_batch": int(os.environ.get("QIG_OLLAMA_NUM_BATCH", "512")),
 }
-_OLLAMA_KEEP_ALIVE = os.environ.get("QIG_OLLAMA_KEEP_ALIVE", "-1")
+def _coerce_keep_alive(v: str) -> Any:
+    # Ollama's keep_alive is an INTEGER seconds (-1 = stay resident forever, 0 = unload now) OR a
+    # duration string WITH a unit ("5m", "24h"). A bare "-1" string has no unit → Ollama 400s with
+    # `time: missing unit in duration "-1"`, which silently broke EVERY boundary-peer chat call. Coerce
+    # plain-int strings to int; pass unit'd duration strings through unchanged.
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return v
+
+
+_OLLAMA_KEEP_ALIVE = _coerce_keep_alive(os.environ.get("QIG_OLLAMA_KEEP_ALIVE", "-1"))
 
 
 def _extract_logprobs(data: dict) -> dict:
@@ -71,7 +87,7 @@ class QwenLocalTarget(TrainingTarget):
         "here; Ollama logprobs path untested against a live server."
     )
 
-    def __init__(self, model: str = "qwen3.5:4b", url: str = _DEFAULT_URL, dim: int = BASIN_DIM, coordizer=None) -> None:
+    def __init__(self, model: str = _DEFAULT_MODEL, url: str = _DEFAULT_URL, dim: int = BASIN_DIM, coordizer=None) -> None:
         self._model = model
         self._url = url.rstrip("/")
         self._dim = dim
@@ -100,7 +116,14 @@ class QwenLocalTarget(TrainingTarget):
         try:
             import httpx
 
-            return httpx.get(self._url + "/api/tags", timeout=0.8).status_code == 200
+            resp = httpx.get(self._url + "/api/tags", timeout=0.8)
+            if resp.status_code != 200:
+                return False
+            # None-safe: confirm THIS model is actually pulled/created, else disable the peer
+            # (e.g. qwenfable not built on this box) rather than 404-ing at chat time.
+            names = {m.get("name", "") for m in resp.json().get("models", [])}
+            want = self._model if ":" in self._model else self._model + ":latest"
+            return self._model in names or want in names
         except Exception:
             return False
 
