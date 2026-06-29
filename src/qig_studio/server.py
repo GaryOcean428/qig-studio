@@ -36,7 +36,7 @@ from . import __version__
 from .coach import DevelopmentalCoach, OllamaLLM
 from .config import Settings
 from .kernel_experience import experience as _experience
-from .live import LiveLog, step_record
+from .live import LIVE_PATH, LiveLog, step_record
 from .curriculum import CurriculumProvider, phase_names
 from .mastery import Mastery
 from .governance.pillars import PillarEnforcerAdapter
@@ -284,8 +284,8 @@ async def mind_state() -> dict[str, Any]:
     # the fallback. Lets the UI warn against starting a SECOND (UI) train on top.
     import time as _time
     bg_active, bg_age, bg_step, hb_phi, hb_min_fr = False, None, None, None, None
-    live_f = Path("runs/spawn/joint_live.json")
-    cur: dict[str, Any] = {}
+    live_f = Path(LIVE_PATH)              # env-configured (QIG_STUDIO_LIVE_PATH); NOT hardcoded — the UI must
+    cur: dict[str, Any] = {}             # read the SAME file the active trainer writes (e.g. joint_live_v2.json)
     if live_f.exists():
         try:
             cur = (json.loads(live_f.read_text()).get("current") or {})
@@ -763,7 +763,7 @@ async def train_live() -> StreamingResponse:
     was launched in-session (POST /train) or as a DETACHED background joint-trainer. ts-ordered (robust
     across run restarts: a new run resets step to 1 but ts keeps increasing)."""
     async def gen() -> AsyncGenerator[str, None]:
-        path = Path("runs/spawn/joint_live.json")
+        path = Path(LIVE_PATH)            # env-configured, same file the active trainer writes (not hardcoded)
         last_ts = 0.0
         yield _sse({"type": "hello", "ts": _now()})
         while True:
