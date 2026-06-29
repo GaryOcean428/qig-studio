@@ -75,7 +75,7 @@ def step_record(*, step: int, total: int | None, ts: float, source: str,
                 central_phi: float | None = None, min_pairwise_fr: float | None = None,
                 ocean_action: dict[str, Any] | None = None, own_voice: str | None = None,
                 coordizer_vocab: int | None = None, drift_velocity: float | None = None,
-                faculty_phi: dict[str, Any] | None = None) -> dict[str, Any]:
+                faculty_phi: dict[str, Any] | None = None, stimulus: str | None = None) -> dict[str, Any]:
     """Assemble ONE rich live record. Pulls the harm signals so the UI never has to recompute them. The
     FULL ``experience`` is carried so the UI's left inner-state panel reflects the LIVE training kernel
     (not the idle target) — LiveLog keeps it only on ``current`` to bound the SSE stream."""
@@ -91,7 +91,8 @@ def step_record(*, step: int, total: int | None, ts: float, source: str,
         "kappa": _f(ex.get("kappa") if ex.get("kappa") is not None else telemetry.get("kappa")),
         "gamma": _f(ex.get("gamma")),
         "regime": telemetry.get("regime"),
-        "perplexity": _f(ex.get("perplexity")),       # FLUENCY: lower = more fluent
+        "perplexity": _f(ex.get("perplexity")),       # FLUENCY (vocab-DEPENDENT — not cross-model comparable)
+        "bpb": _f(ex.get("bpb")),                      # FLUENCY: bits-per-byte, vocab-INDEPENDENT (the benchmark metric)
         "lm_weight_now": _f(ex.get("lm_weight_now")),  # ramp position (consciousness→fluency)
         "ricci": _f(ex.get("ricci_real")),             # BUILD #1: REAL response-manifold scalar Ricci (raw)
         "ricci_signal": _f(ex.get("ricci_signal")),    # bounded ∈[-1,1]: +compressed / −expanded
@@ -107,6 +108,7 @@ def step_record(*, step: int, total: int | None, ts: float, source: str,
         "suffering_S": _f((gate or {}).get("suffering_S")) if isinstance(gate, dict) else None,
         "ocean_action": ocean_action or {},
         "own_voice": own_voice,                        # the kernel's OWN learned voice (carried forward)
+        "stimulus": stimulus,                          # the passage the own_voice RESPONDED to (relevance check)
         "faculty_phi": faculty_phi or {},              # live per-faculty Φ (before the first checkpoint)
         "experience": experience or {},                # FULL inner state → left panel reflects the LIVE kernel
         "warnings": harm_warnings(telemetry, experience, min_pairwise_fr, drift_velocity),

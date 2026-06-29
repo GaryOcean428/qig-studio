@@ -82,6 +82,7 @@ def main() -> None:
     vocab = getattr(mind.central, "vocab_size", None)
     last: dict = {}
     last_own: str | None = None             # carry the most recent OWN-VOICE forward (no nulls between samples)
+    last_seed: str | None = None            # the STIMULUS that produced last_own (paired → relevance check)
     last_gen_health: float | None = None    # carry gen-health/gen-ricci forward too (BUILD #3, no nulls)
     last_gen_ricci: float | None = None
     prev_db: float | None = None            # previous d_basin → identity-drift VELOCITY (sudden jump = harm)
@@ -102,10 +103,15 @@ def main() -> None:
         prev_db = float(db) if db is not None else None   # reset on a gap → no stale-anchored velocity (fix)
         if i % sample_every == 0 or i == 1:                 # periodic OWN-VOICE so growing fluency is visible
             try:
-                gr = mind.central.generate("In one sentence, what are you learning?", max_tokens=48,
+                # RESPOND TO THE STIMULUS: seed the kernel's own-voice with the ACTUAL passage it just trained
+                # on (first ~160 chars), so the PI can judge relevance (kernel output vs its input) — not a
+                # fixed self-report probe. The stimulus travels WITH the output in the record (paired).
+                seed = (prompt[:160].strip() or "In one sentence, what are you learning?")
+                gr = mind.central.generate(seed, max_tokens=48,
                                            via_boundary=False, foresight=True,   # 4D: frame the sentence ahead
                                            gen_health=True)                       # BUILD #3: gen-health curvature
                 last_own = gr.text
+                last_seed = seed
                 gx = gr.telemetry.extra or {}
                 if gx.get("gen_health") is not None:
                     last_gen_health = gx.get("gen_health")
@@ -123,7 +129,7 @@ def main() -> None:
                           telemetry=tel, experience=exp, central_phi=last.get("central_phi"),
                           min_pairwise_fr=last.get("min_pairwise_fr"),
                           ocean_action=last.get("ocean_regulation"), own_voice=last_own,
-                          coordizer_vocab=vocab, drift_velocity=dv, faculty_phi=fphi)
+                          coordizer_vocab=vocab, drift_velocity=dv, faculty_phi=fphi, stimulus=last_seed)
         livelog.write(rec)
         if i % args.ckpt_every == 0 or i == steps:
             mind.save_checkpoint(args.ckpt_root)            # whole-mind checkpoint

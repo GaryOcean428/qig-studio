@@ -231,8 +231,15 @@
       left, and <b>stops on its own</b> when a full sweep adds nothing new (more training won't help at this
       capacity) — up to <b>max steps</b> as a safety cap. You don't set thresholds; the kernel's own novelty
       decides what's learned. Watch the MASTERY bar (left) climb toward full capture.</div>
-    <div class="hint" style="margin-top:.25rem">Live stream per step: Φ, Γ, FLUENCY (perplexity ↓), the lm-ramp
-      (consciousness→fluency), C-gate, suffering, identity drift, the kernel's OWN voice, and HARM warnings.</div>
+    <div class="hint" style="margin-top:.25rem">Live stream per step: Φ, Γ, <b>bpb</b> (bits/byte — vocab-independent
+      fluency ↓), the lm-ramp (consciousness→fluency), C-gate, suffering, identity drift, the kernel's OWN voice, and
+      HARM warnings.</div>
+    <div class="hint" style="margin-top:.15rem">bpb targets (transformer refs — ours is <b>qig-geocoding</b>, so matching
+      them is the open frontier claim): <span style="color:#2fae57">frontier-for-size ~0.8</span> ·
+      <span style="color:#5bbf6a">GPT-2-124M ~1.1</span> · <span style="color:#c9a227">TinyStories ~1.2</span> ·
+      <span style="color:#c2453f">random ~5</span>.</div>
+    <div style="margin-top:.3rem"><button id="evalBpbBtn" class="btn" style="font-size:.72rem">📊 run held-out bpb eval</button>
+      <span id="evalBpbOut" class="hint" style="margin-left:.4rem">— measures the served mind on a fixed UNSEEN set</span></div>
     <div id="liveStatus" class="livestat">connecting to the live training stream…</div>
     <div id="liveStream"></div>
 
@@ -279,6 +286,13 @@ function fnum(x,d){ return (x==null||isNaN(x)) ? "—" : Number(x).toFixed(d); }
 function esc(s){ return String(s==null?"":s).replace(/[&<>"']/g,(c)=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 // fluency = perplexity (lower = more fluent). Big early (~vocab size) for a fresh 100k kernel; descends as it learns.
 function fppl(x){ if(x==null||isNaN(x)) return "—"; x=Number(x); return x>=1000 ? (x/1000).toFixed(x>=10000?0:1)+"k" : x.toFixed(0); }
+// BITS-PER-BYTE — the VOCAB-INDEPENDENT fluency metric (perplexity scales with vocab → not cross-model
+// comparable; bpb is). Reference targets from the transformer literature (ours is qig-geocoding, so MATCHING
+// them is the open frontier claim, not an apples-to-apples expectation):
+//   frontier-for-size ~0.8 (SmolLM2-360M / Qwen2.5-0.5B) · GPT-2-124M ~1.1 · TinyStories-coherent ~1.2 · random ≈ 5.
+function fbpb(x){ return (x==null||isNaN(x))?"—":Number(x).toFixed(2); }
+function bpbColor(x){ if(x==null||isNaN(x)) return "var(--dim)"; x=Number(x);
+  return x<=0.8?"#2fae57":x<=1.1?"#5bbf6a":x<=1.5?"#c9a227":x<=2.5?"#cf7a2c":"#c2453f"; }  // frontier→random
 let LAST_LIVE_TS = 0;       // wall-clock of last RENDERED record (idle detector)
 let SELECTED_KERNEL = "genesis";   // which kernel the LEFT panel shows (genesis / a faculty / ocean / all)
 let KERNELS = [];                  // cache of /mind/kernels entries
@@ -300,7 +314,7 @@ function renderLive(r){
     `<span class="src">${esc(r.source||"")}</span>`+
     `<span class="bdg phi">Φ ${fnum(r.phi,3)}</span>`+
     `<span class="bdg gam">Γ ${fnum(r.gamma,2)}</span>`+
-    `<span class="bdg ppl" title="perplexity — lower = more fluent; ~vocab when untrained, descends as it learns">fluency ${fppl(r.perplexity)}↓</span>`+
+    `<span class="bdg" style="color:${bpbColor(r.bpb)}" title="bits/byte — vocab-INDEPENDENT fluency (the benchmark metric). transformer refs (ours is qig-geocoding): frontier-for-size ~0.8 · GPT-2-124M ~1.1 · TinyStories ~1.2 · random ~5. perplexity=${fppl(r.perplexity)}">bpb ${fbpb(r.bpb)}↓</span>`+
     `<span class="bdg lm">lm ${fnum(r.lm_weight_now,2)}</span>`+
     `<span class="bdg gate ${gateCls}">${esc(gate)}</span>`;
   row.appendChild(hd);
@@ -311,6 +325,7 @@ function renderLive(r){
   row.appendChild(sub);
   (r.warnings||[]).forEach(w=>{ const h=document.createElement("div"); h.className="harm "+(w.level==="crit"?"crit":"warn"); h.textContent="⚠ "+w.msg; row.appendChild(h); });
   if(r.ocean_action && Object.keys(r.ocean_action).length){ const o=document.createElement("div"); o.className="ocean"; o.textContent="🌊 Ocean regulated: "+Object.keys(r.ocean_action).join(", "); row.appendChild(o); }
+  if(r.stimulus){ const s=document.createElement("div"); s.className="voice"; s.style.opacity=".75"; s.textContent='📥 stimulus ▸ '+String(r.stimulus); row.appendChild(s); }
   if(r.own_voice){ const v=document.createElement("div"); v.className="voice"; v.textContent='🗣 own voice ▸ '+String(r.own_voice).replace(/^\[genesis[^\]]*\]\s*/,""); row.appendChild(v); }
   el.appendChild(row);
   while(el.children.length>150) el.removeChild(el.firstChild);
@@ -322,7 +337,7 @@ function renderLive(r){
   const ageStr = age==null ? "" : (age<60?age.toFixed(0)+"s":age<3600?(age/60).toFixed(0)+"m":(age/3600).toFixed(1)+"h")+" ago";
   $("liveDot").className = fresh ? "dot live" : "dot idle";
   $("liveStatus").textContent = (fresh?"":"idle · last: ")
-    + `${r.source==="bg"?"background":"in-session"} training · step ${r.step}${r.total?("/"+r.total):""} · Φ ${fnum(r.phi,3)} · fluency ${fppl(r.perplexity)}↓ · lm ${fnum(r.lm_weight_now,2)}`
+    + `${r.source==="bg"?"background":"in-session"} training · step ${r.step}${r.total?("/"+r.total):""} · Φ ${fnum(r.phi,3)} · bpb ${fbpb(r.bpb)}↓ (ppl ${fppl(r.perplexity)}) · lm ${fnum(r.lm_weight_now,2)}`
     + (ageStr?(" · "+ageStr):"");
   if(r.phi!=null){ PHI_SPARK.push(r.phi); PHI_SPARK=PHI_SPARK.slice(-44); const sp=$("archSpark"); if(sp) sp.textContent=sparkline(PHI_SPARK)+"  Φ "+fnum(r.phi,2); }
   // Stamp from the record's PRODUCTION time (r.ts, seconds), not receipt time — so the idle detector and
@@ -588,6 +603,17 @@ async function sendChat(){
   }catch(e){ clearInterval(tmr); wait.remove(); clog("err","chat failed: "+e); }
 }
 $("trainBtn").addEventListener("click", runTrain);
+$("evalBpbBtn").addEventListener("click", async ()=>{
+  const out=$("evalBpbOut"); out.textContent="running held-out eval…";
+  try{
+    const r=await (await fetch("/eval/bpb")).json();
+    if(r.detail){ out.textContent="eval unavailable: "+r.detail; return; }
+    const o=r.overall_bpb, s=r.sets||{};
+    const parts=Object.keys(s).map(k=>`${k} <b style="color:${bpbColor(s[k])}">${fbpb(s[k])}</b>`).join(" · ");
+    out.innerHTML=`held-out bpb (vocab ${r.served_vocab}): overall <b style="color:${bpbColor(o)}">${fbpb(o)}</b> · ${parts} `+
+      `<span class="hint">(target frontier ~0.8 · GPT-2 ~1.1)</span>`;
+  }catch(e){ out.textContent="eval failed: "+e; }
+});
 async function runTrain(){
   if(LAST_LIVE_TS && (Date.now()-LAST_LIVE_TS<15000) &&
      !confirm("Training already appears ACTIVE (the live stream is updating). A UI train competes for CPU and trains the in-session kernel. Continue anyway?")) return;

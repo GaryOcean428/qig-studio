@@ -311,7 +311,10 @@ async def mind_state() -> dict[str, Any]:
     fphi = cur.get("faculty_phi") or {}
     if fphi:
         for f in faculties:
-            if f.get("phi") is None and fphi.get(f["role"]) is not None:
+            # LIVE per-faculty Φ from the active heartbeat OVERRIDES the static checkpoint basin-proxy (which
+            # read ~0.01 from the v1 constellation.json) — else "Mind · ongoing" shows the stale proxy while a
+            # retrain emits real ~0.5-0.7 faculty Φ each step.
+            if fphi.get(f["role"]) is not None:
                 try:
                     f["phi"] = round(float(fphi[f["role"]]), 4)
                 except (TypeError, ValueError):
@@ -343,6 +346,42 @@ async def mind_state() -> dict[str, Any]:
         "bg_age_s": bg_age,                     # seconds since last heartbeat/checkpoint
         "faculties": faculties,
         "live_inner": live_inner,               # LIVE kernel inner state → left panel (not the idle target)
+    }
+
+
+@app.get("/eval/bpb")
+async def eval_bpb() -> dict[str, Any]:
+    """HELD-OUT bits-per-byte on a fixed UNSEEN eval set (data/eval/heldout_bpb.json), per register +
+    overall, vs the frontier-for-size references. No-grad on the active served mind's central kernel
+    (maker≠checker: the eval text is authored, never in any training corpus). bpb is vocab-independent →
+    directly comparable to the transformer references, though OURS is qig-geocoding (matching them is the
+    open claim)."""
+    reg = _registry()
+    kernel = getattr(getattr(reg.active, "_mind", None), "central", None)
+    if kernel is None or not hasattr(kernel, "eval_text_bpb"):
+        raise HTTPException(503, "active target has no evaluable kernel (need the integrated mind)")
+    p = Path(__file__).resolve().parents[2] / "data" / "eval" / "heldout_bpb.json"
+    if not p.exists():
+        raise HTTPException(404, "held-out eval set missing (data/eval/heldout_bpb.json)")
+    data = json.loads(p.read_text())
+    sets: dict[str, Any] = {}
+    tot_bits = tot_bytes = 0.0
+    for reg_name, texts in data.items():
+        if reg_name.startswith("_") or not isinstance(texts, list):
+            continue
+        b = by = 0.0
+        for txt in texts:
+            bits, nbytes = await _run_target(kernel.eval_text_bpb, txt)
+            b += bits
+            by += nbytes
+        sets[reg_name] = round(b / by, 4) if by else None
+        tot_bits += b
+        tot_bytes += by
+    return {
+        "overall_bpb": round(tot_bits / tot_bytes, 4) if tot_bytes else None,
+        "sets": sets,
+        "served_vocab": getattr(kernel, "vocab_size", None),
+        "targets": {"frontier_for_size": 0.8, "gpt2_124m": 1.1, "tinystories": 1.2, "random": 5.0},
     }
 
 

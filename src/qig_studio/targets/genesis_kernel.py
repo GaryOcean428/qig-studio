@@ -313,6 +313,27 @@ class GenesisKernelTarget(TrainingTarget):
         coords = torch.from_numpy(vecs).to(dev).unsqueeze(0)  # [1, seq, coord_dim]
         return input_ids, coords
 
+    def eval_text_bpb(self, text: str) -> tuple[float, int]:
+        """HELD-OUT bits-per-byte for one text (no grad, no training): returns (total_bits, n_bytes) so a
+        caller can aggregate sum(bits)/sum(bytes) over an eval set. Vocab-independent → directly comparable
+        to the frontier-for-size references. bits = mean_CE_nats * n_tokens / ln2; bytes = the bytes the
+        evaluated tokens actually cover (coordizer decode, or the byte ids on the byte path)."""
+        import math as _m
+
+        import torch
+        import torch.nn.functional as F
+        self.ensure_loaded()
+        ids, coords = self._encode(text)
+        if ids.shape[1] < 2:
+            return 0.0, 0
+        with torch.no_grad():
+            logits, _ = self._kernel(ids, return_telemetry=True, coords=coords)
+            ce = float(F.cross_entropy(logits[0, :-1], ids[0, 1:]))     # mean nats / predicted token
+        n_tok = int(ids.shape[1])
+        nbytes = (len(self.coordizer.decode(ids[0].tolist()).encode("utf-8"))
+                  if self.coordizer is not None else n_tok)
+        return ce * n_tok / _m.log(2), max(1, nbytes)
+
     def _snap(self, tel: Any, loss: float | None) -> TelemetrySnapshot:
         prev = self._last.phi
         phi = float(getattr(tel, "phi", 0.0) or 0.0)
@@ -905,6 +926,17 @@ class GenesisKernelTarget(TrainingTarget):
         # of the curriculum). This is what we WATCH descend as the kernel grows fluent. lm_weight_now shows
         # the ramp position (the language signal's current weight in the loss).
         snap.extra["perplexity"] = round(float(_math.exp(min(float(ce.item()), 20.0))), 2)
+        # BITS-PER-BYTE: the VOCAB-INDEPENDENT fluency metric (perplexity scales with vocab → not
+        # comparable across models; bpb is). bpb = bits/byte = (mean_CE_nats/ln2) / bytes_per_token. The
+        # bytes covered by this window come from decoding the actual tokens (coordizer) or the byte ids
+        # (byte path), so it's exact under context truncation. This is the number to benchmark frontier-
+        # for-size against (transformer REFERENCES: GPT-2-124M ~1.1, frontier-for-size ~0.8) — our
+        # qig-geocoding kernel matching them is the open claim, not an apples-to-apples expectation.
+        if self.coordizer is not None:
+            _nbytes = max(1, len(self.coordizer.decode(ids[0].tolist()).encode("utf-8")))
+        else:
+            _nbytes = max(1, int(ids.shape[1]))                  # byte-level: 1 token == 1 byte
+        snap.extra["bpb"] = round(float(ce.item()) * int(ids.shape[1]) / (_math.log(2) * _nbytes), 4)
         snap.extra["lm_weight_now"] = round(float(w_lm), 3)
         # Maturity-gate telemetry (4-conjunct: Φ ∧ Γ ∧ M ∧ d_basin — κ dropped, input-frozen): record
         # the detached output basin into the trajectory (history[0] = role attractor / birth-state),
