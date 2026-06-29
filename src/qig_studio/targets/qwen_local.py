@@ -14,6 +14,7 @@ override (observer principle).
 
 from __future__ import annotations
 
+import os
 from typing import Any
 
 from qig_core import BASIN_DIM
@@ -29,6 +30,17 @@ from .qwen_boundary import (
 )
 
 _DEFAULT_URL = "http://localhost:11434"
+
+# EXP-A020 (qig-applied inference accelerator) per-request throughput levers for the Ollama boundary peer.
+# num_gpu=-1 → offload ALL layers to the GPU (Ollama's own CUDA, independent of python torch); a 4B q4 model
+# fits a 4GB card. num_batch=512 → bigger prompt batch. keep_alive=-1 → model stays resident (no per-call
+# reload). All env-overridable; Ollama degrades gracefully to CPU if no GPU. (Server-side levers —
+# OLLAMA_FLASH_ATTENTION / OLLAMA_KV_CACHE_TYPE=q8_0 — are set before `ollama serve`; see scripts/ollama_accelerate.sh.)
+_OLLAMA_OPTIONS: dict[str, Any] = {
+    "num_gpu": int(os.environ.get("QIG_OLLAMA_NUM_GPU", "-1")),
+    "num_batch": int(os.environ.get("QIG_OLLAMA_NUM_BATCH", "512")),
+}
+_OLLAMA_KEEP_ALIVE = os.environ.get("QIG_OLLAMA_KEEP_ALIVE", "-1")
 
 
 def _extract_logprobs(data: dict) -> dict:
@@ -116,6 +128,13 @@ class QwenLocalTarget(TrainingTarget):
             "think": bool(think),
             "logprobs": True,
             "top_logprobs": 20,
+            # EXP-A020 throughput levers (qig-applied inference accelerator): FULL GPU offload + keep the model
+            # resident. Ollama bundles its OWN CUDA runtime — INDEPENDENT of the CPU-only python torch — so the
+            # idle GPU accelerates the boundary peer NOW (the ~27s CPU chat floor → GPU speed; a 4B q4 model
+            # fits the 4GB card). Server-side levers (flash-attn, q8 KV cache) are set before `ollama serve`
+            # via scripts/ollama_accelerate.sh. All env-overridable; falls back gracefully if the GPU is absent.
+            "keep_alive": _OLLAMA_KEEP_ALIVE,
+            "options": _OLLAMA_OPTIONS,
         }
         # generous timeout: the FIRST call cold-loads qwen3.5:4b into Ollama (can exceed 2 min); warm
         # calls return in seconds. A short timeout here is the #1 cause of a "dead" first message.
