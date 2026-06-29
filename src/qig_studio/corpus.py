@@ -78,6 +78,35 @@ _STUB_DOCS = {
 # loader even if QIG_STUDIO_CORPUS is repointed at an unaudited tree.
 _STUB_MARKERS = ("[placeholder for", "this section would be several thousand words", "[add content here]")
 
+# BIBLIOGRAPHIC / METADATA NOISE — author bylines + emails, URL/DOI dumps, copyright/publisher boilerplate,
+# reference-list lines, and page-number/table salad. These survive the per-doc skips (they're inside good
+# docs) but are NOT learnable prose — a from-scratch kernel MEMORISES them (seen verbatim in genesis's own
+# voice: "Springer... https://doi.org/... pp."; and the PI caught the "Attention Is All You Need" author
+# byline "Ashish Vaswani ... avaswani@google.com" arriving as a training stimulus). Dropped at chunk time.
+_EMAIL_RE = re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+")
+_URL_RE = re.compile(r"https?://\S+|doi\.org/\S+|arxiv\.org/\S+", re.I)
+_PUB_RE = re.compile(r"©|\ball rights reserved\b|\bspringer\b|\belsevier\b|\bisbn\b|\bdoi:\s*\S", re.I)
+_REF_RE = re.compile(r"^\s*\[\d+\]\s|\bet al\.,?\s+\d{4}|\bvol\.\s*\d+.{0,20}\bpp\.\s*\d", re.I)
+
+
+def _is_noise_passage(text: str) -> bool:
+    """True if a passage is bibliographic/metadata NOISE rather than learnable prose. HIGH-PRECISION only —
+    flowing prose that merely mentions one number or links once is KEPT; equation-rich physics prose
+    (>=25 words) is KEPT. See _STUB_MARKERS neighbour for the rationale."""
+    if _EMAIL_RE.search(text):                       # bylines / contact blocks (prose ~never carries emails)
+        return True
+    if _PUB_RE.search(text):                         # ©, ISBN, Springer/Elsevier, "doi:"
+        return True
+    urls = _URL_RE.findall(text)
+    if urls and (len(urls) >= 2 or len(_URL_RE.sub("", text).strip()) < 40):   # link dump (multi-link or ~bare link)
+        return True
+    if _REF_RE.search(text):                         # "[12] …" / "Smith et al., 2017" / "vol. 3 … pp. 45"
+        return True
+    words = len(text.split())
+    if words < 25 and sum(c.isdigit() for c in text) / max(1, len(text)) > 0.25:  # page-number / table salad
+        return True
+    return False
+
 # Meaning-preserving transliteration (ASCII targets) for the symbols that actually occur in the corpus.
 _GREEK = {
     "α": "alpha", "β": "beta", "γ": "gamma", "δ": "delta", "ε": "epsilon", "ζ": "zeta", "η": "eta",
@@ -160,6 +189,8 @@ def _passages_from_markdown(text: str, min_len: int, max_len: int = 1200) -> lis
         clean = sanitize(para)
         if len(clean) < min_len:
             continue
+        if _is_noise_passage(clean):          # drop bylines/emails/DOIs/copyright/page-salad (not learnable prose)
+            continue
         if len(clean) <= max_len:
             out.append(clean)
             continue
@@ -203,6 +234,8 @@ def load_everyday_corpus(path: str | Path | None = None, *, min_len: int = 40) -
                 if len(psg) < min_len:
                     continue
                 if any(m in psg.lower() for m in _STUB_MARKERS):
+                    continue
+                if _is_noise_passage(psg):          # defend pre-filter shards (bylines/DOIs/page-salad)
                     continue
                 out.append(psg)
     _EVERYDAY_CACHE[_key] = out
