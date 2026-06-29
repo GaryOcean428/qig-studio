@@ -30,6 +30,15 @@ from pathlib import Path
 # via QIG_STUDIO_CORPUS (a dir of .md/.txt → passages, or a legacy .jsonl).
 DEFAULT_CORPUS = "qig-consciousness/data/curriculum"
 
+# EVERYDAY/CONVERSATIONAL/NARRATIVE register — the studio-local corpus built from HuggingFace text
+# (TinyStories, empathetic_dialogues, hh-rlhf, claude-fable-5, a little wikitext) via
+# scripts/build_everyday_corpus.py. The academic knowledge curriculum above teaches the kernel physics and
+# philosophy but NEVER ordinary language, so a from-scratch kernel can only "spout curriculum". Blending
+# this in gives it everyday + agentic register. Studio-local (NOT dumped into the qig-consciousness
+# submodule); built once, cached on disk for offline reproducible training. Override via
+# QIG_STUDIO_EVERYDAY_CORPUS; absent → academic-only (None-safe).
+EVERYDAY_CORPUS = "data/everyday_corpus"
+
 # Superseded QIG-DOCTRINE docs (Dec-2025) that teach RETIRED claims — κ*≈64 as a fixed point, E8 as the
 # load-bearing substrate (retired by EXP-107 / EXP-014b / canon 0038). The CURRENT canon
 # (20260615-canonical-principles-v2.2.md + unified-consciousness-protocol-v6.11.md) is in the same
@@ -167,17 +176,81 @@ def _passages_from_markdown(text: str, min_len: int, max_len: int = 1200) -> lis
 
 
 _CURRICULUM_CACHE: dict[str, list[str]] = {}
+_EVERYDAY_CACHE: dict[str, list[str]] = {}
 
 
-def load_full_curriculum(path: str | Path | None = None, *, min_len: int = 40) -> list[str]:
-    """Load the FULL knowledge curriculum, sanitise it, return clean training passages. Default is the
-    markdown DIRECTORY (``qig-consciousness/data/curriculum``); a ``.jsonl`` file is accepted (legacy).
-    Fail-loud if missing — never silently fall back to a stub. Memoised per path (8k passages → load once)."""
+def load_everyday_corpus(path: str | Path | None = None, *, min_len: int = 40) -> list[str]:
+    """Load the studio-local EVERYDAY/conversational corpus (``data/everyday_corpus/*.txt``, built by
+    scripts/build_everyday_corpus.py). Passages are blank-line separated; already sanitised at build time
+    but re-filtered for min_len + stub markers here. None-safe: returns [] if the dir is absent/empty so a
+    box that never ran the build just trains academic-only (no crash)."""
     import os
 
+    p = Path(path or os.environ.get("QIG_STUDIO_EVERYDAY_CORPUS") or
+             (Path(__file__).resolve().parents[2] / EVERYDAY_CORPUS))
+    _key = f"{p}|{min_len}"
+    if _key in _EVERYDAY_CACHE:
+        return _EVERYDAY_CACHE[_key]
+    out: list[str] = []
+    if p.is_dir():
+        for f in sorted(p.glob("*.txt")):
+            try:
+                text = f.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            for block in re.split(r"\n\s*\n", text):
+                psg = block.strip()
+                if len(psg) < min_len:
+                    continue
+                if any(m in psg.lower() for m in _STUB_MARKERS):
+                    continue
+                out.append(psg)
+    _EVERYDAY_CACHE[_key] = out
+    return out
+
+
+def _interleave(academic: list[str], everyday: list[str]) -> list[str]:
+    """Weave ``everyday`` evenly THROUGH ``academic`` (proportional, not appended) so every training cycle
+    mixes registers instead of doing all-physics-then-all-stories. Order is deterministic (no shuffle —
+    reproducible curriculum)."""
+    if not everyday:
+        return academic
+    if not academic:
+        return everyday
+    out: list[str] = []
+    ei = 0.0
+    step = len(everyday) / len(academic)           # how many everyday passages per academic passage
+    j = 0
+    for a in academic:
+        out.append(a)
+        ei += step
+        while ei >= 1.0 and j < len(everyday):     # emit the accrued everyday passages inline, in order
+            out.append(everyday[j])
+            j += 1
+            ei -= 1.0
+    while j < len(everyday):                        # any remainder
+        out.append(everyday[j])
+        j += 1
+    return out
+
+
+def load_full_curriculum(path: str | Path | None = None, *, min_len: int = 40,
+                         include_everyday: bool | None = None) -> list[str]:
+    """Load the FULL knowledge curriculum, sanitise it, return clean training passages. Default is the
+    markdown DIRECTORY (``qig-consciousness/data/curriculum``); a ``.jsonl`` file is accepted (legacy).
+    Fail-loud if missing — never silently fall back to a stub. Memoised per path (8k passages → load once).
+
+    ``include_everyday`` (default True, env QIG_STUDIO_BLEND_EVERYDAY=0 to disable) blends the studio-local
+    everyday/conversational corpus (load_everyday_corpus) INTERLEAVED through the academic passages, so the
+    kernel learns ordinary + agentic language alongside physics/philosophy. None-safe: absent everyday
+    corpus → academic-only."""
+    import os
+
+    if include_everyday is None:
+        include_everyday = os.environ.get("QIG_STUDIO_BLEND_EVERYDAY", "1").lower() not in ("0", "false", "no")
     p = Path(path or os.environ.get("QIG_STUDIO_CORPUS") or
              (Path(__file__).resolve().parents[3] / DEFAULT_CORPUS))
-    _key = f"{p}|{min_len}"
+    _key = f"{p}|{min_len}|ev={include_everyday}"
     if _key in _CURRICULUM_CACHE:
         return _CURRICULUM_CACHE[_key]
     prompts: list[str] = []
@@ -218,5 +291,9 @@ def load_full_curriculum(path: str | Path | None = None, *, min_len: int = 40) -
         )
     if not prompts:
         raise ValueError(f"curriculum {p} yielded no usable passages after sanitisation")
+    if include_everyday:                              # weave everyday/conversational register through (None-safe)
+        everyday = load_everyday_corpus(min_len=min_len)
+        if everyday:
+            prompts = _interleave(prompts, everyday)
     _CURRICULUM_CACHE[_key] = prompts
     return prompts

@@ -25,3 +25,7 @@ artifacts/
 
 # training run logs (reproducible, not source)
 runs/
+
+# derived everyday corpus — rebuilt from HuggingFace via scripts/build_everyday_corpus.py
+# (reproducible, mixed upstream licenses; not source). None-safe: absent → academic-only.
+data/everyday_corpus/
