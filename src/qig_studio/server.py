@@ -644,7 +644,12 @@ async def train(req: TrainRequest, _: None = Depends(verify_key)) -> StreamingRe
             if not due:
                 return None
             try:
-                gr = await _run_target(t.generate, "In one sentence, what are you learning?", req.max_tokens)
+                # "own voice" must be the KERNEL's RAW voice (via_boundary=False) — what the kernel itself
+                # says as it learns — NOT the Qwen boundary peer. t.generate() speaks through Qwen (fluent
+                # but not the kernel); t.own_voice() is the raw kernel (terse/garbled until truly fluent),
+                # matching the label + the bg trainer. Honest training telemetry, not Qwen's coherence.
+                fn = getattr(t, "own_voice", None) or t.generate
+                gr = await _run_target(fn, "In one sentence, what are you learning?", req.max_tokens)
                 sx = gr.telemetry.extra or {}
                 return {"output": gr.text, "kernel_voice": sx.get("kernel_voice")}
             except Exception:  # noqa: BLE001 — a sample failure must not break training

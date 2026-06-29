@@ -64,7 +64,7 @@ def train() -> dict:
 
     cfg = SFTConfig(output_dir="/tmp/out", num_train_epochs=5, per_device_train_batch_size=1,
                     gradient_accumulation_steps=8, learning_rate=1e-4, optim="paged_adamw_8bit",
-                    warmup_steps=10, logging_steps=2, max_seq_length=2048, bf16=True, report_to=[])
+                    warmup_steps=10, logging_steps=2, max_length=2048, bf16=True, report_to=[])
     lora = LoraConfig(r=64, lora_alpha=128, lora_dropout=0.05, task_type="CAUSAL_LM",
                       target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"])
     trainer = SFTTrainer(model=model, train_dataset=ds, args=cfg, peft_config=lora)

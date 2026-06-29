@@ -78,6 +78,14 @@ class JointMindTarget(TrainingTarget):
         self._last = res.telemetry
         return res
 
+    def own_voice(self, prompt: str, max_tokens: int = 64) -> StepResult:
+        """The kernel's OWN raw voice — central.generate(via_boundary=False), NO Qwen. This is the honest
+        'what the kernel itself says as it learns' (terse/garbled until genuinely fluent), matching the bg
+        trainer and the UI 'own voice' label. generate() above speaks through the Qwen boundary peer; this
+        does NOT — so training telemetry shows the kernel's real progress, not Qwen's fluency."""
+        self.ensure_loaded()
+        return self._mind.central.generate(prompt, max_tokens=max_tokens, via_boundary=False)
+
     def train_step(self, prompt: str, max_tokens: int = 64, target_text: str | None = None) -> StepResult:
         self.ensure_loaded()                                        # geometric: target_text ignored (lm-ramped inside)
         info = self._mind.train_step(prompt)                       # one COUPLED joint step (faculty + central)
