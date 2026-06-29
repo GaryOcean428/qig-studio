@@ -18,7 +18,10 @@ import os
 from pathlib import Path
 from typing import Any
 
-LIVE_PATH = "runs/spawn/joint_live.json"
+# The shared live-heartbeat file. Env-overridable so the TEST SUITE (and any throwaway run) writes to a
+# SEPARATE file instead of polluting the production stream the UI tails — tests use the real /train endpoint
+# with the mock target, which otherwise injected stale "mock #1/40" records into the live log forever.
+LIVE_PATH = os.environ.get("QIG_STUDIO_LIVE_PATH", "runs/spawn/joint_live.json")
 RING = 48  # recent records retained for SSE backlog
 
 # Harm thresholds — canonical (qig-core PHI_THRESHOLD=0.70 / PHI_BREAKDOWN_MIN=0.80; kernel gamma_floor
