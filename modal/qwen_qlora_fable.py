@@ -68,19 +68,21 @@ def train() -> dict:
     # those (incl. <|im_end|> → learns to STOP); mask user/system turns to -100 so it never learns to GENERATE
     # the user side or continue the whole conversation (the stray-extra-turn artifact). enable_thinking=False
     # keeps the format consistent with the plain (no-<think>) fable narration.
-    def _ct(msgs):
-        # return_dict=False → a flat token-id LIST (tokenize=True alone returns a BatchEncoding whose len()
-        # is the #keys, which silently zeroed every span — the 0-trainable-tokens bug).
-        return tok.apply_chat_template(msgs, tokenize=True, enable_thinking=False, return_dict=False)
+    def _ids(msgs):
+        # render to STRING then tokenize the string → ALWAYS a flat token-id list. The tokenize=True path
+        # returns a BatchEncoding (or a list-of-lists, version-dependent) whose len() is NOT the token count,
+        # which silently zeroed every span. add_special_tokens=False — the chat template already embeds them.
+        text = tok.apply_chat_template(msgs, tokenize=False, enable_thinking=False)
+        return tok(text, add_special_tokens=False)["input_ids"]
 
     def _build(messages):
-        ids = _ct(messages)
+        ids = _ids(messages)
         labels = [-100] * len(ids)
         for i, msg in enumerate(messages):
             if msg.get("role") != "assistant":
                 continue
-            a = len(_ct(messages[:i])) if i else 0
-            b = len(_ct(messages[:i + 1]))
+            a = len(_ids(messages[:i])) if i else 0
+            b = len(_ids(messages[:i + 1]))
             for j in range(a, min(b, len(ids))):
                 labels[j] = ids[j]
         return ids[:MAXLEN], labels[:MAXLEN]
@@ -90,9 +92,11 @@ def train() -> dict:
         ids, labels = _build(r["messages"])
         if any(lbl != -100 for lbl in labels):      # keep only convs with at least one trainable assistant token
             examples.append({"input_ids": ids, "attention_mask": [1] * len(ids), "labels": labels})
+    trainable = sum(sum(1 for x in e["labels"] if x != -100) for e in examples)
+    print(f"[qlora] completion-only: {len(examples)} examples | trainable tokens {trainable:,}", flush=True)
+    if not examples or trainable == 0:              # fail-fast — never train on empty/all-masked data
+        raise RuntimeError(f"completion-masking produced no trainable tokens ({len(examples)} examples)")
     ds = Dataset.from_list(examples)
-    print(f"[qlora] completion-only: {len(ds)} examples | "
-          f"trainable tokens {sum(sum(1 for x in e['labels'] if x!=-100) for e in examples):,}", flush=True)
 
     def _collate(batch):
         m = max(len(b["input_ids"]) for b in batch)
