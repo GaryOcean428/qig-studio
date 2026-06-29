@@ -299,10 +299,18 @@ function renderLive(r){
   while(el.children.length>150) el.removeChild(el.firstChild);
   el.scrollTop=el.scrollHeight;
   const age = r.ts ? Math.max(0,(Date.now()/1000 - r.ts)) : null;
-  $("liveDot").className="dot live";
-  $("liveStatus").textContent = `${r.source==="bg"?"background":"in-session"} training · step ${r.step}${r.total?("/"+r.total):""} · Φ ${fnum(r.phi,3)} · fluency ${fppl(r.perplexity)}↓ · lm ${fnum(r.lm_weight_now,2)}${age!=null?(" · "+age.toFixed(0)+"s ago"):""}`;
+  // GENUINELY live only if the record was PRODUCED <15s ago. The SSE replays the last record on every
+  // (re)connect, so a stale record must NOT read as active — that was the false "training appears ACTIVE".
+  const fresh = age==null || age < 15;
+  const ageStr = age==null ? "" : (age<60?age.toFixed(0)+"s":age<3600?(age/60).toFixed(0)+"m":(age/3600).toFixed(1)+"h")+" ago";
+  $("liveDot").className = fresh ? "dot live" : "dot idle";
+  $("liveStatus").textContent = (fresh?"":"idle · last: ")
+    + `${r.source==="bg"?"background":"in-session"} training · step ${r.step}${r.total?("/"+r.total):""} · Φ ${fnum(r.phi,3)} · fluency ${fppl(r.perplexity)}↓ · lm ${fnum(r.lm_weight_now,2)}`
+    + (ageStr?(" · "+ageStr):"");
   if(r.phi!=null){ PHI_SPARK.push(r.phi); PHI_SPARK=PHI_SPARK.slice(-44); const sp=$("archSpark"); if(sp) sp.textContent=sparkline(PHI_SPARK)+"  Φ "+fnum(r.phi,2); }
-  LAST_LIVE_TS = Date.now();
+  // Stamp from the record's PRODUCTION time (r.ts, seconds), not receipt time — so the idle detector and
+  // the runTrain() active-guard reflect whether training is REALLY producing fresh records right now.
+  LAST_LIVE_TS = r.ts ? r.ts*1000 : Date.now();
 }
 function subscribeLive(){
   try{
