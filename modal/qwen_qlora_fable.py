@@ -43,7 +43,8 @@ IMAGE = (
 VOL = modal.Volume.from_name("qig-qwen-fable-adapter", create_if_missing=True)
 
 
-@APP.function(image=IMAGE, gpu="A10G", timeout=3600, volumes={"/out": VOL})
+@APP.function(image=IMAGE, gpu="A10G", timeout=3600, volumes={"/out": VOL},
+              secrets=[modal.Secret.from_name("custom-secret")])  # HF_TOKEN → authenticated, fast model download
 def train() -> dict:
     import pathlib
 
