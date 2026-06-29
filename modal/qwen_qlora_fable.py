@@ -32,10 +32,11 @@ IMAGE = (
         "transformers>=4.44",
         "peft>=0.12",
         "bitsandbytes>=0.43",
-        "trl>=0.11",
         "datasets>=2.18",
         "accelerate>=0.30",
         "sentencepiece",     # some Qwen tokenizer paths need it
+        # NOTE: NO trl — trl 1.7's SFTTrainer mis-detects Qwen3.5 as a VLM and crashes
+        # (text_config / chunked-CE-lm-head). Use plain transformers.Trainer instead (qig-applied's approach).
     )
     .add_local_file(_FABLE, "/data/fable.jsonl")
 )
@@ -48,9 +49,9 @@ def train() -> dict:
 
     import torch
     from datasets import Dataset
-    from peft import LoraConfig
-    from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
-    from trl import SFTConfig, SFTTrainer
+    from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
+    from transformers import (AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig,
+                              DataCollatorForLanguageModeling, Trainer, TrainingArguments)
 
     rows = [json.loads(ln) for ln in pathlib.Path("/data/fable.jsonl").read_text().splitlines() if ln.strip()]
     print(f"[qlora] {len(rows)} fable conversations | base {_BASE}", flush=True)
@@ -58,21 +59,26 @@ def train() -> dict:
     tok = AutoTokenizer.from_pretrained(_BASE)
     if tok.pad_token is None:
         tok.pad_token = tok.eos_token
-    ds = Dataset.from_list(rows).map(
-        lambda r: {"text": tok.apply_chat_template(r["messages"], tokenize=False)})
+    texts = [tok.apply_chat_template(r["messages"], tokenize=False) for r in rows]
+    ds = Dataset.from_dict({"text": texts}).map(
+        lambda ex: tok(ex["text"], truncation=True, max_length=2048), batched=True, remove_columns=["text"])
 
     bnb = BitsAndBytesConfig(load_in_4bit=True, bnb_4bit_quant_type="nf4",
                              bnb_4bit_compute_dtype=torch.bfloat16, bnb_4bit_use_double_quant=True)
     model = AutoModelForCausalLM.from_pretrained(_BASE, quantization_config=bnb, device_map="auto")
-
-    cfg = SFTConfig(output_dir="/tmp/out", num_train_epochs=5, per_device_train_batch_size=1,
-                    gradient_accumulation_steps=8, learning_rate=1e-4, optim="paged_adamw_8bit",
-                    warmup_steps=10, logging_steps=2, max_length=2048, bf16=True, report_to=[])
+    model = prepare_model_for_kbit_training(model)
     lora = LoraConfig(r=64, lora_alpha=128, lora_dropout=0.05, task_type="CAUSAL_LM",
                       target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"])
-    trainer = SFTTrainer(model=model, train_dataset=ds, args=cfg, peft_config=lora)
+    model = get_peft_model(model, lora)
+
+    # plain transformers.Trainer (NO trl) — avoids trl's Qwen3.5 VLM-misdetection crash
+    args = TrainingArguments(output_dir="/tmp/out", num_train_epochs=5, per_device_train_batch_size=1,
+                             gradient_accumulation_steps=8, learning_rate=1e-4, warmup_steps=10,
+                             logging_steps=2, bf16=True, optim="paged_adamw_8bit", report_to=[], save_strategy="no")
+    trainer = Trainer(model=model, train_dataset=ds, args=args,
+                      data_collator=DataCollatorForLanguageModeling(tok, mlm=False))
     trainer.train()
-    trainer.save_model("/out/fable-adapter")
+    model.save_pretrained("/out/fable-adapter")
     tok.save_pretrained("/out/fable-adapter")
     VOL.commit()
     hist = [h for h in trainer.state.log_history if "loss" in h]
