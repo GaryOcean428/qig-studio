@@ -260,6 +260,26 @@ class GenesisKernelTarget(TrainingTarget):
         reps = (size + ref.numel() - 1) // ref.numel()
         return ref.repeat(reps)[:size].clamp_min(0.0)
 
+    def _fit_basin_to_vocab(self, b: "Any") -> "Any":
+        """Fit a PERSISTED vocab-sized basin (a Δ^{vocab-1} point) to the CURRENT vocab. After neurogenesis
+        grows the lm_head (e.g. 100k->108k), checkpointed basins are stale at the old width — stacking them
+        with fresh basins crashes (the joint-retrain bug this fixes). A basin is a probability distribution
+        summing to 1, and the old trajectory carried ZERO mass on the new tokens, so PADDING the new slots
+        with zeros preserves the distribution EXACTLY (sum stays 1, still a valid point on the larger
+        simplex). Truncate + renormalise on the rare shrink. Self-heals any vocab change on load; a no-op
+        when widths already match."""
+        import torch
+        if b is None:
+            return None
+        n = b.numel()
+        if n == self.vocab_size:
+            return b
+        if n < self.vocab_size:
+            return torch.cat([b, b.new_zeros(self.vocab_size - n)])
+        t = b[:self.vocab_size]
+        s = float(t.sum())
+        return t / s if s > 0 else t
+
     # --- input coding: coordizer Δ⁶³ coords if present, else byte-level (dependency-free) ----------
     def _encode(self, text: str):
         """Return (input_ids[1,seq], coords[1,seq,coord_dim] | None).
@@ -1163,12 +1183,16 @@ class GenesisKernelTarget(TrainingTarget):
         self._kernel.load_state_dict(ckpt["kernel_state"])
         self._step = int(ckpt.get("step", 0))
         self._sleep_pressure = float(ckpt.get("sleep_pressure", 0.0))
+        # Vocab-sized basin state is fitted to the CURRENT vocab (self-heals a post-neurogenesis width
+        # change: stale 100k basins -> 108k by zero-padding, exact since old tokens carried all the mass).
+        # `experience` is token-ID sequences (not basins) and stays as-is — old ids are valid under the
+        # superset vocab.
         ref = ckpt.get("basin_ref")
-        self._basin_ref = ref.to(dev) if ref is not None else None
-        self._basin_history = [b.to(dev) for b in (ckpt.get("basin_history") or [])]
+        self._basin_ref = self._fit_basin_to_vocab(ref.to(dev)) if ref is not None else None
+        self._basin_history = [self._fit_basin_to_vocab(b.to(dev)) for b in (ckpt.get("basin_history") or [])]
         # full developmental state (format 2; format-1 checkpoints leave these at their fresh defaults)
         lg = ckpt.get("last_gen_basin")
-        self._last_gen_basin = lg.to(dev) if lg is not None else self._last_gen_basin
+        self._last_gen_basin = self._fit_basin_to_vocab(lg.to(dev)) if lg is not None else self._last_gen_basin
         exp = ckpt.get("experience")
         if exp:
             self._experience = [e.to(dev) for e in exp]
