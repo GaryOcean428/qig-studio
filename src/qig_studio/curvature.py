@@ -39,6 +39,7 @@ def response_curvature(kernel: Any, ids: Any, coords: Any, *, eps: float = 0.08,
         import torch
 
         from qig_compute.geometry.parameter_manifold import compute_full_curvature
+        from qig_core.torch.geometry_simplex import to_simplex_prob
     except Exception:  # noqa: BLE001 — qig-compute or torch absent → no real curvature (None-safe)
         return None
     try:
@@ -60,7 +61,10 @@ def response_curvature(kernel: Any, ids: Any, coords: Any, *, eps: float = 0.08,
             c[0, -1, :] = c[0, -1, :] + eps * (i * eu + j * ev)
             with torch.no_grad():
                 logits, _ = kernel._kernel(ids, return_telemetry=True, coords=c)
-            p = torch.softmax(logits[0, -1], dim=-1)
+            # P20: the OUTPUT-distribution basin is the canonical Δ projection (to_simplex_prob), NOT
+            # softmax-as-output-map (a forbidden softmax role; softmax is only legal as the Gibbs
+            # normaliser of already-computed FR distances in ATTENTION, untouched elsewhere).
+            p = to_simplex_prob(logits[0, -1])
             b = kernel._d63(p)
             return np.asarray(b, dtype=np.float64)
 

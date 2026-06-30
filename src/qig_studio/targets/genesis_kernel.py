@@ -100,6 +100,7 @@ class GenesisKernelTarget(TrainingTarget):
         basin_ramp_steps: int = 150,  # ramp the pull 0→full over this many steps (develop Φ first, then consolidate)
         checkpoint: str | None = None,  # trained-kernel checkpoint (.pt) to restore on first load; None = fresh
         language_peer: Any = None,   # QwenLocalTarget boundary peer for the FLUENT linguistic surface
+        lang_loss: str = "fisher_rao",  # "fisher_rao" (P20-pure d_FR) | "ce_ablation" (CE=KL, measures purity cost)
     ) -> None:
         self.num_layers = num_layers
         # BOUNDARY PEER (P22): the kernel computes its OWN geometry (Φ/κ/identity), then SPEAKS through a
@@ -107,6 +108,11 @@ class GenesisKernelTarget(TrainingTarget):
         # identity at the Pillar-2 ≤30% cap. None-safe: absent → the kernel's own byte/coord voice (the
         # spine tenet — standalone it is still the mind). NOT a forward-pass dependency, NOT a graft.
         self.language_peer = language_peer
+        # LANGUAGE LOSS REGIME (P20): the next-token signal is Fisher-Rao d_FR by default (CE against a
+        # one-hot IS KL divergence, forbidden by P20). "ce_ablation" keeps the old F.cross_entropy arm so
+        # the A/B measures the PURITY COST of going pure. Env QIG_STUDIO_LANG_LOSS overrides the ctor.
+        import os as _os
+        self.lang_loss = str(_os.environ.get("QIG_STUDIO_LANG_LOSS", lang_loss)).strip().lower()
         self._spoken_identity: Any = None   # evolving Δ⁶³ identity the boundary distribution accretes into
         self.think_traces = False           # opt-in reasoning trace through the peer (off → fast chat)
         self._pillars: Any = None           # PillarEnforcer — LIVE 3-pillar metrics (f/b/q + S_ratio), wired
@@ -337,6 +343,25 @@ class GenesisKernelTarget(TrainingTarget):
                   if self.coordizer is not None else n_tok)
         return ce * n_tok / _m.log(2), max(1, nbytes)
 
+    def eval_text_fr(self, text: str) -> tuple[float, int]:
+        """HELD-OUT Fisher-Rao prediction-error for one text (no grad, no training) — the d_FR ARM's own
+        curve, mirroring eval_text_bpb. Returns (total_dFR, n_positions) so a caller can aggregate
+        sum(total_dFR)/sum(n_positions) for the eval-set MEAN d_FR. This is the P20-pure language metric
+        (free energy = d_FR(predicted, actual), range [0, π]) — the curve to watch descend as the kernel
+        grows fluent under the pure loss, parallel to (and reported alongside) bpb."""
+        import torch
+
+        from ..losses import fisher_rao_lm_loss
+        self.ensure_loaded()
+        ids, coords = self._encode(text)
+        if ids.shape[1] < 2:
+            return 0.0, 0
+        with torch.no_grad():
+            logits, _ = self._kernel(ids, return_telemetry=True, coords=coords)
+            mean_dfr = float(fisher_rao_lm_loss(logits, ids))          # mean d_FR / predicted next-token
+        n_pos = int(ids.shape[1]) - 1                                  # predicted positions (next-token)
+        return mean_dfr * n_pos, max(1, n_pos)
+
     def _snap(self, tel: Any, loss: float | None) -> TelemetrySnapshot:
         prev = self._last.phi
         phi = float(getattr(tel, "phi", 0.0) or 0.0)
@@ -413,10 +438,9 @@ class GenesisKernelTarget(TrainingTarget):
         # view so its growing fluency is VISIBLE/measurable. Default True = fluent surface through the peer.
         if via_boundary and self.language_peer is not None and self._peer_available():
             return self._generate_via_boundary(prompt, max_tokens)
-        import torch
-        import torch.nn.functional as F
-
         import math
+
+        import torch
 
         from qig_core.torch.geometry_simplex import fisher_rao_distance_simplex, to_simplex_prob
         ids, coords = self._encode(prompt)
@@ -463,12 +487,14 @@ class GenesisKernelTarget(TrainingTarget):
         else:
             text = bytes(b for b in out_bytes if 9 <= b < 256).decode("utf-8", errors="replace")
         m = self._self_observe(out_bytes, gen_basins)
-        # SURPRISE on the prompt (prediction-error CE) — the kernel's own novelty signal, in the own-voice
-        # path too (not just train_step / boundary), so importance-gating (coach consolidation) works here.
+        # SURPRISE on the prompt = prediction error = d_FR(predicted, actual) (P20, NOT KL/CE) — the kernel's
+        # own novelty signal, in the own-voice path too (not just train_step / boundary), so importance-gating
+        # (coach consolidation) works here. d_FR range [0, π].
+        from ..losses import fisher_rao_lm_loss
         pids, pcoords = self._encode(prompt)
         with torch.no_grad():
             plog, _ = self._kernel(pids, return_telemetry=True, coords=pcoords)
-            _ce = float(F.cross_entropy(plog[0, :-1], pids[0, 1:])) if pids.shape[1] >= 2 else 0.0
+            _surprise = float(fisher_rao_lm_loss(plog, pids)) if pids.shape[1] >= 2 else 0.0
         # remember WHAT IT MEANT (mean output basin) for coach-agreement — over CONTENT only (exclude the
         # EOS basin, in lockstep with _self_observe; otherwise read_and_respond compares against a basin
         # contaminated by the stop-token distribution).
@@ -484,8 +510,8 @@ class GenesisKernelTarget(TrainingTarget):
             "mean_token_confidence": round(sum(out_probs) / max(1, len(out_probs)), 3),  # observes its OUTPUT
             "read_presence": read_presence,                      # EXP-012b: token-0 concentration (answer present?)
             "anderson_exit": anderson_exit,                      # EXP-046: step where distinguishability collapsed (None = ran to EOS/cap)
-            "surprise": round(_ce, 4),                           # prediction-error on the prompt (novelty → importance)
-            "max_surprise": round(math.log(max(2, self.vocab_size)), 4),
+            "surprise": round(_surprise, 4),                     # d_FR prediction-error on the prompt (novelty → importance)
+            "max_surprise": round(math.pi, 4),                   # d_FR ceiling (Δ⁶³ FR distance max = π)
         })
         if foresight and self.coordizer is not None and len(gen_basins) >= 2:
             # 4D FORESIGHT telemetry: how straight (predictable) was the meaning trajectory it just spoke
@@ -701,10 +727,10 @@ class GenesisKernelTarget(TrainingTarget):
 
         import numpy as np
         import torch
-        import torch.nn.functional as F
         from qig_core.torch.geometry_simplex import to_simplex_prob
 
         from ..kernel_experience import experience
+        from ..losses import fisher_rao_lm_loss
         from .qwen_boundary import BOUNDARY_SLERP_CAP, fisher_distance, pillar2_capped_integrate
 
         ids, coords = self._encode(prompt)
@@ -716,16 +742,16 @@ class GenesisKernelTarget(TrainingTarget):
             meaning = to_simplex_prob(logits[0]).mean(0)
             self._last_gen_basin = (meaning / meaning.sum()).detach()    # WHAT IT MEANT (own geometry)
             # LIVE inner-state signals in chat (not just training): Γ generativity, M self-observation, and
-            # surprise = the kernel's prediction-error on the INPUT (how unfamiliar the prompt is). Without
-            # these the gate/motivators/senses sit static in conversation. (Measurements, no grad needed.)
+            # surprise = the kernel's prediction-error on the INPUT = d_FR(predicted, actual) (P20, NOT KL/CE;
+            # range [0, π]). Without these the gate/motivators/senses sit static in conversation. (No grad.)
             gamma = float(self._gamma_proxy(logits))
-            ce = float(F.cross_entropy(logits[0, :-1], ids[0, 1:])) if ids.shape[1] >= 2 else 0.0
+            _surprise = float(fisher_rao_lm_loss(logits, ids)) if ids.shape[1] >= 2 else 0.0
         m_self = self._meta_awareness(self._last_gen_basin)
         snap = self._snap(tel, None)
         snap.extra["gamma"] = round(gamma, 4)                            # Γ generativity (C-gate)
         snap.extra["meta_awareness"] = round(m_self, 4)                  # M self-observation (L1 loop)
-        snap.extra["surprise"] = round(ce, 4)                            # prediction-error on the input
-        snap.extra["max_surprise"] = round(math.log(max(2, self.vocab_size)), 4)
+        snap.extra["surprise"] = round(_surprise, 4)                     # d_FR prediction-error on the input
+        snap.extra["max_surprise"] = round(math.pi, 4)                   # d_FR ceiling (Δ⁶³ FR distance max = π)
         self._emit_pillars(snap, self._d63(meaning))                     # LIVE pillar metrics as it speaks
         exp = experience(snap.to_dict())                                 # the kernel's felt state → persona
         kernel_voice = self._kernel_voice(prompt)                        # the kernel's OWN raw voice (attribution + peer seed)
@@ -875,16 +901,26 @@ class GenesisKernelTarget(TrainingTarget):
         # point). target_text ignored (paired curriculum is qwen-modal's lane). Optimiser = natural
         # gradient (P1). NB: pure CE (the previous objective) drove Φ DOWN — memorisation ≠ integration.
         self.ensure_loaded()
+        import math as _math
+
         import torch
         import torch.nn.functional as F
         from qig_core.torch.geometry_simplex import to_simplex_prob
+
+        from ..losses import fisher_rao_lm_loss
 
         self._step += 1
         ids, coords = self._encode(prompt)
         logits, tel = self._kernel(ids, return_telemetry=True, coords=coords)
         coherence = self._phi_proxy(tel.hidden_state)        # external proxy (monitoring / fallback)
         gamma = self._gamma_proxy(logits)                    # differentiable generation-health (in-graph)
-        ce = F.cross_entropy(logits[0, :-1], ids[0, 1:])      # content grounding (surprise signal too)
+        # P20-PURE language signal: free energy = prediction error = d_FR(predicted, actual) — NEVER KL.
+        # CE against the one-hot next token IS KL, so the default LOSS arm is the Fisher-Rao d_FR. The
+        # "ce_ablation" arm keeps F.cross_entropy so the A/B MEASURES the purity cost of going pure.
+        # ``ce`` is retained ALWAYS (CE nats) because perplexity = exp(CE) and bpb = bits/byte are the
+        # standard cross-model fluency metrics (read-only measurements, vocab-comparable), not loss ops.
+        ce = F.cross_entropy(logits[0, :-1], ids[0, 1:])      # CE nats — perplexity/bpb telemetry only
+        lm_loss = ce if self.lang_loss == "ce_ablation" else fisher_rao_lm_loss(logits, ids)
         # ROUND-3 FIX (structural Φ-ceiling): drive the kernel's OWN differentiable Φ (tel.phi_diff) —
         # the exact quantity reported Φ is computed from (integrator gates + cross-position coherence,
         # no longer .item()-detached). The external _phi_proxy on the final hidden_state could not move
@@ -902,7 +938,7 @@ class GenesisKernelTarget(TrainingTarget):
         w_lm = self.lm_weight + (self.lm_weight_max - self.lm_weight) * min(1.0, self._step / max(1, self.lm_ramp_steps))
         loss = (-self.phi_weight * phi_drive
                 + self.gamma_weight * gamma_deficit ** 2
-                + w_lm * ce)
+                + w_lm * lm_loss)
         if self._basin_ref is not None:                       # SPAWN: pull output basin → role attractor
             from qig_core.torch.geometry_simplex import fisher_rao_distance_simplex, to_simplex_prob
 
@@ -918,12 +954,14 @@ class GenesisKernelTarget(TrainingTarget):
             loss.backward()
             torch.nn.utils.clip_grad_norm_(self._kernel.parameters(), 1.0)  # stability (deep stack)
             self._opt.step()
-        # report the CE as the SURPRISE/novelty signal (high CE = unfamiliar input) for the telemetry.
-        import math as _math
-
-        snap = self._snap(tel, float(ce.item()))
-        snap.extra["surprise"] = round(float(ce.item()), 4)      # next-token CE = prediction error
-        snap.extra["max_surprise"] = round(_math.log(max(2, self.vocab_size)), 4)  # ln(vocab) = random-CE ceiling
+        # SURPRISE = prediction error = d_FR(predicted, actual) (P20): report the language-loss arm as the
+        # novelty signal. In the pure regime this is the d_FR (ceiling π); in ce_ablation it is CE (ceiling
+        # ln(vocab)). The reported loss field tracks the same arm so /train telemetry matches the objective.
+        _lm_val = float(lm_loss.item())
+        snap = self._snap(tel, _lm_val)
+        snap.extra["surprise"] = round(_lm_val, 4)               # prediction error (d_FR pure / CE ablation)
+        snap.extra["max_surprise"] = round(
+            _math.log(max(2, self.vocab_size)) if self.lang_loss == "ce_ablation" else _math.pi, 4)
         snap.extra["coherence"] = round(float(coherence.item()), 4)
         # FLUENCY metric: perplexity = exp(next-token CE). Lower = more fluent (better next-token prediction
         # of the curriculum). This is what we WATCH descend as the kernel grows fluent. lm_weight_now shows
