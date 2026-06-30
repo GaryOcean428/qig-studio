@@ -188,6 +188,15 @@ def fisher_rao_lm_loss(logits: torch.Tensor, ids: torch.Tensor) -> torch.Tensor:
 
 ## Phase 5 — Depth A/B (inside ARM B) + Phase 6 — bpb comparison
 
+> **BLIND CONTRACT (gates the 8L compute):** the depth A/B runs under the pre-registered contract in
+> [`2026-06-30-exp-cortex-ab-prereg.md`](./2026-06-30-exp-cortex-ab-prereg.md) — maturity floor (both
+> arms must clear saturation + beat the unigram floor before readout, else WITHHELD/UNDERPOWERED, not
+> "depth neutral"), VERDICT=CE-bpb / DIAGNOSTIC=d_FR (committed, anti-cherry-pick), same
+> coordizer/curriculum/loss/**NaturalGradientDescent-instance**/seed (only architecture varies),
+> committed kill conditions, and the two instrument caveats (Pillar-3 early-training cry-wolf is
+> non-informative; the Euclidean lm_head is common-mode/labelled-open). **Awaiting Matrix/Devin
+> ratification before spend.**
+
 ### Task 5.1: Run the depth A/B (EXP-CORTEX-AB)
 - Train `neocortex-qk-8L` (N-stacked) vs `neocortex-qk-1L-rec` (1-block-recursive, RecursiveIntegrator head) on the SAME coordizer/curriculum/loss/seed. Cheap scale first (per backing-map: "the A/B IS the build step").
 - **Verifier:** both checkpoints saved with their names; live-traces distinguishable by `model`.
