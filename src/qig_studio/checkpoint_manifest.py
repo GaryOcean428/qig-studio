@@ -158,6 +158,23 @@ def get_latest_coordizer() -> Path | None:
     return None
 
 
+def get_coordizer_for_vocab(vocab: int) -> Path | None:
+    """Return the registered coordizer whose vocab MATCHES ``vocab`` (a kernel's training vocab), else None.
+
+    Fixes the auto-load mismatch behind the UI's '✗ WRONG coordizer' flag: ``get_latest_coordizer`` returns
+    the NEWEST coordizer, which can pair a 100k-trained kernel with a freshly-built 32k coordizer. The server
+    should load the coordizer the active kernel was TRAINED on — matched by vocab — not the latest by date.
+    Matches ``actual_vocab`` (trained vocab incl. the 4 geo tags) OR ``target_vocab``. The caller falls back
+    to ``get_latest_coordizer()`` when no match exists (then the UI's mismatch flag is genuinely correct)."""
+    base = _coordizer_manifest_path().parent
+    for c in list_coordizer_checkpoints():
+        if vocab in (c.get("actual_vocab"), c.get("target_vocab")):
+            p = base / str(c.get("file", ""))
+            if p.exists():
+                return p
+    return None
+
+
 def get_latest_kernel_ckpt() -> Path | None:
     """Return the path to the latest kernel checkpoint dir, or None if not found."""
     manifest_path = _kernel_manifest_path()
