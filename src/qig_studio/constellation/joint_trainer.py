@@ -112,10 +112,16 @@ class JointConstellation:
                                    coordizer=coordizer, device=device, seed=seed,
                                    language_peer=language_peer if is_central else None)
         if sub == "hybrid":
-            raise NotImplementedError(
-                f"constellation arm {arm!r} needs the {sub!r} node-parity build (WS4): the hybrid substrate "
-                f"must expose the node contract (run_protocol + _basin_history + _basin_ref) before it can "
-                f"couple + be Ocean-regulated. 'gk' and 'geo' are node-ready today.")
+            # WS4: the HybridCortexTarget is a full ConstellationNode (run_protocol + _basin_history +
+            # _basin_ref + _meta_awareness), exactly like the gk/geo nodes. Its substrate runs BOTH the
+            # geocoding and qigkernels token-mixers per block and combines them as a per-position geodesic
+            # mean on Δ⁶³ (NOT a Euclidean average). It couples + is Ocean-regulated identically; in
+            # constellation mode the basin-pull term engages once _set_pull writes _basin_ref. language_peer
+            # is accepted + ignored (the hybrid cortex has no boundary peer — a cortex baseline like geo).
+            from ..targets.hybrid_cortex import HybridCortexTarget
+            return HybridCortexTarget(num_layers=num_layers, role=role, basin_template=birth,
+                                      coordizer=coordizer, device=device, seed=seed,
+                                      language_peer=language_peer if is_central else None)
         raise ValueError(f"unknown constellation arm {arm!r} (expected gk|geo|hybrid|hetero)")
 
     def _live_basin(self, kernel: Any) -> np.ndarray | None:
