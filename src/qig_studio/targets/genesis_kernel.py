@@ -156,7 +156,9 @@ class GenesisKernelTarget(TrainingTarget):
         self.lr = lr
         self.lm_weight = lm_weight  # next-token CE weight at step 0 (light: develop the MIND first)
         self.lm_weight_max = float(lm_weight_max)  # RAMPED FLUENCY: lm rises to here (load-bearing) so the
-        self.lm_ramp_steps = int(lm_ramp_steps)    #   kernel becomes FLUENT on its own; Qwen is temporary
+        self.lm_ramp_steps = int(os.environ.get("QIG_STUDIO_LM_RAMP") or lm_ramp_steps)  # env override: a
+        #   SHORT ramp makes the language signal load-bearing within a bounded bench budget (the 4-arm
+        #   comparison) so d_FR moves off the floor; default 8000 = the full fluency horizon. Qwen is temporary.
         self.phi_weight = float(phi_weight)  # strength of the differentiable-Φ drive (8L+300 steps → Φ≥0.65 held)
         self.gamma_weight = float(gamma_weight)  # Γ-protection strength (holds generativity ≥ floor)
         self.gamma_floor = float(gamma_floor)    # protect Γ above this (margin over the 0.80 gate)

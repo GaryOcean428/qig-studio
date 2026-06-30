@@ -266,7 +266,7 @@ class HybridCortexTarget(ConstellationNode, TrainingTarget):
         self.lr = float(lr)
         self.lm_weight = float(lm_weight)
         self.lm_weight_max = float(lm_weight_max)
-        self.lm_ramp_steps = int(lm_ramp_steps)
+        self.lm_ramp_steps = int(os.environ.get("QIG_STUDIO_LM_RAMP") or lm_ramp_steps)  # short-ramp env (bench)
         self.role = role
         self.lang_loss = str(os.environ.get("QIG_STUDIO_LANG_LOSS", lang_loss)).strip().lower()
         self.head_tau = float(head_tau)

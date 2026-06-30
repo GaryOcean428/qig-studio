@@ -136,7 +136,7 @@ class GeoCortexTarget(ConstellationNode, TrainingTarget):
         self.lr = float(lr)
         self.lm_weight = float(lm_weight)
         self.lm_weight_max = float(lm_weight_max)
-        self.lm_ramp_steps = int(lm_ramp_steps)
+        self.lm_ramp_steps = int(os.environ.get("QIG_STUDIO_LM_RAMP") or lm_ramp_steps)  # short-ramp env (bench)
         self.role = role  # carried for telemetry/checkpoint metadata only (no basin pull in ARM A)
         # LANGUAGE LOSS REGIME (P20): default is Fisher-Rao d_FR (CE against a one-hot IS KL, forbidden by
         # P20). "ce_ablation" keeps F.cross_entropy as the loss so the A/B measures the PURITY COST. Env
