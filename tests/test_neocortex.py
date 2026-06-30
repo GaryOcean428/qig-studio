@@ -1,10 +1,10 @@
-"""Neocortex harness (Phase 3 / ARM B) — the SINGLE deep cortex wrapper contract.
+"""Neocortex harness (Phase 3 ARM B + Phase 4 ARM A) — the arm-polymorphic cortex wrapper contract.
 
 These tests pin the cheap, deterministic surface of :class:`~qig_studio.neocortex.Neocortex`: the name
-mapping (which drives the checkpoint dir + the live-trace ``model`` chip), the ARM extension point (geo
-raises until Phase 4), and that it wraps a single ``GenesisKernelTarget`` rather than reimplementing the
-kernel. Heavy training (the 100k kernel, the loss, telemetry) is the reused GenesisKernelTarget's own
-coverage — not re-exercised here.
+mapping (which drives the checkpoint dir + the live-trace ``model`` chip), BOTH arms building their own
+target (``qk`` → ``GenesisKernelTarget``; ``geo`` → ``GeoCortexTarget``), and that each wraps a target
+rather than reimplementing the model. Heavy training (the 100k kernel/GeoModel, the loss, telemetry) is the
+targets' own coverage — not re-exercised here.
 """
 from __future__ import annotations
 
@@ -12,17 +12,38 @@ import pytest
 
 from qig_studio.neocortex import Neocortex
 
-# qigkernels.Kernel is built lazily (ensure_loaded), but Neocortex.__init__ constructs a
-# GenesisKernelTarget, which imports nothing heavy until ensure_loaded(). The ctor needs torch+qigkernels
-# present only for ensure_loaded; construction + name mapping are dependency-light. Skip if the heavy deps
-# are genuinely absent (the None-safe app-shell environment) so the suite stays green there.
+# qigkernels.Kernel / geocoding.GeoModel are built lazily (ensure_loaded); Neocortex.__init__ constructs the
+# target but imports nothing heavy until ensure_loaded(). EXCEPTION: arm="geo" runs the faithfulness +
+# loss-value parity asserts at CONSTRUCTION when deps are present (geocoding+qigkernels), which is the whole
+# point — they gate before bpb is trusted. Construction + name mapping are otherwise dependency-light. Skip
+# the heavy-dep cases if torch+qigkernels are genuinely absent (the None-safe app-shell environment).
 _HAVE_DEPS = Neocortex(arm="qk", num_layers=2).is_available()
 
 
-def test_geo_arm_is_a_clean_extension_point() -> None:
-    """ARM A (geocoding) lands in Phase 4 — the ctor raises NotImplementedError, never silently builds B."""
-    with pytest.raises(NotImplementedError, match="Phase 4"):
-        Neocortex(arm="geo")
+def test_geo_arm_builds_geo_cortex_target() -> None:
+    """Phase 4: ARM A (geocoding) now BUILDS a GeoCortexTarget (no longer raises). Construction also runs
+    the coords-off faithfulness + loss-value parity gates when deps are present — building without raising
+    IS the parity passing."""
+    from qig_studio.targets.geo_cortex import GeoCortexTarget
+
+    n = Neocortex(arm="geo", num_layers=2, lang_loss="fisher_rao")
+    assert isinstance(n.target, GeoCortexTarget)
+    assert n.target.lang_loss == "fisher_rao"
+    assert n.target.num_layers == 2
+    assert n.name == "neocortex-geo-2L"
+    # the SAME pass-throughs the launcher + ARM B rely on are present for ARM A too
+    for attr in ("train_step", "generate", "eval_text_bpb", "eval_text_fr", "save", "load",
+                 "telemetry", "vocab_size", "num_layers", "ensure_loaded", "is_available", "architecture"):
+        assert hasattr(n, attr), f"missing pass-through: {attr}"
+
+
+@pytest.mark.skipif(not _HAVE_DEPS, reason="geocoding+qigkernels absent (None-safe app shell)")
+def test_geo_arm_construction_runs_parity_gates() -> None:
+    """When deps are present, building ARM A asserts BOTH coords-off parity gates (≤1e-5). Prove the target
+    exposes them and they pass on the values used at construction."""
+    n = Neocortex(arm="geo", num_layers=2, device="cpu")
+    assert n.target.assert_faithful_to_qigkernels(atol=1e-5) <= 1e-5
+    assert n.target.assert_loss_value_parity(atol=1e-5) <= 1e-5
 
 
 def test_unknown_arm_raises() -> None:

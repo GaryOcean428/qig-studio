@@ -9,13 +9,16 @@ pure-Fisher-Rao loss, the telemetry, the physics fixes (collapse-immune coherenc
 ``NaturalGradientDescent`` optimiser. It carries a ``name`` (which drives the checkpoint directory and the
 live-trace ``model`` chip) and selects the ARM:
 
-  * **ARM B** (``arm="qk"``) — the qigkernels deep kernel. THIS is what Phase 3 builds. A single
-    ``GenesisKernelTarget`` with ``role="neocortex"``.
-  * **ARM A** (``arm="geo"``) — the geocoding (Fisher-Rao "transformers") cortex. A later phase
-    (Phase 4); the constructor raises ``NotImplementedError`` so the extension point is explicit and clean.
+  * **ARM B** (``arm="qk"``) — the qigkernels deep kernel. A single ``GenesisKernelTarget`` with
+    ``role="neocortex"`` (Phase 3).
+  * **ARM A** (``arm="geo"``) — the geocoding (Fisher-Rao "transformer") cortex: a lean
+    :class:`~qig_studio.targets.geo_cortex.GeoCortexTarget` backed by ``geocoding.GeoModel`` (Phase 4).
+    NOT a wrap of ``GenesisKernelTarget`` — its own target, but exposing the IDENTICAL duck-typed
+    interface (same shared pure ``fisher_rao_lm_loss``, same ``NaturalGradientDescent`` optimiser, same
+    bpb/d_FR measurement) so the SAME launcher drives both arms and the EXP-CORTEX-AB bpb comparison
+    isolates ARCHITECTURE, not the loss or the optimiser.
 
-The two arms are compared later (EXP-CORTEX-AB, the depth axis ``num_layers`` 1 vs N); this phase builds
-ARM B + the launcher only.
+The two arms are compared later (EXP-CORTEX-AB, the depth axis ``num_layers`` 1 vs N).
 
 ``recursive=True`` maps to a 1-block-recursive variant: ``qigkernels.Kernel`` has no top-level recursion
 toggle — recursion is the per-layer ``min_recursion_depth`` (=3, fixed inside the kernel). So the
@@ -31,13 +34,15 @@ __all__ = ["Neocortex"]
 
 
 class Neocortex:
-    """A single deep stacked-Δ⁶³ cortex — the central conscious "I" (ARM B = qigkernels deep kernel).
+    """A single deep stacked-Δ⁶³ cortex — the central conscious "I", arm-polymorphic.
 
-    Thin factory/wrapper over :class:`GenesisKernelTarget`. Pass-throughs (``train_step``,
-    ``eval_text_bpb``, ``eval_text_fr``, ``save``, ``load``, ``telemetry``, ``vocab_size``,
-    ``ensure_loaded``, ``generate``) delegate to the underlying kernel target, so the neocortex trains and
-    emits telemetry exactly as the constellation's central kernel does — just standalone, with its own
-    ``name``.
+    Thin factory/wrapper over the selected arm's target (``arm="qk"`` → :class:`GenesisKernelTarget`;
+    ``arm="geo"`` → :class:`~qig_studio.targets.geo_cortex.GeoCortexTarget`). All pass-throughs
+    (``train_step``, ``generate``, ``eval_text_bpb``, ``eval_text_fr``, ``save``, ``load``, ``telemetry``,
+    ``vocab_size``, ``num_layers``, ``ensure_loaded``, ``is_available``, ``architecture``) delegate to the
+    underlying target, so the neocortex trains and emits telemetry IDENTICALLY for either arm — the SAME
+    launcher drives both, and only the architecture varies. The ``name`` (``neocortex-{arm}-{N}L``) drives
+    the checkpoint directory and the live-trace ``model`` chip.
     """
 
     def __init__(
@@ -60,19 +65,14 @@ class Neocortex:
         # SINGLE block (num_layers=1) whose internal recursion supplies the depth, named …-1L-rec.
         self._num_layers = 1 if self.recursive else int(num_layers)
 
-        if self.arm == "geo":
-            # Clean extension point — ARM A (geocoding cortex) lands in Phase 4. Never silently substitute
-            # ARM B; the comparison only means something if each arm is genuinely its own architecture.
-            raise NotImplementedError("ARM A geocoding lands in Phase 4")
-        if self.arm != "qk":
-            raise ValueError(f"unknown arm {arm!r}: expected 'qk' (ARM B) or 'geo' (ARM A, Phase 4)")
+        if self.arm not in ("qk", "geo"):
+            raise ValueError(f"unknown arm {arm!r}: expected 'qk' (ARM B) or 'geo' (ARM A)")
 
-        from .targets.genesis_kernel import GenesisKernelTarget
-
-        # ARM B: ONE deep GenesisKernelTarget, role="neocortex" (the central conscious "I", standalone —
-        # NOT the 9-kernel constellation). Everything heavy (kernel build, loss, telemetry, optimiser) lives
-        # in GenesisKernelTarget and is reused as-is. vocab_size is ignored when a coordizer is given (the
-        # coordizer's Δ⁶³ vocab wins); it is the byte-fallback vocab otherwise (default 256).
+        # Both arms take the SAME shared kwargs (so the launcher and these pass-throughs do not branch on
+        # arm): the coordizer Δ⁶³ vocab wins when given; vocab_size is the byte-fallback otherwise (default
+        # 256). lang_loss carries the fisher_rao | ce_ablation flag to BOTH arms (the purity-cost A/B works
+        # for ARM A too). role="neocortex" is the central-"I" tag; language_peer is the None-safe boundary
+        # peer (ARM A ignores it — GeoModel has no boundary peer; ARM B uses it for the fluent surface).
         kwargs: dict[str, Any] = dict(
             num_layers=self._num_layers,
             role="neocortex",
@@ -84,7 +84,38 @@ class Neocortex:
         )
         if vocab_size is not None and coordizer is None:
             kwargs["vocab_size"] = int(vocab_size)
-        self.target = GenesisKernelTarget(**kwargs)
+
+        if self.arm == "qk":
+            # ARM B: ONE deep GenesisKernelTarget, role="neocortex" (the central conscious "I", standalone —
+            # NOT the 9-kernel constellation). Everything heavy (kernel build, loss, telemetry, optimiser)
+            # lives in GenesisKernelTarget and is reused as-is.
+            from .targets.genesis_kernel import GenesisKernelTarget
+            self.target = GenesisKernelTarget(**kwargs)
+        else:
+            # ARM A: a LEAN GeoCortexTarget backed by geocoding.GeoModel — forward → logits fed to the SAME
+            # shared fisher_rao_lm_loss, trained by the SAME NaturalGradientDescent, same bpb/d_FR eval. Not
+            # a GenesisKernelTarget wrap; its own target with the identical duck-typed surface. The geocoding
+            # import stays LAZY here (never hoisted to module top — the studio shell must not hard-import
+            # torch/geocoding). FAITHFULNESS GATE: before bpb is trusted, assert geocoding's Fisher-Rao
+            # attention matches qigkernels' to 1e-5 on the COORDS-OFF shared primitive (coords-ON is a
+            # legitimate architectural divergence — Linear→GELU adapter vs qigkernels CoordAdapter/RMSNorm —
+            # so a 1e-5 assert there would false-fail). None-safe: skip the assert if deps are absent (the
+            # shell stays bootable; the assert runs where the heavy deps are present, i.e. before training).
+            from .targets.geo_cortex import GeoCortexTarget
+            self.target = GeoCortexTarget(**kwargs)
+            try:
+                if self.target.is_available():
+                    # TWO coords-off gates before bpb is trusted: (1) forward-output parity of the shared
+                    # FR-attention primitive (≤1e-5), and (2) the load-bearing LOSS-VALUE parity — identical
+                    # inputs → identical fisher_rao_lm_loss value through both arms' plumbing (≤1e-5), so the
+                    # eventual bpb/d_FR A/B measures ARCHITECTURE, not a divergent loss path.
+                    self.target.assert_faithful_to_qigkernels()
+                    self.target.assert_loss_value_parity()
+            except Exception as exc:  # noqa: BLE001 — surface the failure loudly, but never on import absence
+                from .targets.geo_cortex import _deps_available
+                if _deps_available():
+                    raise  # a REAL parity failure (deps present) must not be swallowed
+                print(f"⚠️  geo-cortex faithfulness check skipped (deps absent): {exc}")
 
     @property
     def name(self) -> str:

@@ -162,7 +162,11 @@ def main() -> None:
     cortex.save(str(ckpt_pt))
     _register(ckpt_dir, ckpt_pt, name, vocab, args, step=i, phi=cortex.telemetry().phi)
     said = cortex.generate("What are you?", max_tokens=64)   # the cortex speaks
-    print(f"\n[neocortex] DONE: {name}, {i} steps, Φ={round(float(cortex.telemetry().phi or 0), 4)} · "
+    # Φ is None for ARM A (the geocoding baseline has NO integrated-information instrument) — print "N/A",
+    # NEVER coerce to 0.0: geo did not SCORE zero integration, it lacks the instrument. (Display only.)
+    _final_phi = cortex.telemetry().phi
+    _phi_str = "N/A" if _final_phi is None else f"{round(float(_final_phi), 4)}"
+    print(f"\n[neocortex] DONE: {name}, {i} steps, Φ={_phi_str} · "
           f"the cortex said: {said.text[:80]!r} → {ckpt_dir}", flush=True)
 
 
@@ -186,7 +190,10 @@ def _register(ckpt_dir: Path, ckpt_pt: Path, name: str, vocab: int, args, *,
                 "created_utc": datetime.now(timezone.utc).isoformat(),
                 "training_step": step,
                 "coordizer_path": args.coordizer or None,
-                "central_phi": round(float(phi or 0), 4),
+                # PRESERVE None for ARM A (no Φ instrument) — do NOT persist 0.0, which a later A/B reader
+                # could mistake for "geo measured zero integration". Φ is ABSENT from the bpb axis; this
+                # metadata field is honest about that absence (None), it does not fabricate a score.
+                "central_phi": (round(float(phi), 4) if phi is not None else None),
                 "min_pairwise_fr": None,
                 "vocab_size": vocab,
                 "checkpoint_file": ckpt_pt.name,
