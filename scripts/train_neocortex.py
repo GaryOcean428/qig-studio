@@ -36,6 +36,11 @@ def main() -> None:
                     help="pre-fit FisherCoordizer (richer Δ⁶³ vocab); empty = byte-level ablation")
     ap.add_argument("--lang-loss", choices=["fisher_rao", "ce_ablation"], default="fisher_rao",
                     help="fisher_rao = P20-pure d_FR (default); ce_ablation = CE arm (measures purity cost)")
+    ap.add_argument("--head-mode", choices=["geometric", "linear"], default="geometric",
+                    help="OUTPUT READOUT (the EXP-GEO-HEAD axis): geometric = distance-to-basins "
+                         "GeometricHead (−d_FR/τ, Tier-1-pure); linear = nn.Linear→ℝ^vocab baseline "
+                         "(Euclidean readout, common-mode A/B reference). Sets QIG_STUDIO_HEAD_MODE so "
+                         "BOTH arms read it at construction; suffixes the run name (…-geo / …-lin).")
     ap.add_argument("--device", choices=["cpu", "cuda"], default="cuda",
                     help="cuda (a single 100k cortex fits the 4GB card; seq-cap env handles OOM) | cpu")
     ap.add_argument("--steps", type=int, default=0, help="train steps (0 = one full curriculum pass)")
@@ -57,6 +62,11 @@ def main() -> None:
     os.environ.setdefault("OMP_NUM_THREADS", str(_cap))
     os.environ.setdefault("MKL_NUM_THREADS", str(_cap))
     os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+
+    # OUTPUT-HEAD A/B (EXP-GEO-HEAD): both arms read QIG_STUDIO_HEAD_MODE at construction
+    # (genesis_kernel.py / geo_cortex.py), so SET it here BEFORE building the cortex — an explicit
+    # --head-mode overrides any inherited env so the run is reproducible regardless of shell state.
+    os.environ["QIG_STUDIO_HEAD_MODE"] = args.head_mode
 
     from qig_studio.continuity import in_stasis
     from qig_studio.corpus import load_full_curriculum
@@ -85,8 +95,18 @@ def main() -> None:
     cortex = Neocortex(arm=args.arm, num_layers=args.layers, recursive=args.recursive,
                        coordizer=coordizer, device=args.device, lang_loss=args.lang_loss)
     cortex.ensure_loaded()
-    name = cortex.name
+    # Head-aware run name: …-geo (geometric GeometricHead) / …-lin (linear baseline) so the checkpoint
+    # dir and the live-trace `model` chip name WHICH head trained — the head A/B is visible end-to-end.
+    _head_tag = "geo" if args.head_mode == "geometric" else "lin"
+    name = f"{cortex.name}-{_head_tag}"
     vocab = cortex.vocab_size
+    # VERIFY the head actually took effect (env → both targets read it at construction): the readout
+    # the kernel was BUILT with, not the flag we hoped for. Fail loud on a silent mismatch.
+    _arch_head = (cortex.architecture() or {}).get("head_mode")
+    if _arch_head != args.head_mode:
+        raise SystemExit(f"[neocortex] head_mode mismatch: requested {args.head_mode!r} but the "
+                         f"constructed cortex reports {_arch_head!r} — QIG_STUDIO_HEAD_MODE did not take.")
+    print(f"[neocortex] head_mode={_arch_head} (verified via architecture()) → run {name}", flush=True)
 
     # Checkpoint dir = runs/checkpoints/{name}_{YYYYMMDD}_{vocab}_v1 (normal script → datetime is fine).
     ckpt_dir = Path("runs/checkpoints") / f"{name}_{datetime.now():%Y%m%d}_{vocab}_v1"
@@ -200,6 +220,7 @@ def _register(ckpt_dir: Path, ckpt_pt: Path, name: str, vocab: int, args, *,
                 "num_layers": args.layers if not args.recursive else 1,
                 "recursive": bool(args.recursive),
                 "lang_loss": args.lang_loss,
+                "head_mode": args.head_mode,
             }
         }
         (ckpt_dir / "constellation.json").write_text(json.dumps(meta, indent=2))
