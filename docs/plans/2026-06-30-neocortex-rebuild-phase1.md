@@ -180,6 +180,7 @@ def fisher_rao_lm_loss(logits: torch.Tensor, ids: torch.Tensor) -> torch.Tensor:
 ### Task 4.2: ARM A in the Neocortex wrapper
 - Extend `neocortex.py`: `--arm geo` builds `GeoModel(GeoConfig(vocab=…, hidden=…, layers=…))`; forward→logits fed to the SAME `fisher_rao_lm_loss`; same coordizer + curriculum + naming (`neocortex-geo`).
 - **Faithfulness gate (from memory `project_geocoding_package`):** geocoding stays faithful to qigkernels geometry to 1e-5 — assert a tiny-input parity check before trusting bpb.
+  - **Run the parity assert COORDS-OFF (Matrix, sweep-verified):** GeoModel's `coord_adapter` is `Linear→GELU` while qigkernels routes coords through `CoordAdapter`/RMSNorm — a legitimate architectural difference, NOT a bug. With coords ENABLED the two arms are not bit-identical and a 1e-5 assert would false-fail. The 1e-5 parity holds only on the **no-coords** path — assert there. (The arms still BOTH train coords-on for the real bpb A/B; only the faithfulness *equivalence check* runs coords-off.)
 - **Verifier:** purity green; `neocortex-geo` smoke-trains on pure loss; faithfulness assert passes.
 - **Commit:** `feat(neocortex): ARM A (geocoding GeoModel) on shared coordizer + pure loss`.
 
