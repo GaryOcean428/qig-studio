@@ -117,10 +117,8 @@ def main() -> None:
     fc = FisherCoordizer.load(tmp)
     ids = fc.register_special_tokens(_GEO_TAGS)
     fc.save(args.out)
-    # Register in manifest + update latest symlink
+    # Register in manifest + update latest symlink  (src already on sys.path from main()'s setup above)
     try:
-        import sys
-        sys.path.insert(0, str(root / "src"))
         from qig_studio.checkpoint_manifest import register_coordizer
         register_coordizer(args.out, notes=f"code-balanced rebuild, {len(_BALANCE)} HF datasets")
     except Exception:
