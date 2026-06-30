@@ -104,11 +104,16 @@ class GenesisKernelTarget(TrainingTarget):
         head_mode: str = "geometric",   # OUTPUT READOUT: "geometric" (GeometricHead, −d_FR/τ; no Euclidean
         #                                 nn.Linear) | "linear" (nn.Linear baseline, retained for the A/B)
         head_tau: float = 1.0,          # Gibbs temperature on the −d_FR readout logits (geometric mode)
-        ewc_lambda: float = 20.0,       # EWC stiffness: weight of the wake-time Fisher-protected penalty
-        #                                 lam·Σ F_n·(θ_n−θ*_n)² that anchors past learning. 0 disables EWC.
-        #                                 Tuned for the RELATIVE (normalised, F∈[0,1]) true-Fisher importance:
-        #                                 λ≈10–30 protects robustly (4/5 seeds, no over-regularisation); λ≥100
-        #                                 over-stiffens and can hurt (verified continual-learning sweep).
+        ewc_lambda: float = 0.0,        # EWC wake-protection stiffness (lam·Σ F_n·(θ_n−θ*_n)², true-Fisher
+        #                                 importance). DEFAULT OFF — the worst-seed deployment gate shows EWC
+        #                                 is NOT yet safe on-by-default: across 10 seeds it HELPS 2 (strongly,
+        #                                 Δ≈−0.4), is NEUTRAL on 7, but HARMS 1 (seed 1: +0.55 — ACCELERATES
+        #                                 forgetting). A mechanism that can occasionally INCREASE forgetting is
+        #                                 not protection by default. So EWC is OPT-IN (set λ≈20 where verified,
+        #                                 e.g. a gated continual-learning deployment) UNTIL the harm cases are
+        #                                 eliminated (the registered milestone: reliably-helps-and-NEVER-harms).
+        #                                 Inactive in any bounded run regardless of λ (no consolidation → no
+        #                                 anchor → penalty 0), so this default never affects the avenue screen.
         #                                 (the unprotected baseline). Default chosen to be load-bearing on the
         #                                 ramped fluency loss (~O(phi_weight·lm_weight)) without dominating it;
         #                                 it only acts once a consolidation has captured the anchor (None-safe).

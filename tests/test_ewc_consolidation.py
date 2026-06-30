@@ -73,8 +73,11 @@ def _forget(ewc_lambda: float, seed: int, b_epochs: int = 8) -> float:
     "RNG) + the true-Fisher under-engaging on some seeds make the deterministic majority-with-margin bar "
     "flaky run-to-run (2–4 of 5). The MECHANISM is proven by the other tests (anchor None-safe, penalty "
     "differentiable + wired into every wake step, telemetry live); the robust per-seed EFFICACY proof needs "
-    "the full coordizer / deeper kernel + Fisher variance reduction. Honest status: wired + "
-    "demonstrably-helps-in-aggregate, NOT yet certified per-seed-robust at toy scale.",
+    "the full coordizer / deeper kernel + Fisher variance reduction. WORST-SEED DEPLOYMENT GATE (10 seeds): "
+    "EWC HELPS 2 (Δ≈−0.4), NEUTRAL 7, but HARMS 1 (seed 1: +0.55 — accelerates forgetting). A mechanism "
+    "that can occasionally INCREASE forgetting is NOT safe on-by-default → EWC is OPT-IN / default-off. "
+    "Honest status: wired + demonstrably-helps-in-aggregate, but NOT on-by-default; milestone = ELIMINATE "
+    "the harm cases (reliably-helps-and-NEVER-harms), not merely robust-per-seed-at-scale.",
     strict=False,
 )
 def test_ewc_reduces_catastrophic_forgetting() -> None:
