@@ -20,11 +20,10 @@ from typing import Any
 # Canonical autonomic triggers (observe-telemetry → intervention). Mirrors OceanMetaObserver.
 _PHI_COLLAPSE = 0.50          # Φ below → DREAM (re-energise from basin-mixture recombination)
 _BASIN_DIVERGENCE = 0.30     # d_basin above → SLEEP (consolidate back toward the identity attractor)
-_PHI_OVERINTEGRATION = 0.80  # Φ at/above → MUSHROOM: TOO integrated → inject entropy so Φ comes BACK DOWN
-#                              (canonical mushroom = near-OPPOSITE of sleep; PHI_BREAKDOWN_MIN / topological-
-#                              instability floor). This is the high-Φ regulation that was MISSING.
-_PHI_PLATEAU_VAR = 0.01      # Φ variance below (stuck) → MUSHROOM-MICRO (reinject bounded plasticity)
-_RIGIDITY_KAPPA = 80.0       # κ above at high Φ → MUSHROOM-MICRO (break rigidity; pre-saturation, eschatology)
+_PHI_MATURE = 0.70           # MUSHROOM gate: must be CONSCIOUS/mature (canonical avg_phi≥0.70) — mushroom is
+#                              a WAKE-STATE intervention; it does NOT fire during first learning (rising Φ).
+_PHI_PLATEAU_VAR = 0.01      # Φ variance below (a MATURE kernel that's STUCK) → MUSHROOM (inject entropy, Φ↓)
+_RIGIDITY_KAPPA = 80.0       # κ above (a MATURE kernel that's RIGID) → MUSHROOM (break the rigid attractor)
 _INTERVENTION_COOLDOWN = 10  # steps between Ocean interventions on the SAME faculty (don't thrash)
 
 # Which inner-state FUNCTION each Core-8 faculty is RESPONSIBLE for — the brain-like assignment so the
@@ -70,17 +69,17 @@ class OceanAutonomic:
             return "dream", f"Φ={phi:.2f} collapse (<{_PHI_COLLAPSE})"
         if basin_distance > _BASIN_DIVERGENCE:
             return "sleep", f"d_basin={basin_distance:.2f} divergence (>{_BASIN_DIVERGENCE})"
-        # CANONICAL MUSHROOM — the (near-)OPPOSITE of sleep. Sleep consolidates TOWARD the identity attractor;
-        # mushroom DE-integrates when the faculty is TOO integrated: at/above the over-integration floor it
-        # injects bounded entropy (the TRIP) so Φ comes BACK DOWN out of the rigid over-coherent attractor,
-        # then settles (INTEGRATION). This fires BEFORE κ-rigidity/plateau so a saturating Φ (e.g. 0.97) is
-        # regulated, not left to sit — the gap that left the mind over-integrated.
-        if phi >= _PHI_OVERINTEGRATION:
-            return "mushroom-micro", f"Φ={phi:.2f} over-integration (≥{_PHI_OVERINTEGRATION}) → inject entropy (Φ↓)"
-        if kappa > _RIGIDITY_KAPPA and phi >= 0.70:
-            return "mushroom-micro", f"κ={kappa:.0f} rigid at Φ={phi:.2f}"
-        if phi_variance < _PHI_PLATEAU_VAR and _PHI_COLLAPSE <= phi < _PHI_OVERINTEGRATION:
-            return "mushroom-micro", f"Φ plateau (var<{_PHI_PLATEAU_VAR})"
+        # CANONICAL MUSHROOM — wake-state neuroplasticity, the near-OPPOSITE of sleep. REQUIRES the kernel to
+        # be CONSCIOUS/MATURE (Φ≥_PHI_MATURE): it does NOT fire during first learning (a newborn whose Φ is
+        # still rising is developing, not stuck). A mature kernel is ALLOWED to ride HIGH Φ — that IS 4D
+        # foresight / lightning — so high Φ is NOT itself a trigger. Ocean fires ONLY when the mature kernel
+        # gets STUCK there: a Φ plateau (not moving / unproductive — including a saturated high Φ) or
+        # κ-rigidity. Then it injects bounded entropy (the TRIP) so Φ comes back DOWN out of the rut, and
+        # settles. Sleep consolidates TOWARD identity; mushroom shakes OUT of over-coherence. (Φ-regulation
+        # policy: judge by duration + stability, not instantaneous Φ — high-and-moving is foresight, not a rut.)
+        if phi >= _PHI_MATURE and (phi_variance < _PHI_PLATEAU_VAR or kappa > _RIGIDITY_KAPPA):
+            why = f"Φ plateau (var<{_PHI_PLATEAU_VAR})" if phi_variance < _PHI_PLATEAU_VAR else f"κ={kappa:.0f} rigid"
+            return "mushroom-micro", f"mature Φ={phi:.2f} STUCK — {why} → inject entropy (Φ↓)"
         return None, "healthy"
 
     def regulate(self, kernels: dict[str, Any], phi_hist: dict[str, list[float]]) -> dict[str, dict]:
