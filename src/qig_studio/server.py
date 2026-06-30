@@ -196,6 +196,9 @@ class TrainRequest(BaseModel):
     mastery: bool = True  # track per-kernel per-passage learned-state (curriculum coverage)
     skip_learned: bool = False  # CAPTURE mode: skip already-learned passages, sweep until full capture / stall
     confirm: bool = False  # REQUIRED for LANGUAGE targets (each step triggers a remote training job)
+    sample: bool = True  # per-stimulus own-voice generation (interactive UI). Set False for a BACKGROUND
+    #                      comparison run — d_FR doesn't need the kernel to SPEAK each step, and skipping the
+    #                      generation roughly halves wall-clock (the 4-arm bench trains, it doesn't observe).
 
 
 def _registry():
@@ -1105,7 +1108,7 @@ async def train(req: TrainRequest, _: None = Depends(verify_key)) -> StreamingRe
                     cov = _record(prompt, ex, trained)
                     if mastery.is_learned(central_name, prompt):
                         learned_this_sweep += 1
-                    sample = await _sample_if_due(trained % sample_every == 0, stimulus=prompt)
+                    sample = await _sample_if_due(req.sample and trained % sample_every == 0, stimulus=prompt)
                     yield _sse(_step_event(trained, curr_total, prompt, td, sample, cov,
                                            {"sweep": sweeps, "skipped": skipped, "mode": "capture"}))
                     _write_live(trained, curr_total, td, sample, res.telemetry.phi, stimulus=prompt)
@@ -1133,7 +1136,7 @@ async def train(req: TrainRequest, _: None = Depends(verify_key)) -> StreamingRe
 
             async for rec in _train_core(
                 t, req.steps, source="ui", max_tokens=req.max_tokens, is_language=is_language,
-                prompt_for=_prompt_for, sample_every=sample_every, record_cb=_record,
+                prompt_for=_prompt_for, sample_every=sample_every, record_cb=_record, sample=req.sample,
             ):
                 step = rec["step"]
                 if rec.get("error") is not None:

@@ -52,7 +52,7 @@ def _train(steps: int, max_seconds: float) -> dict:
     """Drive the wired ``POST /train`` SSE to completion (equal fixed budget; geometric → early_stop off,
     skip_learned off so every arm trains the SAME steps for a fair comparison). Returns the final 'done'
     payload (carries ``saved_checkpoint`` = the genesis-{arm}-{vocab} lineage the server persisted)."""
-    body = {"steps": steps, "skip_learned": False, "early_stop": False, "mastery": False}
+    body = {"steps": steps, "skip_learned": False, "early_stop": False, "mastery": False, "sample": False}
     t0 = time.time()
     last: dict = {}
     saved: str | None = None
