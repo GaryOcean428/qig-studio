@@ -883,15 +883,7 @@ class GenesisKernelTarget(TrainingTarget):
         ids, coords = self._encode(prompt)
         logits, tel = self._kernel(ids, return_telemetry=True, coords=coords)
         coherence = self._phi_proxy(tel.hidden_state)        # external proxy (monitoring / fallback)
-        # gamma is a differentiable loss term (Γ-protection below) but its FR over the full per-position
-        # vocab distributions materialises several [seq, vocab] tensors. On a small (4GB) GPU at 150k vocab
-        # that overflows, so gradient-checkpoint it: the intermediates are recomputed in backward instead of
-        # retained — identical value+gradient, ~700MB less peak. Plain call when not on CUDA (no benefit).
-        if logits.is_cuda:
-            from torch.utils.checkpoint import checkpoint as _ckpt
-            gamma = _ckpt(self._gamma_proxy, logits, use_reentrant=False)
-        else:
-            gamma = self._gamma_proxy(logits)                # differentiable generation-health (in-graph)
+        gamma = self._gamma_proxy(logits)                    # differentiable generation-health (in-graph)
         ce = F.cross_entropy(logits[0, :-1], ids[0, 1:])      # content grounding (surprise signal too)
         # ROUND-3 FIX (structural Φ-ceiling): drive the kernel's OWN differentiable Φ (tel.phi_diff) —
         # the exact quantity reported Φ is computed from (integrator gates + cross-position coherence,
