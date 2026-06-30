@@ -260,6 +260,57 @@ async def select_target(name: str, _: None = Depends(verify_key)) -> dict[str, A
     return {"active": t.name, "info": t.info().to_dict()}
 
 
+class NeocortexConfigRequest(BaseModel):
+    """The neocortex avenue to BUILD + select as the active target (the config the wired /train trains)."""
+    arm: str = "qk"                  # "qk" (ARM B qigkernels) | "geo" (ARM A geocoding)
+    head_mode: str = "geometric"     # "geometric" (GeometricHead −d_FR/τ) | "linear" (nn.Linear baseline)
+    num_layers: int = 2              # EXP-CORTEX-AB depth axis
+    lang_loss: str = "fisher_rao"    # "fisher_rao" (P20-pure d_FR) | "ce_ablation" (CE purity-cost arm)
+
+
+def _active_coordizer() -> Any:
+    """The coordizer currently configured/loaded — resolved from a registered target that carries the
+    shared instance (genesis/joint_mind hold the one ``default_registry`` loaded from
+    ``settings.genesis_coordizer_checkpoint``), NOT a hardcoded path. None when none is loaded (byte path).
+    The vocab-match correctness fix is Task 5; here we just pass the currently-configured coordizer through."""
+    reg = _registry()
+    for name in ("genesis", "joint_mind"):
+        t = reg.get(name)
+        coord = getattr(t, "coordizer", None) if t is not None else None
+        if coord is not None:
+            return coord
+    return None
+
+
+@app.post("/target/neocortex")
+async def build_select_neocortex(
+    req: NeocortexConfigRequest, _: None = Depends(verify_key)
+) -> dict[str, Any]:
+    """BUILD any neocortex config (arm × head_mode × num_layers × lang_loss) via the registry and install
+    it as the ACTIVE target, so the already-wired ``POST /train`` trains exactly that config and the UI
+    reflects it. DRY: reuses ``build_neocortex`` (the existing arm ctors) + the stable ``neocortex`` slot —
+    no new training loop. Name-only selection of existing targets stays on ``/targets/{name}/select``.
+    Refuses while training/chat holds the target lock (config swap mid-run would be incoherent)."""
+    from .targets.registry import build_neocortex
+    if _TARGET_LOCK.locked():
+        raise HTTPException(409, "training in progress — stop training before rebuilding the neocortex")
+    reg = _registry()
+    s = getattr(app.state, "settings", None)
+    try:
+        target = build_neocortex(
+            arm=req.arm,
+            head_mode=req.head_mode,
+            num_layers=req.num_layers,
+            lang_loss=req.lang_loss,
+            coordizer=_active_coordizer(),
+            device=getattr(s, "device", None),
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    reg.set_neocortex(target)
+    return {"active": target.name, "info": target.info().to_dict()}
+
+
 class CheckpointSelectRequest(BaseModel):
     coordizer: str | None = None
     kernel: str | None = None
