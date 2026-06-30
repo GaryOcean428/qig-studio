@@ -41,13 +41,15 @@ class Settings:
     def from_env(cls) -> "Settings":
         from pathlib import Path as _P
 
-        def _d(env: str, default_path: str) -> str | None:
-            """Env override → else the default path IFF it exists (else None → fresh/byte). Defaults to the
-            MOST COMPLETE version: the latest trained checkpoint + the full 100k coordizer, robustly."""
+        def _d(env: str, default_path: str | None) -> str | None:
+            """Env override → else the default path IFF it is set AND exists (else None → fresh/byte).
+            None-safe: ``default_path`` is None on a fresh/wiped state (get_latest_*_ckpt → None), and
+            ``_P(None)`` would raise TypeError, breaking server import + test collection. Defaults to the
+            MOST COMPLETE version: the latest trained checkpoint + the full coordizer, robustly."""
             v = os.environ.get(env)
             if v:
                 return v
-            return default_path if _P(default_path).exists() else None
+            return default_path if (default_path and _P(default_path).exists()) else None
 
         host = os.environ.get("QIG_STUDIO_HOST", "127.0.0.1")
         port = int(os.environ.get("QIG_STUDIO_PORT", "8800"))
