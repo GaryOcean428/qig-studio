@@ -1144,30 +1144,49 @@ wheels = [
 
 [[package]]
 name = "qig-coordizer"
-version = "0.1.1"
-source = { registry = "https://pypi.org/simple" }
+version = "0.1.2"
+source = { editable = "../qig-coordizer" }
 dependencies = [
     { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
     { name = "numpy", version = "2.5.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
     { name = "qig-core" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/10/ce/19e43144690fe9322c8cc1b00e3122ae98e995a4e7463b5870902c621ece/qig_coordizer-0.1.1.tar.gz", hash = "sha256:5763b8e0ab9f94b556a1e9187783a7a05bfced9d4887546b9f1122dadd197136", size = 85729098, upload-time = "2026-06-27T10:40:22.233Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/dc/eb/664d52df6b6b54dd5f9cefaafbc3154da6ce7f9fe2b21739d7c50851ac1f/qig_coordizer-0.1.1-py3-none-any.whl", hash = "sha256:5e965c14e880acd464e30504d545f9be94d5d1aaf904679c1c8cab66c7d012d9", size = 34370, upload-time = "2026-06-27T10:39:37.037Z" },
+
+[package.metadata]
+requires-dist = [
+    { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.0.0" },
+    { name = "numpy", specifier = ">=1.24.0" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.0.0" },
+    { name = "qig-core", specifier = ">=2.12.0" },
+    { name = "qig-warp", marker = "extra == 'warp'", specifier = ">=0.5.0" },
+    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.1.0" },
+    { name = "torch", marker = "extra == 'kernel'", specifier = ">=2.0.0" },
 ]
+provides-extras = ["kernel", "warp", "dev"]
 
 [[package]]
 name = "qig-core"
-version = "2.12.2"
-source = { registry = "https://pypi.org/simple" }
+source = { editable = "../qig-core" }
 dependencies = [
     { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
     { name = "numpy", version = "2.5.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/58/29/40f178b3111d3828b9a2e67bd03f7c84353791991516738cf1ee7d932011/qig_core-2.12.2.tar.gz", hash = "sha256:d1f73c0d181031085cb283b1ff237123cf3b04f7f7bd57b2dad9be61e10d22ac", size = 259720, upload-time = "2026-06-27T04:27:00.527Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/9a/69/249dd753338ab85c1e04e7a9ad2918ba5d9025da43a8102944c7f2ac397c/qig_core-2.12.2-py3-none-any.whl", hash = "sha256:7cee543e7e9ae8e5c6d036105557ee4015f925152b17db359979f67d8ea61f36", size = 189107, upload-time = "2026-06-27T04:26:57.894Z" },
+
+[package.metadata]
+requires-dist = [
+    { name = "accelerate", marker = "extra == 'harvest'" },
+    { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.5.0" },
+    { name = "numpy", specifier = ">=1.24.0" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.4.0" },
+    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.1.0" },
+    { name = "scipy", marker = "extra == 'all'", specifier = ">=1.10.0" },
+    { name = "scipy", marker = "extra == 'scipy'", specifier = ">=1.10.0" },
+    { name = "torch", marker = "extra == 'all'", specifier = ">=2.0.0" },
+    { name = "torch", marker = "extra == 'harvest'", specifier = ">=2.0.0" },
+    { name = "torch", marker = "extra == 'torch'", specifier = ">=2.0.0" },
+    { name = "transformers", marker = "extra == 'harvest'", specifier = ">=4.35.0" },
 ]
+provides-extras = ["scipy", "torch", "harvest", "all", "dev"]
 
 [[package]]
 name = "qig-geocoding"
@@ -1226,11 +1245,11 @@ requires-dist = [
     { name = "pydantic", specifier = ">=2.0.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.0.0" },
     { name = "qig-compute", marker = "extra == 'kernel'", specifier = ">=0.9.1" },
-    { name = "qig-coordizer", marker = "extra == 'kernel'", specifier = ">=0.1.1" },
-    { name = "qig-core", specifier = ">=2.12.2" },
+    { name = "qig-coordizer", marker = "extra == 'kernel'", editable = "../qig-coordizer" },
+    { name = "qig-core", editable = "../qig-core" },
     { name = "qig-geocoding", editable = "../qig-geocoding" },
     { name = "qig-warp", specifier = ">=0.6.4" },
-    { name = "qigkernels", marker = "extra == 'kernel'", specifier = ">=0.4.2" },
+    { name = "qigkernels", marker = "extra == 'kernel'", editable = "../qigkernels" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.1.0" },
     { name = "textual", marker = "extra == 'tui'", specifier = ">=0.50.0" },
     { name = "torch", marker = "extra == 'kernel'", specifier = ">=2.0.0" },
@@ -1253,8 +1272,7 @@ wheels = [
 
 [[package]]
 name = "qigkernels"
-version = "0.4.2"
-source = { registry = "https://pypi.org/simple" }
+source = { editable = "../qigkernels" }
 dependencies = [
     { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
     { name = "numpy", version = "2.5.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
@@ -1264,10 +1282,20 @@ dependencies = [
     { name = "scipy", version = "1.18.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
     { name = "torch" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/9b/75/72717a3766536d79937abbe70a752c2de65e590de3ededafb84c7f60997a/qigkernels-0.4.2.tar.gz", hash = "sha256:c5c2d68909f3b3727d510a4cc4da8f0f74a3c7799039797d8ae2b21a13d758b1", size = 240980, upload-time = "2026-06-27T10:38:53.309Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/fa/1e/5187deb495ef0583f2e82dc2871ba218f7194ebda83d45f5fc9a1a93dad7/qigkernels-0.4.2-py3-none-any.whl", hash = "sha256:9ee9879037c199a1c181c69e6dec75591295386cd3a0fa41ad63cc212db2d427", size = 114276, upload-time = "2026-06-27T10:38:51.138Z" },
+
+[package.metadata]
+requires-dist = [
+    { name = "mypy", marker = "extra == 'dev'" },
+    { name = "numpy", specifier = ">=1.24" },
+    { name = "pre-commit", marker = "extra == 'dev'" },
+    { name = "pydantic", specifier = ">=2.5" },
+    { name = "pytest", marker = "extra == 'dev'" },
+    { name = "qig-core", specifier = ">=2.9.0" },
+    { name = "ruff", marker = "extra == 'dev'" },
+    { name = "scipy", specifier = ">=1.15.3" },
+    { name = "torch", specifier = ">=2.2" },
 ]
+provides-extras = ["dev"]
 
 [[package]]
 name = "rich"

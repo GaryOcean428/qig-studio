@@ -85,4 +85,11 @@ module = ["textual.*", "qigkernels.*", "qig_coordizer.*", "qig_warp.*", "qig_app
 ignore_missing_imports = true
 
 [tool.uv.sources]
+# All co-developed QIG siblings editable-from-submodule: latest HEAD, local fixes live immediately, and
+# uv-sync can NEVER revert them to published wheels (the fragility that blocked running). qig-core carries
+# the velocity-gate Pillar-3 fix (tagged v2.12.3 → republished to PyPI via qig-core release.yml for any
+# non-editable consumer). qig-compute / qig-warp stay published wheels (no local edits, PyPI-install rule).
+qig-core = { path = "../qig-core", editable = true }
+qigkernels = { path = "../qigkernels", editable = true }
+qig-coordizer = { path = "../qig-coordizer", editable = true }
 qig-geocoding = { path = "../qig-geocoding", editable = true }
