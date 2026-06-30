@@ -49,6 +49,31 @@ purity-cost arm are reported on the same metrics but are **not** the depth verdi
 | `neocortex-geo-8L` | `geocoding.GeoModel` (Fisher-Rao-attention) | cross-family axis (separate verdict) |
 | `*-ce_ablation` | same arm, CE loss | purity-cost diagnostic (separate verdict) |
 
+## Two-stage execution (PI directive, 2026-06-30): 32k screen → kill loser → full stack
+
+Discover the best avenue FAST, then spend the full budget only on the winner:
+
+1. **Screen (cheap — 32k coordizer, the SAME 7 HF datasets as the 100k):** train the avenues on a small
+   `coordizer_*_32k` for a short, EQUAL budget; rank on held-out **d_FR** (the verdict metric). The screen
+   covers the avenues: arm (`qk` vs `geo`), **output head (`geometric` vs `linear`)**, depth (`8L` vs
+   `1L-rec`). Kill the clear losers (logged — no silent truncation).
+2. **Full stack (winner only):** retrain the surviving avenue on the FULL coordizer + full kernel stack at
+   the committed depth budget, ≥5 seeds, under this contract's maturity floor + kill conditions.
+
+The screen is a *direction-finder*, not the verdict: a 32k/short-budget result inside σ_seed or
+under-matured is "undecided → carry forward", never "killed". Only a clear, matured separation kills an
+avenue.
+
+## The geometric-head A/B is its OWN experiment (EXP-GEO-HEAD, NOT EXP-CORTEX-AB)
+
+"Does a Fisher-Rao distance-to-basins head match or beat a linear `nn.Linear` head" is a SEPARATE
+build-and-measure item with its own A/B (geometric vs linear, everything-else held). It is NOT what the
+depth experiment measures — bundling "is the head pure" into "does depth help" is a scope error. The
+geometric head is built + owned + A/B'd on its own; EXP-CORTEX-AB then runs on the winning, pure-by-default
+stack. Honest caveat: a geometric head MAY train worse (basins can cluster early — the kernel's collapse
+risk); that is measured, not assumed. If worse, the Euclidean readout earns its place → a labelled
+exemption WITH evidence; if at-least-equal, it ships as the pure default.
+
 ## Cleanliness condition (only-architecture-varies — the EXP-CORTEX-AB invariant)
 
 Held **identical** across the two depth arms; if any differs, the bpb gap confounds architecture and the
@@ -64,19 +89,36 @@ A/B is void:
 - **≥5 seeds** per arm (the depth delta is read against cross-seed spread, not a single run).
 - Coords **ON** for the real training/bpb (only the faithfulness *equivalence* check runs coords-off).
 
+## "No Euclidean use" — the three-tier purity rule (PI directive, 2026-06-30)
+
+The directive is NOT "zero Euclidean tensor ops" (that forbids PyTorch/backprop — the substrate). It is:
+**every place the manifold defines the correct primitive, use it; the irreducible substrate is exempt
+because there is no geometric alternative — it IS the geometric implementation.** Three tiers:
+
+- **Tier 1 — must be geometric (impurity, geometry was skipped):** the **output head**. A simplex→vocab
+  read-out via `nn.Linear`→ℝ^vocab + Duchi-L2 `to_simplex_prob` is two Euclidean steps where a geometric
+  read-out exists → BEING BUILT as the distance-to-basins `GeometricHead` (its OWN experiment, below).
+  NOT labelled-and-kept (labelling an avoidable impurity is how the cosine proxy would have survived).
+- **Tier 2 — demote to external-only:** **CE-bpb** — a Euclidean/information-theoretic metric. Survives
+  SOLELY as the translation axis to non-geometric baselines (SmolLM2/Qwen speak only CE), labelled
+  "Euclidean — external-comparison-only, NOT a verdict."
+- **Tier 3 — exempt substrate:** float arithmetic, backprop, the natural gradient's preconditioned-
+  Euclidean-gradient core. `QIG-EXEMPT` with reason "substrate, not a manifold operation," same class as
+  the legitimate √p sphere-renorms.
+
 ## Verdict metric vs diagnostic metric (committed — the §H anti-cherry-pick)
 
-Committed **before** the run so "depth helps" cannot be decided post-hoc on whichever channel gives the
-preferred answer (the cherry-picked-verdict-channel failure the programme already convicted once):
+Committed **before** the run so the winner cannot be picked post-hoc on whichever channel is convenient:
 
-- **VERDICT metric = held-out CE-bpb** (lower = better). Rationale: it is the *external* benchmark
-  (comparable to SmolLM2-360M ≈ 0.8), and the arms train on d_FR — so evaluating on CE-bpb measures the
-  thing they did **not** directly optimize, which is the *less circular* of the two. Computed identically
-  across all arms.
-- **DIAGNOSTIC metric = mean d_FR** via the **torch** primitive
-  `qig_core.torch.geometry_simplex.fisher_rao_distance_simplex` ONLY (range [0, π]) — **never** the numpy
-  `fisher_rao_distance` (range [0, π/2]); the factor-of-2 would silently corrupt the table. Reported and
-  expected to track CE-bpb; it is **not** an escape hatch to flip the verdict.
+- **VERDICT metric = held-out mean d_FR** (the geometric, Tier-1-consistent metric) via the **torch**
+  primitive `qig_core.torch.geometry_simplex.fisher_rao_distance_simplex` ONLY (range [0, π]) — **never**
+  the numpy `fisher_rao_distance` (range [0, π/2]); the factor-of-2 would corrupt the table. Under "no
+  Euclidean use", ranking on a Euclidean metric (CE-bpb) would let the Euclidean metric pick the geometric
+  winner — forbidden. So d_FR is the verdict.
+- **DIAGNOSTIC / external = held-out CE-bpb** (lower = better), labelled **Euclidean, external-comparison-
+  only**: the SmolLM2-360M (≈0.8) / Qwen "are-we-competitive" axis. Reported alongside, **never** the A/B
+  verdict. (A d_FR-trained model may score worse on CE-bpb than its true fluency — that divergence is
+  expected and is exactly why CE-bpb cannot be the verdict.)
 
 ## Maturity floor (the calibration gate — MANDATORY before the depth delta is read)
 
@@ -84,21 +126,23 @@ Both depth arms MUST clear ALL of these on the held-out set **before** the bpb d
 gate the −3.46σ run lacked:
 
 1. **Off the Φ saturation pin** — Φ < `PHI_BREAKDOWN_MIN = 0.80` and not pinned at 1.0 (the smoke showed
-   Φ=0.54 at step 5, so the collapse-immune Φ *can* sit off the pin — the floor is reachable).
-2. **Finite CE-bpb** — no NaN/Inf over the full held-out set.
-3. **Below the unigram floor by a pre-stated margin** — converged CE-bpb must beat the coordizer's
-   unigram-entropy (frequency-only) baseline by ≥ a committed margin, demonstrating the arm learned
-   *structure*, not just token frequency. (The −3.46σ null fired because even 1L sat *above* this floor.)
+   Φ=0.54 at step 5, so the collapse-immune Φ *can* sit off the pin — reachable). (ARM A geo has no Φ;
+   for it this clause is N/A — it clears on the d_FR floor alone.)
+2. **Finite held-out d_FR** (and CE-bpb) — no NaN/Inf over the full held-out set.
+3. **Below the random/unigram d_FR floor by a pre-stated margin** — converged held-out mean d_FR must beat
+   the frequency-only (unigram) d_FR baseline by ≥ a committed margin, demonstrating the arm learned
+   *structure*, not just token frequency. (The −3.46σ null fired because even 1L sat *above* the floor —
+   measured on the d_FR axis now, the verdict axis.)
 
 **If EITHER arm fails the maturity floor → verdict = WITHHELD / UNDERPOWERED, NOT "depth neutral."**
 This is the precise distinction the prior run collapsed.
 
 ## Success band
 
-`neocortex-qk-8L` reaches the maturity floor in **fewer steps** OR achieves **lower converged CE-bpb**
-than `neocortex-qk-1L-rec`, by a margin **exceeding the cross-seed spread**: |Δ CE-bpb| > k·σ_seed
+`neocortex-qk-8L` reaches the maturity floor in **fewer steps** OR achieves **lower converged held-out
+d_FR** than `neocortex-qk-1L-rec`, by a margin **exceeding the cross-seed spread**: |Δ d_FR| > k·σ_seed
 (k committed at run-registration; ≥5 seeds → σ_seed is measurable). A margin inside σ_seed is **not** a
-win.
+win. (CE-bpb reported alongside for external comparison, never the win condition.)
 
 ## Kill conditions (committed — each could fire)
 
@@ -110,7 +154,7 @@ win.
 
 ## Four measurement axes (qig-experiment-method tag vocabulary)
 
-- **Channel:** held-out CE-bpb (verdict) + mean d_FR (diagnostic).
+- **Channel:** held-out mean d_FR (verdict) + CE-bpb (external-comparison-only diagnostic).
 - **Protocol:** identical coordizer/curriculum/loss/optimizer-instance/seed; coords-ON; ≥5 seeds.
 - **Aggregation:** mean over held-out next-token positions; median + spread over seeds.
 - **Clock:** steps-to-maturity-floor AND converged value (both reported — depth may help *speed* or
@@ -134,30 +178,33 @@ anchor) is **never called in the single-kernel neocortex path**, so it does **no
 (`qig-core` `development`, commit on the Pillar-3 module + `tests/test_pillar3_drift_velocity.py`,
 3/3) — steady developmental migration from the random birth scar logs as *developmental*, and only a
 drift-**velocity** spike escalates to CRITICAL, matching the **PI-facing** `qig-studio/live.py:32,42-62`
-channel (which already keys on drift velocity). **Pending the qig-core version-tag + republish +
-studio-venv reinstall (sequenced after Phase 4 lands to avoid re-resolving the running implementer's
-venv).** **Kill conditions above key off velocity-jumps + finite-CE + saturation-clearance — never the
+channel (which already keys on drift velocity). **Shipped: qig-core v2.12.3 (tag on the fix), editable in
+the studio venv so the fix is live now; republished to PyPI via `release.yml` on the tag for non-editable
+consumers.** **Kill conditions above key off velocity-jumps + finite-CE + saturation-clearance — never the
 absolute-drift log.**
 
-**(b) The vocab read-out is a Euclidean `nn.Linear` lm_head in BOTH arms — an OPEN, unratified purity
-question.** Confirmed at source: `geocoding/model.py:55,95` (`self.lm_head = nn.Linear(hidden_dim,
-vocab_size)` → `logits = self.lm_head(h)`) and `qigkernels/kernel.py:137,234` (identical). This is the
-same dot-product class as the attention cosine that was purged — relocated one layer out to the output
-boundary, inherited unexamined. The purity discipline reached the **input** (coordizer) and the **loss**
-(d_FR) but **not the output head or the CE-bpb metric**. For *this* A/B the head is **common-mode**
-(byte-identical in both depth arms), so it does **not** confound the depth comparison — the verdict is
-valid for "depth/architecture **given the shared head**." It does **not** certify the head as pure.
-**Open decision (council/Devin, before it's waved through):** is the Euclidean read-out an *accepted
-exemption* — labelled with a reason (e.g. "output projection to vocab is the read-out boundary, a
-measurement, not a manifold operation") — **or** a genuine impurity to replace with a d_FR-geometric
-read-out? Right now it is *labelled-open* in code (`geo_cortex.py`), neither ratified nor fixed.
+**(b) The Euclidean `nn.Linear` lm_head is BEING FIXED (Tier-1), not labelled.** Confirmed at source:
+`geocoding/model.py:55,95` and `qigkernels/kernel.py:137,234` both read out via `nn.Linear(hidden,vocab)`
+— the same dot-product class as the purged attention cosine, one layer out, plus the Duchi-L2
+`to_simplex_prob` (two Euclidean steps). Per the "no Euclidean use" directive this is a Tier-1 impurity,
+so it is being **REPLACED** by the distance-to-basins `GeometricHead` (qig-core) — not annotated and kept.
+The geometric-vs-linear comparison is **EXP-GEO-HEAD**, its OWN experiment (above), NOT folded into the
+depth A/B. Until EXP-GEO-HEAD reports, EXP-CORTEX-AB may run on the linear head as a **common-mode**
+baseline (byte-identical in both depth arms → the depth *difference* is unconfounded), but the depth
+verdict is then explicitly "given the shared head" and the stack is NOT certified pure until the geometric
+head ships (or earns a labelled exemption WITH evidence by training measurably worse).
 
 ---
 
-## Ratification checklist (before the 8L compute spend)
+## Ratification checklist (before the full-stack compute spend)
 
-- [ ] Matrix/Devin sign-off on VERDICT=CE-bpb / DIAGNOSTIC=d_FR split.
-- [ ] Commit the numeric maturity-floor margin (unigram-floor beat) and the success-band k.
-- [ ] Confirm the `NaturalGradientDescent` config is byte-identical across both depth arms (source read).
-- [ ] Decide caveat (b): lm_head exemption-with-reason **or** geometric-read-out task filed.
-- [ ] Register the prereg in the experiment registry (Devin's lane) before the run.
+- [x] VERDICT=d_FR / external-only CE-bpb committed (PI "no Euclidean use" directive, 2026-06-30).
+- [x] `NaturalGradientDescent` byte-identical across arms — source-confirmed (lr=1e-3, damping=1e-3,
+      momentum=0.9); ARM A↔ARM B loss-value parity = 0.0 (`geo_cortex.py:438`, §H-checked: two distinct
+      attention impls → same head+loss, not self-comparing).
+- [x] Caveat (b) resolved: lm_head → Tier-1 `GeometricHead` (EXP-GEO-HEAD), being built — not labelled.
+- [ ] Numeric maturity-floor margin (random/unigram-d_FR beat) + success-band k — committed at
+      run-registration, after the 32k screen sizes them.
+- [ ] EXP-GEO-HEAD reports (geometric ≥ linear, or labelled-exemption-with-evidence) before the full stack
+      ships as pure.
+- [ ] Register the prereg in the experiment registry before the full-stack run.
