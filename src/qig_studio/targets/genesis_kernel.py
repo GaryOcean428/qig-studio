@@ -101,6 +101,9 @@ class GenesisKernelTarget(TrainingTarget):
         checkpoint: str | None = None,  # trained-kernel checkpoint (.pt) to restore on first load; None = fresh
         language_peer: Any = None,   # QwenLocalTarget boundary peer for the FLUENT linguistic surface
         lang_loss: str = "fisher_rao",  # "fisher_rao" (P20-pure d_FR) | "ce_ablation" (CE=KL, measures purity cost)
+        head_mode: str = "geometric",   # OUTPUT READOUT: "geometric" (GeometricHead, −d_FR/τ; no Euclidean
+        #                                 nn.Linear) | "linear" (nn.Linear baseline, retained for the A/B)
+        head_tau: float = 1.0,          # Gibbs temperature on the −d_FR readout logits (geometric mode)
     ) -> None:
         self.num_layers = num_layers
         # BOUNDARY PEER (P22): the kernel computes its OWN geometry (Φ/κ/identity), then SPEAKS through a
@@ -113,6 +116,10 @@ class GenesisKernelTarget(TrainingTarget):
         # the A/B measures the PURITY COST of going pure. Env QIG_STUDIO_LANG_LOSS overrides the ctor.
         import os as _os
         self.lang_loss = str(_os.environ.get("QIG_STUDIO_LANG_LOSS", lang_loss)).strip().lower()
+        # OUTPUT READOUT mode (the head A/B for the "no Euclidean readout" directive). Env
+        # QIG_STUDIO_HEAD_MODE overrides the ctor so the A/B can flip both arms together without code change.
+        self.head_mode = str(_os.environ.get("QIG_STUDIO_HEAD_MODE", head_mode)).strip().lower()
+        self.head_tau = float(head_tau)
         self._spoken_identity: Any = None   # evolving Δ⁶³ identity the boundary distribution accretes into
         self.think_traces = False           # opt-in reasoning trace through the peer (off → fast chat)
         self._pillars: Any = None           # PillarEnforcer — LIVE 3-pillar metrics (f/b/q + S_ratio), wired
@@ -199,6 +206,8 @@ class GenesisKernelTarget(TrainingTarget):
             max_position_embeddings=8192,
             enable_coords=self.coordizer is not None,  # Δ⁶³ coords-first path via CoordAdapter
             coord_dim=self.coord_dim or 64,
+            head_mode=self.head_mode,                  # geometric (GeometricHead, −d_FR/τ) | linear baseline
+            head_tau=self.head_tau,
         )
         dev = self._device or ("cuda" if torch.cuda.is_available() else "cpu")
         self._kernel.to(dev)
@@ -1167,7 +1176,8 @@ class GenesisKernelTarget(TrainingTarget):
                 "num_layers": self.num_layers, "recursion_depth": 3, "seq_len": _CTX,
                 "input": "coords" if self.coordizer is not None else "bytes",
                 "vocab_size": self.vocab_size, "coord_dim": self.coord_dim or 64,
-                "hidden_dim": self.hidden_dim, "num_params": nparams, "coordizer_vocab": cvocab}
+                "hidden_dim": self.hidden_dim, "num_params": nparams, "coordizer_vocab": cvocab,
+                "head_mode": self.head_mode, "head_tau": self.head_tau}
 
     @property
     def self_regulating(self) -> bool:
@@ -1225,7 +1235,7 @@ class GenesisKernelTarget(TrainingTarget):
             "arch": {"num_layers": self.num_layers, "hidden_dim": self.hidden_dim,
                      "num_heads": self.num_heads, "ffn_dim": self.ffn_dim,
                      "vocab_size": self.vocab_size, "seed": self.seed, "role": self.role,
-                     "coordizer": self.coordizer is not None},
+                     "coordizer": self.coordizer is not None, "head_mode": self.head_mode},
             "kernel_state": self._kernel.state_dict(),
             "step": self._step,
             "sleep_pressure": self._sleep_pressure,
@@ -1246,11 +1256,15 @@ class GenesisKernelTarget(TrainingTarget):
         dev = next(self._kernel.parameters()).device
         ckpt = torch.load(path, map_location=dev, weights_only=True)
         arch = ckpt.get("arch") or {}
+        # BACK-COMPAT: checkpoints saved before the head A/B have no "head_mode" key — they were trained
+        # with the Euclidean nn.Linear readout. If this kernel is the new geometric default, the explicit
+        # mismatch error (or, if the key is absent, the subsequent load_state_dict lm_head shape error) is
+        # correct: construct the target with head_mode="linear" to resume a pre-A/B checkpoint.
         for k, cur in (("num_layers", self.num_layers), ("vocab_size", self.vocab_size),
-                       ("coordizer", self.coordizer is not None)):
+                       ("coordizer", self.coordizer is not None), ("head_mode", self.head_mode)):
             if k in arch and arch[k] != cur:
                 raise ValueError(f"checkpoint arch mismatch at '{k}': checkpoint={arch[k]} kernel={cur} "
-                                 f"(byte-vs-coordizer or layer/vocab mismatch) — {path}")
+                                 f"(byte-vs-coordizer, layer/vocab, or geometric-vs-linear head mismatch) — {path}")
         self._kernel.load_state_dict(ckpt["kernel_state"])
         self._step = int(ckpt.get("step", 0))
         self._sleep_pressure = float(ckpt.get("sleep_pressure", 0.0))

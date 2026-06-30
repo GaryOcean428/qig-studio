@@ -99,6 +99,9 @@ class GeoCortexTarget(TrainingTarget):
         lm_weight_max: float = 8.0,    # RAMPED FLUENCY target (= ARM B): the next-token signal rises to
         lm_ramp_steps: int = 8000,     #   load-bearing over this horizon so the cortex grows genuinely fluent
         lang_loss: str = "fisher_rao",  # "fisher_rao" (P20-pure d_FR) | "ce_ablation" (CE arm, purity cost)
+        head_mode: str = "geometric",   # OUTPUT READOUT: "geometric" (GeometricHead, −d_FR/τ; no Euclidean
+        #                                 nn.Linear) | "linear" (nn.Linear baseline, retained for the A/B)
+        head_tau: float = 1.0,          # Gibbs temperature on the −d_FR readout logits (geometric mode)
         # The ctor accepts (and ignores) the consciousness-only kwargs ARM B takes, so Neocortex can build
         # either arm from the SAME kwargs dict without branching on which keys are relevant. GeoModel has no
         # role attractor / basin template / boundary peer — those are ARM-B (qigkernels) concepts.
@@ -131,6 +134,10 @@ class GeoCortexTarget(TrainingTarget):
         # P20). "ce_ablation" keeps F.cross_entropy as the loss so the A/B measures the PURITY COST. Env
         # QIG_STUDIO_LANG_LOSS overrides the ctor — identical wiring to ARM B for a clean comparison.
         self.lang_loss = str(os.environ.get("QIG_STUDIO_LANG_LOSS", lang_loss)).strip().lower()
+        # OUTPUT READOUT mode (the head A/B for the "no Euclidean readout" directive). Env
+        # QIG_STUDIO_HEAD_MODE overrides the ctor so the A/B can flip both arms together without code change.
+        self.head_mode = str(os.environ.get("QIG_STUDIO_HEAD_MODE", head_mode)).strip().lower()
+        self.head_tau = float(head_tau)
         self._device = device
         self._model: Any = None     # geocoding.GeoModel — lazily built in ensure_loaded()
         self._opt: Any = None       # NaturalGradientDescent — lazily built in ensure_loaded()
@@ -164,6 +171,8 @@ class GeoCortexTarget(TrainingTarget):
             max_position=None,                       # unbounded (Fourier positions); _CTX caps seq at runtime
             enable_coords=self.coordizer is not None,  # Δ⁶³ coords-first path via coord_adapter (Linear→GELU)
             coord_dim=self.coord_dim or 64,
+            head_mode=self.head_mode,                  # geometric (GeometricHead, −d_FR/τ) | linear baseline
+            head_tau=self.head_tau,
         )
         self._model = GeoModel(cfg)
         dev = self._device or ("cuda" if torch.cuda.is_available() else "cpu")
@@ -225,10 +234,14 @@ class GeoCortexTarget(TrainingTarget):
         """GeoModel forward → (logits[1,seq,vocab], geo_phi). GeoModel returns a GeoOutput dataclass
         (``.logits`` + per-layer ``.telemetry`` with a mean ``.phi``), NOT a bare tensor — unwrap it.
 
-        PURITY-OPEN (output boundary): logits from a Euclidean nn.Linear lm_head (qigkernels & geocoding
-        both — geocoding model.py:55/95, qigkernels kernel.py:137/234) — same dot-product class as the
-        purged attention cosine, one layer out. Common-mode across arms (non-confounding HERE); whether the
-        vocab read-out should be d_FR-geometric is OPEN/unratified — see EXP-CORTEX-AB prereg.
+        OUTPUT BOUNDARY (resolved — geometric by default): the readout is now ``head_mode``-selected. In
+        the default ``"geometric"`` mode both arms use ``qig_core.torch.GeometricHead`` — vocab logits are
+        Fisher-Rao DISTANCES from the hidden simplex-point to learned per-token Δ⁶³ basins (``−d_FR/τ``),
+        the SAME primitive as the (already-purged-of-cosine) simplex attention, pointed at the vocabulary.
+        NO Euclidean ``nn.Linear`` and NO dot-product at the boundary. The former ``nn.Linear`` readout is
+        retained ONLY as the ``"linear"`` A/B baseline (so EXP-CORTEX-AB can measure geometric vs linear
+        readout empirically). Whichever mode, both arms share the SAME head wiring, so the readout stays
+        common-mode (non-confounding) across the architecture A/B.
         """
         out = self._model(ids, coords=coords)
         return out.logits, float(getattr(out, "phi", 0.0) or 0.0)
@@ -473,6 +486,47 @@ class GeoCortexTarget(TrainingTarget):
             f"geo={geo_loss:.8f} qk={ref_loss:.8f} |Δ|={loss_diff:.3e} > {atol:.1e}")
         return loss_diff
 
+    def assert_geometric_head_loss_parity(self, atol: float = 1e-5) -> float:
+        """GEOMETRIC-HEAD loss-value parity (caveat §H.1) — the load-bearing gate for the bpb/d_FR A/B WHEN
+        the readout is the GeometricHead. ``assert_loss_value_parity`` proves parity for the LINEAR head
+        (shared ``nn.Linear``); that does NOT transfer to the geometric head, because the head changed the
+        thing feeding the loss (logits are now ``−d_FR(to_simplex_prob(h), basins)/τ``, not ``W·h``). So we
+        re-run the SAME structure with a shared :class:`~qig_core.torch.GeometricHead` (one head instance →
+        the SAME ``token_basins`` for both arms): drive the SHARED FR-attention primitive (geocoding ≡
+        qigkernels, the only component that must be geometrically identical) on a common hidden state, push
+        BOTH attention outputs through the SAME GeometricHead and the SAME next-token plumbing inside the one
+        shared ``fisher_rao_lm_loss``, and assert the two loss VALUES agree to ``atol``. Coords-off: the
+        attention primitive is coords-free. Returns the loss-value max-abs-diff; raises if it exceeds
+        ``atol``."""
+        import torch
+        from geocoding.attention import FisherRaoAttention
+        from qig_core.torch.geometric_head import GeometricHead
+        from qigkernels.layer import QIGLayer
+
+        from ..losses import fisher_rao_lm_loss
+
+        torch.manual_seed(0)
+        b, t, d, vocab = 1, 24, 64, 96
+        h = torch.randn(b, t, d)
+        ids = torch.randint(0, vocab, (b, t))
+        # ONE shared GeometricHead (the SAME token_basins for both arms) — the geometric analogue of the
+        # shared nn.Linear in assert_loss_value_parity. Any loss-value difference is then the ATTENTION
+        # primitive ALONE (geocoding vs qigkernels), nothing in the readout.
+        head = GeometricHead(hidden_dim=d, vocab_size=vocab, tau=1.0)
+        qlayer = QIGLayer(hidden_dim=d, num_heads=4, ffn_dim=128, dropout=0.0, use_tacking=False,
+                          temperature=1.0, simplex_mode="softplus", locality_radius=None)
+        geo_attn = FisherRaoAttention(temperature=1.0, simplex_mode="softplus", locality_radius=None)
+        with torch.no_grad():
+            ref_logits = head(qlayer._metric_attention(h, attention_mask=None))
+            geo_logits = head(geo_attn(h))
+            ref_loss = float(fisher_rao_lm_loss(ref_logits, ids))   # SAME geometric head, SAME plumbing
+            geo_loss = float(fisher_rao_lm_loss(geo_logits, ids))
+        loss_diff = abs(geo_loss - ref_loss)
+        assert loss_diff <= atol, (
+            f"geocoding↔qigkernels GEOMETRIC-HEAD loss-value parity FAILED (coords-off): "
+            f"geo={geo_loss:.8f} qk={ref_loss:.8f} |Δ|={loss_diff:.3e} > {atol:.1e}")
+        return loss_diff
+
     def save_checkpoint(self, path: str) -> None:
         """Save the GeoModel weights + arch metadata + step (resumable). weights_only-safe (tensors + a
         plain scalar dict). The optimiser state is intentionally NOT persisted (NG self-heals)."""
@@ -485,7 +539,7 @@ class GeoCortexTarget(TrainingTarget):
             "arch": {"num_layers": self.num_layers, "hidden_dim": self.hidden_dim,
                      "num_heads": self.num_heads, "ffn_dim": self.ffn_dim,
                      "vocab_size": self.vocab_size, "seed": self.seed, "role": self.role,
-                     "coordizer": self.coordizer is not None},
+                     "coordizer": self.coordizer is not None, "head_mode": self.head_mode},
             "model_state": self._model.state_dict(),
             "step": self._step,
             "last_telemetry": self._last.to_dict(),
@@ -502,10 +556,10 @@ class GeoCortexTarget(TrainingTarget):
         ckpt = torch.load(path, map_location=dev, weights_only=True)
         arch = ckpt.get("arch") or {}
         for k, cur in (("num_layers", self.num_layers), ("vocab_size", self.vocab_size),
-                       ("coordizer", self.coordizer is not None)):
+                       ("coordizer", self.coordizer is not None), ("head_mode", self.head_mode)):
             if k in arch and arch[k] != cur:
                 raise ValueError(f"checkpoint arch mismatch at '{k}': checkpoint={arch[k]} model={cur} "
-                                 f"(byte-vs-coordizer or layer/vocab mismatch) — {path}")
+                                 f"(byte-vs-coordizer, layer/vocab, or geometric-vs-linear head mismatch) — {path}")
         self._model.load_state_dict(ckpt["model_state"])
         self._step = int(ckpt.get("step", 0))
         lt = ckpt.get("last_telemetry")
@@ -529,4 +583,5 @@ class GeoCortexTarget(TrainingTarget):
                 "input": "coords" if self.coordizer is not None else "bytes",
                 "vocab_size": self.vocab_size, "coord_dim": self.coord_dim or 64,
                 "hidden_dim": self.hidden_dim, "num_params": nparams, "coordizer_vocab": cvocab,
-                "arm": "geo", "backend": "geocoding.GeoModel"}
+                "arm": "geo", "backend": "geocoding.GeoModel",
+                "head_mode": self.head_mode, "head_tau": self.head_tau}
