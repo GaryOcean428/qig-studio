@@ -102,11 +102,20 @@ class JointConstellation:
             return GenesisKernelTarget(num_layers=num_layers, role=role, basin_template=birth,
                                        coordizer=coordizer, device=device, seed=seed,
                                        language_peer=language_peer if is_central else None)
-        if sub in ("geo", "hybrid"):
+        if sub == "geo":
+            # WS3: the GeoCortexTarget is now a full ConstellationNode (run_protocol + _basin_history +
+            # _basin_ref + _meta_awareness). It couples + is Ocean-regulated exactly like the gk node; in
+            # constellation mode the basin-pull term engages once _set_pull writes _basin_ref. language_peer
+            # is accepted + ignored (GeoModel has no boundary peer — the A/B baseline).
+            from ..targets.geo_cortex import GeoCortexTarget
+            return GeoCortexTarget(num_layers=num_layers, role=role, basin_template=birth,
+                                   coordizer=coordizer, device=device, seed=seed,
+                                   language_peer=language_peer if is_central else None)
+        if sub == "hybrid":
             raise NotImplementedError(
-                f"constellation arm {arm!r} needs the {sub!r} node-parity build (WS3/WS4): the geo/hybrid "
-                f"substrate must expose the node contract (run_protocol + _basin_history + _basin_ref) before "
-                f"it can couple + be Ocean-regulated. Only 'gk' is node-ready today.")
+                f"constellation arm {arm!r} needs the {sub!r} node-parity build (WS4): the hybrid substrate "
+                f"must expose the node contract (run_protocol + _basin_history + _basin_ref) before it can "
+                f"couple + be Ocean-regulated. 'gk' and 'geo' are node-ready today.")
         raise ValueError(f"unknown constellation arm {arm!r} (expected gk|geo|hybrid|hetero)")
 
     def _live_basin(self, kernel: Any) -> np.ndarray | None:
@@ -133,7 +142,13 @@ class JointConstellation:
         import torch
 
         from qig_core.torch.geometry_simplex import to_simplex_prob
-        dev = next(kernel._kernel.parameters()).device
+        # SUBSTRATE-AGNOSTIC device read: gk exposes _kernel, geo exposes _model — prefer the node's own
+        # _node_device() hook (ConstellationNode), else fall back to whichever model attr the arm carries.
+        if hasattr(kernel, "_node_device"):
+            dev = kernel._node_device()
+        else:
+            _m = getattr(kernel, "_kernel", None) or getattr(kernel, "_model", None)
+            dev = next(_m.parameters()).device
         ref = torch.as_tensor(np.asarray(target64, dtype=np.float32), device=dev)
         if ref.numel() != kernel.vocab_size:
             ref = kernel._resize_basin(ref, kernel.vocab_size)

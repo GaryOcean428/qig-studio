@@ -43,6 +43,7 @@ import os
 from typing import Any
 
 from .base import LossRegime, StepResult, TelemetrySnapshot, TrainingTarget
+from .constellation_node import ConstellationNode
 
 _MAX_BYTES = 256  # byte-level VOCAB size (byte fallback when no coordizer) — mirrors GenesisKernelTarget
 # CONTEXT WINDOW (sequence length), env-configurable (shared QIG_STUDIO_CTX with ARM B): on a small (4GB)
@@ -64,8 +65,15 @@ def _deps_available() -> bool:
         return False
 
 
-class GeoCortexTarget(TrainingTarget):
+class GeoCortexTarget(ConstellationNode, TrainingTarget):
     """ARM A cortex backed by ``geocoding.GeoModel`` — pure Fisher-Rao loss + natural gradient.
+
+    CONSTELLATION NODE (WS3): mixes in :class:`ConstellationNode` so a geo constellation can be built,
+    coupled (``couple_step``), pulled (``_set_pull`` → ``_basin_ref``) and Ocean-regulated
+    (``run_protocol``) exactly like ARM B. The node contract activates ONLY in constellation mode: when
+    ``_basin_ref`` is set the geometric loss gains a Fisher-Rao basin-pull term and the per-step Δ basin
+    is recorded into ``_basin_history``. Run SOLO (no ``_basin_ref``) the target stays the lean A/B
+    baseline UNCHANGED — no pull, no autonomic intervention in the train loop.
 
     Duck-typed to the SAME interface the launcher + :class:`~qig_studio.neocortex.Neocortex` pass-throughs
     need: ``train_step`` → ``StepResult`` (``res.telemetry.to_dict()`` / ``.extra`` / ``.loss``);
@@ -146,6 +154,11 @@ class GeoCortexTarget(TrainingTarget):
         self._last = TelemetrySnapshot(
             regime="geometric", extra={"target": "geo-cortex", "arm": "geo", "num_layers": self.num_layers}
         )
+        # CONSTELLATION-NODE state (WS3): the role's Δ⁶³ birth-state attractor (or None for a solo/generic
+        # node). _basin_ref / _basin_history / _experience + the autonomic ops live in ConstellationNode;
+        # the pull/record only engage once _basin_ref is set (constellation mode). basin_template is the
+        # ctor arg ARM B also takes — carried here so Neocortex can build either arm from the same kwargs.
+        self._init_node_state(basin_template)
 
     def is_available(self) -> bool:
         return _deps_available()
@@ -180,6 +193,10 @@ class GeoCortexTarget(TrainingTarget):
         # P1: natural gradient (the SAME validated qig optimiser ARM B uses), NOT Adam. GeoModel ships no
         # optimiser, so the target owns it — this is the fairness gate (same optimiser family both arms).
         self._opt = DiagonalNaturalGradient(self._model.parameters(), lr=self.lr)
+
+        # CONSTELLATION NODE (WS3): seed the role's Δ⁶³ attractor onto the vocab simplex as the pull
+        # reference + birth-state (history[0]). None template → generic/solo node (no pull, lean A/B path).
+        self._seed_node_basin()
 
         if self._init_checkpoint:
             try:
@@ -237,7 +254,7 @@ class GeoCortexTarget(TrainingTarget):
         OUTPUT BOUNDARY (resolved — geometric by default): the readout is now ``head_mode``-selected. In
         the default ``"geometric"`` mode both arms use ``qig_core.torch.GeometricHead`` — vocab logits are
         Fisher-Rao DISTANCES from the hidden simplex-point to learned per-token Δ⁶³ basins (``−d_FR/τ``),
-        the SAME primitive as the (already-purged-of-cosine) simplex attention, pointed at the vocabulary.
+        the SAME primitive as the (already-purged) simplex attention, pointed at the vocabulary.
         NO Euclidean ``nn.Linear`` and NO dot-product at the boundary. The former ``nn.Linear`` readout is
         retained ONLY as the ``"linear"`` A/B baseline (so EXP-CORTEX-AB can measure geometric vs linear
         readout empirically). Whichever mode, both arms share the SAME head wiring, so the readout stays
@@ -344,6 +361,11 @@ class GeoCortexTarget(TrainingTarget):
         w_lm = self.lm_weight + (self.lm_weight_max - self.lm_weight) * min(
             1.0, self._step / max(1, self.lm_ramp_steps))
         loss = w_lm * lm_loss
+        # CONSTELLATION-MODE basin pull (WS3): when coupled, add a Fisher-Rao pull of the output basin toward
+        # the coupled target (_basin_ref). SOLO (no _basin_ref) this is None → the lean A/B path is unchanged.
+        pull = self._basin_pull_term(logits)
+        if pull is not None:
+            loss = loss + pull
         self._opt.zero_grad()
         if torch.isfinite(loss):
             loss.backward()
@@ -363,6 +385,15 @@ class GeoCortexTarget(TrainingTarget):
             _nbytes = max(1, int(ids.shape[1]))
         snap.extra["bpb"] = round(float(ce.item()) * int(ids.shape[1]) / (math.log(2) * _nbytes), 4)
         snap.extra["lm_weight_now"] = round(float(w_lm), 3)
+        # CONSTELLATION NODE (WS3): record this step's Δ basin into the trajectory (history[0] = birth-state)
+        # so _live_basin can read it; expose M (self-recognition vs birth) + d_basin (drift from attractor)
+        # when a role attractor is set. This runs in BOTH modes (record is cheap + None-safe) but d_basin/M
+        # are 0/0.3 with no _basin_ref → the solo telemetry is the lean baseline plus an inert basin trace.
+        cur_basin = self._record_basin_step(logits, ids)
+        d_basin = self._basin_drift(cur_basin)
+        snap.extra["meta_awareness"] = round(self._meta_awareness(cur_basin), 4)
+        snap.extra["d_basin"] = round(d_basin, 4)
+        snap.basin_distance = d_basin            # top-level field Ocean / the developmental gate read
         return StepResult(
             text=f"[geo·N={self.num_layers} step {snap.step}] {prompt[:50]}", telemetry=snap)
 
@@ -566,6 +597,45 @@ class GeoCortexTarget(TrainingTarget):
         if lt:
             self._last = TelemetrySnapshot(**{k: v for k, v in lt.items()
                                               if k in TelemetrySnapshot.__dataclass_fields__})
+
+    # --- ConstellationNode substrate hooks (WS3) ------------------------------------------------------
+    def _node_named_parameters(self):
+        """(name, param) over the GeoModel — the autonomic ops (mushroom/decohere/consolidate) act here."""
+        return self._model.named_parameters()
+
+    def _node_device(self):
+        return next(self._model.parameters()).device
+
+    def _node_rebuild_optimizer(self, lr_scale: float) -> None:
+        """Rebuild the persistent natural-gradient optimiser at lr×lr_scale (the decohere cool-down). Same
+        DiagonalNaturalGradient class the solo path uses — never an Euclidean optimiser."""
+        from qigkernels.natural_gradient_optimizer import DiagonalNaturalGradient
+
+        self._opt = DiagonalNaturalGradient(self._model.parameters(), lr=self.lr * float(lr_scale))
+
+    def _node_replay_optimizer(self, lr_scale: float):
+        """A FRESH throwaway natural-gradient optimiser at lr×lr_scale for a sleep/dream replay loop (does
+        not disturb the persistent self._opt). DiagonalNaturalGradient — the same validated qig optimiser."""
+        from qigkernels.natural_gradient_optimizer import DiagonalNaturalGradient
+
+        return DiagonalNaturalGradient(self._model.parameters(), lr=self.lr * float(lr_scale))
+
+    def _node_forward_logits(self, ids: "Any", coords: "Any"):
+        """Forward pass → logits[1, seq, vocab] for replay (coords None on the byte path)."""
+        logits, _gp = self._logits(ids, coords)
+        return logits
+
+    def _node_basin_from_logits(self, logits: "Any"):
+        """The detached vocab-width Δ basin for one step — the SAME geometric reduction ARM B uses:
+        to_simplex_prob(logits[0].mean(0)) renormalised to a valid Δ point (non-negative, sums to 1)."""
+        import torch
+
+        from qig_core.torch.geometry_simplex import to_simplex_prob
+
+        with torch.no_grad():
+            cur = to_simplex_prob(logits[0].mean(0)).detach()
+            cur = cur / cur.sum()
+        return cur
 
     def architecture(self) -> dict:
         """Report the cortex's information-propagation geometry for the v_B locality budget. Mirrors ARM B's
