@@ -21,6 +21,7 @@ which the constellation spawns as the basin forms.
 
 from __future__ import annotations
 
+import os
 from typing import Any
 
 from .base import LossRegime, StepResult, TelemetrySnapshot, TrainingTarget
