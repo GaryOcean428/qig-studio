@@ -124,13 +124,38 @@ def main() -> None:
     runs = root / "runs"
     runs.mkdir(exist_ok=True)
     trained: list[dict] = []
+    ranked: list[dict] = []
+    out_path = runs / f"constellation_compare_{datetime.now():%Y%m%d_%H%M}.json"
     print(f"[compare] arms={arms} steps={args.steps} coordizer={Path(coordizer_path).name}", flush=True)
+    print(f"[compare] artifact (written INCREMENTALLY after each arm) → {out_path}", flush=True)
+
+    def _finalize() -> dict:
+        """Rank what we have so far + write the artifact INCREMENTALLY — crash-resilient, and a PARTIAL
+        ranking is readable while later arms still train. ``complete`` flips true once all arms are in."""
+        scored = sorted([r for r in ranked if isinstance(r.get("heldout_dFR"), (int, float))],
+                        key=lambda r: r["heldout_dFR"])
+        floor = next((r.get("uniform_dFR_floor") for r in scored if r.get("uniform_dFR_floor")), None)
+        under = (bool(floor) and all((floor - r["heldout_dFR"]) < 0.01 for r in scored)) if scored else True
+        out = {
+            "date": datetime.now().strftime("%Y-%m-%dT%H:%M:%S"),
+            "complete": len(ranked) >= len(arms),
+            "steps_per_arm": args.steps, "coordizer": Path(coordizer_path).name,
+            "uniform_dFR_floor": floor,
+            "ranking": [r["arm"] for r in scored],
+            "winner": scored[0]["arm"] if scored and not under else None,
+            "underpowered": under, "arms": ranked, "trained": trained,
+        }
+        out_path.write_text(json.dumps(out, indent=2))
+        return out
+
     for arm in arms:
         print(f"[compare] === {arm} ===", flush=True)
         sa = _set_arm(arm)
         if not sa["ok"]:
             print(f"[compare]   SKIP {arm}: {sa['detail']}", flush=True)
             trained.append({"arm": arm, "skipped": str(sa["detail"])})
+            ranked.append({"arm": arm, "skipped": str(sa["detail"])})
+            _finalize()
             continue
         print(f"[compare]   building+training fresh {arm} ({args.steps} steps)…", flush=True)
         res = _train(args.steps, args.max_seconds)
@@ -138,51 +163,32 @@ def main() -> None:
         print(f"[compare]   trained {arm}: ckpt={ckpt} elapsed={res.get('elapsed_s')}s err={res.get('error')}",
               flush=True)
         trained.append({"arm": arm, "checkpoint": ckpt, "train": res})
+        if ckpt:
+            try:
+                ev = _eval_checkpoint(arm, str(runs / "checkpoints" / ckpt), coordizer_path, passages)
+                ranked.append({"arm": arm, "checkpoint": ckpt, **ev})
+                print(f"[compare]   EVAL {arm}: d_FR={ev.get('heldout_dFR'):.4f} bpb={ev.get('ce_bpb')} "
+                      f"floor={ev.get('uniform_dFR_floor')}", flush=True)
+            except Exception as e:  # noqa: BLE001
+                print(f"[compare]   EVAL {arm} FAILED: {str(e)[:200]}", flush=True)
+                ranked.append({"arm": arm, "checkpoint": ckpt, "eval_error": str(e)[:200]})
+        else:
+            ranked.append({"arm": arm, "checkpoint": None, "error": res.get("error")})
+        _finalize()  # incremental write after THIS arm
+        print(f"[compare]   artifact updated ({len(ranked)}/{len(arms)} arms) → {out_path.name}", flush=True)
 
-    # ---- held-out eval of each saved checkpoint (in-process, CPU) ----
-    ranked: list[dict] = []
-    for tr in trained:
-        if tr.get("skipped") or not tr.get("checkpoint"):
-            continue
-        ckpt_dir = str(runs / "checkpoints" / tr["checkpoint"])
-        try:
-            ev = _eval_checkpoint(tr["arm"], ckpt_dir, coordizer_path, passages)
-            ranked.append({"arm": tr["arm"], "checkpoint": tr["checkpoint"], **ev})
-            print(f"[compare]   EVAL {tr['arm']}: d_FR={ev.get('heldout_dFR'):.4f} "
-                  f"bpb={ev.get('ce_bpb')} floor={ev.get('uniform_dFR_floor')}", flush=True)
-        except Exception as e:  # noqa: BLE001
-            print(f"[compare]   EVAL {tr['arm']} FAILED: {str(e)[:200]}", flush=True)
-            ranked.append({"arm": tr["arm"], "checkpoint": tr["checkpoint"], "eval_error": str(e)[:200]})
-
-    # ---- rank by held-out d_FR (lower = better); under-powered if all pinned near the floor ----
-    scored = [r for r in ranked if isinstance(r.get("heldout_dFR"), (int, float))]
-    scored.sort(key=lambda r: r["heldout_dFR"])
-    floor = next((r.get("uniform_dFR_floor") for r in scored if r.get("uniform_dFR_floor")), None)
-    underpowered = bool(floor) and all((floor - r["heldout_dFR"]) < 0.01 for r in scored) if scored else True
-    winner = scored[0]["arm"] if scored and not underpowered else None
-
-    out = {
-        "date": datetime.now().strftime("%Y-%m-%dT%H:%M:%S"),
-        "steps_per_arm": args.steps,
-        "coordizer": Path(coordizer_path).name,
-        "uniform_dFR_floor": floor,
-        "ranking": [r["arm"] for r in scored],
-        "winner": winner,
-        "underpowered": underpowered,
-        "arms": ranked,
-        "trained": trained,
-    }
-    out_path = runs / f"constellation_compare_{datetime.now():%Y%m%d_%H%M}.json"
-    out_path.write_text(json.dumps(out, indent=2))
+    final = _finalize()
+    scored = sorted([r for r in ranked if isinstance(r.get("heldout_dFR"), (int, float))],
+                    key=lambda r: r["heldout_dFR"])
     print("\n" + "=" * 64)
-    print(f"[compare] 4-ARM CONSTELLATION RANKING (held-out d_FR, lower=better; floor={floor})")
+    print(f"[compare] 4-ARM CONSTELLATION RANKING (held-out d_FR, lower=better; floor={final['uniform_dFR_floor']})")
     for i, r in enumerate(scored, 1):
         print(f"  {i}. {r['arm']:<8} d_FR={r['heldout_dFR']:.4f}  bpb={r.get('ce_bpb')}  ({r['checkpoint']})")
-    if underpowered:
+    if final["underpowered"]:
         print("  ⚠ UNDER-POWERED: every arm pinned near the uniform floor — train more steps for a verdict.")
-    elif winner:
-        print(f"  WINNER: {winner}")
-    print(f"[compare] artifact → {out_path}")
+    elif final["winner"]:
+        print(f"  WINNER: {final['winner']}")
+    print(f"[compare] artifact → {out_path}  (complete={final['complete']})")
     print("=" * 64, flush=True)
 
 
