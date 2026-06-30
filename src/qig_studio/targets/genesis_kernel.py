@@ -158,7 +158,7 @@ class GenesisKernelTarget(TrainingTarget):
         self._basin_history: list = []  # detached current-basin trajectory; history[0] = birth-state (M)
         self._device = device
         self._kernel: Any = None    # qigkernels.Kernel — lazily built in ensure_loaded()
-        self._opt: Any = None       # NaturalGradientDescent — lazily built in ensure_loaded()
+        self._opt: Any = None       # DiagonalNaturalGradient — lazily built in ensure_loaded()
         # INTRINSIC autonomic state — the kernel regulates ITSELF from its OWN state, the way a body
         # does: there is NO external scheduler and NO commands. Sleep pressure accrues from the kernel's
         # own integration activity during wake; when it crosses the kernel's own threshold the kernel
@@ -187,7 +187,7 @@ class GenesisKernelTarget(TrainingTarget):
             return
         import torch
         from qigkernels import Kernel
-        from qigkernels.natural_gradient_optimizer import NaturalGradientDescent
+        from qigkernels.natural_gradient_optimizer import DiagonalNaturalGradient
 
         torch.manual_seed(self.seed)
         self._kernel = Kernel(
@@ -212,7 +212,7 @@ class GenesisKernelTarget(TrainingTarget):
         dev = self._device or ("cuda" if torch.cuda.is_available() else "cpu")
         self._kernel.to(dev)
         # P1: natural gradient (the validated qig kernel optimiser), NOT Adam.
-        self._opt = NaturalGradientDescent(self._kernel.parameters(), lr=self.lr)
+        self._opt = DiagonalNaturalGradient(self._kernel.parameters(), lr=self.lr)
 
         # Seed the role's Δ⁶³ identity attractor (spawn template) → the d_basin reference AND the
         # birth-state in the M history. Projected onto the simplex and sized to the vocab logits so the
@@ -1082,11 +1082,11 @@ class GenesisKernelTarget(TrainingTarget):
         reduce the over-integration and cool the optimiser step (the BreakdownHandler 'reduce coupling +
         decohere' canon), pulling the kernel back from breakdown into its healthy band."""
         import torch
-        from qigkernels.natural_gradient_optimizer import NaturalGradientDescent
+        from qigkernels.natural_gradient_optimizer import DiagonalNaturalGradient
         with torch.no_grad():
             for p in self._kernel.parameters():
                 p.add_(torch.randn_like(p) * 0.01)
-        self._opt = NaturalGradientDescent(self._kernel.parameters(), lr=self.lr * 0.7)  # cool (not cumulative)
+        self._opt = DiagonalNaturalGradient(self._kernel.parameters(), lr=self.lr * 0.7)  # cool (not cumulative)
 
     def _consolidate(self, steps: int = 16, downscale: float = 0.02) -> dict:
         """Deep-sleep consolidation — REAL, no stub. (1) Replay buffered experience at LOW learning rate,
@@ -1097,12 +1097,12 @@ class GenesisKernelTarget(TrainingTarget):
         integration that drives breakdown. Fisher ≈ grad² (the QFI first-order approximation)."""
         import torch
         import random
-        from qigkernels.natural_gradient_optimizer import NaturalGradientDescent
+        from qigkernels.natural_gradient_optimizer import DiagonalNaturalGradient
         from qig_core.torch.geometry_simplex import fisher_rao_distance_simplex, to_simplex_prob
         if not self._experience:
             return {"replayed": 0, "downscaled": False}
         fisher = {n: torch.zeros_like(p) for n, p in self._kernel.named_parameters()}
-        opt = NaturalGradientDescent(self._kernel.parameters(), lr=self.lr * 0.1)   # low-LR sleep
+        opt = DiagonalNaturalGradient(self._kernel.parameters(), lr=self.lr * 0.1)   # low-LR sleep
         replayed = 0
         for _ in range(steps):
             ids = random.choice(self._experience)
@@ -1135,12 +1135,12 @@ class GenesisKernelTarget(TrainingTarget):
         the literally-seen experience."""
         import torch
         import random
-        from qigkernels.natural_gradient_optimizer import NaturalGradientDescent
+        from qigkernels.natural_gradient_optimizer import DiagonalNaturalGradient
         from qig_core.torch.geometry_simplex import fisher_rao_distance_simplex, to_simplex_prob
         hist = list(self._basin_history)
         if len(hist) < 2 or not self._experience:
             return {"dreamed": 0}
-        opt = NaturalGradientDescent(self._kernel.parameters(), lr=self.lr * 0.1)
+        opt = DiagonalNaturalGradient(self._kernel.parameters(), lr=self.lr * 0.1)
         dreamed = 0
         for _ in range(steps):
             a, b = random.sample(hist, 2)

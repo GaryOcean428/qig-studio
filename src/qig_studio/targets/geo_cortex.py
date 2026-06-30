@@ -17,7 +17,7 @@ what :func:`qig_studio.kernel_experience.experience` consumes — verified None-
 consciousness keys (the launcher's ``experience(tel, phi_hist)`` survives; the UI renders empty panels).
 
 PURITY (both a Fisher-Rao gate AND a fairness gate vs ARM B):
-  * optimiser = ``qigkernels.natural_gradient_optimizer.NaturalGradientDescent`` (the SAME class ARM B
+  * optimiser = ``qigkernels.natural_gradient_optimizer.DiagonalNaturalGradient`` (the SAME class ARM B
     uses) — natural gradient ONLY, never a Euclidean first-order optimiser. GeoModel ships no internal
     optimiser, so OUR target owns it (the fairness gate: same optimiser family → the A/B isolates arch).
   * loss = :func:`qig_studio.losses.fisher_rao_lm_loss` (P20-pure d_FR), with the ``ce_ablation`` arm
@@ -140,7 +140,7 @@ class GeoCortexTarget(TrainingTarget):
         self.head_tau = float(head_tau)
         self._device = device
         self._model: Any = None     # geocoding.GeoModel — lazily built in ensure_loaded()
-        self._opt: Any = None       # NaturalGradientDescent — lazily built in ensure_loaded()
+        self._opt: Any = None       # DiagonalNaturalGradient — lazily built in ensure_loaded()
         self._step = 0
         self._init_checkpoint = checkpoint
         self._last = TelemetrySnapshot(
@@ -156,7 +156,7 @@ class GeoCortexTarget(TrainingTarget):
         import torch
         from geocoding.config import GeoConfig
         from geocoding.model import GeoModel
-        from qigkernels.natural_gradient_optimizer import NaturalGradientDescent
+        from qigkernels.natural_gradient_optimizer import DiagonalNaturalGradient
 
         torch.manual_seed(self.seed)
         cfg = GeoConfig(
@@ -179,7 +179,7 @@ class GeoCortexTarget(TrainingTarget):
         self._model.to(dev)
         # P1: natural gradient (the SAME validated qig optimiser ARM B uses), NOT Adam. GeoModel ships no
         # optimiser, so the target owns it — this is the fairness gate (same optimiser family both arms).
-        self._opt = NaturalGradientDescent(self._model.parameters(), lr=self.lr)
+        self._opt = DiagonalNaturalGradient(self._model.parameters(), lr=self.lr)
 
         if self._init_checkpoint:
             try:
