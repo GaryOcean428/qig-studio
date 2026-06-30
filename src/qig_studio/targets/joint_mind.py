@@ -68,10 +68,18 @@ class JointMindTarget(TrainingTarget):
         from ..development import PROTOMAP_ORDER
         mind = JointConstellation(list(PROTOMAP_ORDER), num_layers=self._num_layers,
                                   coordizer=self._coordizer, device=self._device,
-                                  language_peer=self._language_peer)
-        if (Path(self._ckpt_root) / "constellation.json").exists():
+                                  language_peer=self._language_peer, arm_mode=self.arm_mode)
+        if self._ckpt_root and (Path(self._ckpt_root) / "constellation.json").exists():
             mind.load_checkpoint(self._ckpt_root)   # restore the trained whole mind (all 9 + coupled basins)
         self._mind = mind
+
+    def set_arm(self, arm_mode: str) -> None:
+        """Switch the constellation ARM (the raw kernel that plugs into every node) and rebuild FRESH on the
+        next access. The newly-selected arm gets its OWN vocab-named lineage on save (genesis-{arm}-{vocab}),
+        differentiating it; we do NOT load a prior, different-arm checkpoint over it."""
+        self.arm_mode = str(arm_mode).strip().lower()
+        self._ckpt_root = None     # fresh build for the new arm (no cross-arm checkpoint load)
+        self._mind = None          # force ensure_loaded() to rebuild from the selected arm
 
     def telemetry(self) -> TelemetrySnapshot:
         if self._mind is not None:

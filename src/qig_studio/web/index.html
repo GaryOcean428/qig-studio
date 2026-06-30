@@ -175,6 +175,14 @@
         <div class="metric"><span>params · mind</span><span class="v" id="archCP">—</span></div>
         <div class="metric"><span>vocab · per-kernel</span><span class="v" id="archVocab">—</span></div>
         <div class="metric"><span>coordizer vocab</span><span class="v" id="archCoord">—</span></div>
+        <div class="hint" style="margin-top:.3rem">CONSTELLATION ARM · the raw kernel each of the 9 nodes plugs in from (names the checkpoint genesis-{arm}-{vocab})</div>
+        <div class="metric"><span>arm</span><span class="v" style="font-size:.72rem"><select id="armSel" style="font-size:.72rem;background:var(--panel2);color:inherit;border:1px solid var(--edge);border-radius:4px;max-width:200px">
+          <option value="gk">gk · qigkernels deep kernel (ready)</option>
+          <option value="geo" disabled>geo · needs node-parity (WS3)</option>
+          <option value="hybrid" disabled>hybrid · needs WS3/WS4</option>
+          <option value="hetero" disabled>hetero · needs WS3</option>
+        </select></span></div>
+        <div id="armStatus" class="hint" style="margin-top:.1rem">—</div>
         <div class="hint" style="margin-top:.25rem">CHECKPOINTS · auto-loads latest on boot · select to hot-swap</div>
         <div class="metric"><span>coordizer</span><span class="v" style="font-size:.7rem"><select id="ckptCoordizer" style="font-size:.7rem;background:var(--panel2);color:inherit;border:1px solid var(--edge);border-radius:4px;max-width:180px"></select></span></div>
         <div class="metric"><span>kernel</span><span class="v" style="font-size:.7rem"><select id="ckptKernel" style="font-size:.7rem;background:var(--panel2);color:inherit;border:1px solid var(--edge);border-radius:4px;max-width:180px"></select></span></div>
@@ -734,10 +742,24 @@ async function refreshArch(){
     $("archCP").textContent = fmtN(a.combined_params)+" · "+a.num_kernels+" kernels";
     $("archVocab").textContent = (a.per_kernel_vocab||"—");
     const c=$("archCoord");
-    c.textContent = (a.coordizer_vocab? fmtN(a.coordizer_vocab):"byte-level") + (a.coordizer_ok? " ✓ correct (100k)":" ✗ WRONG coordizer");
+    c.textContent = (a.coordizer_vocab? fmtN(a.coordizer_vocab):"byte-level") + (a.coordizer_ok? " ✓ correct":" ✗ WRONG coordizer");
     c.style.color = a.coordizer_ok? "var(--ok)":"var(--pink)";
+    if(a.arm_mode){ const s=$("armSel"); if(s) s.value=a.arm_mode; }   // reflect the live constellation arm
   }catch(e){}
 }
+// CONSTELLATION ARM — select the raw kernel each of the 9 nodes plugs in from; rebuilds the mind FRESH and
+// names its checkpoint genesis-{arm}-{vocab}. gk is ready; geo/hybrid/hetero are disabled until WS3.
+async function setArm(arm){
+  const st=$("armStatus"); st.textContent="building "+arm+" constellation…"; st.style.color="var(--muted)";
+  try{
+    const r=await fetch("/mind/arm",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({arm_mode:arm})});
+    const j=await r.json().catch(()=>({}));
+    if(!r.ok){ st.textContent="✗ "+(j.detail||("arm "+arm+" not available")); st.style.color="var(--pink)"; refreshArch(); return; }
+    st.textContent="✓ "+arm+" constellation built fresh — ▶ Train to grow it (saves genesis-"+arm+"-{vocab})"; st.style.color="var(--ok)";
+    refreshArch(); refreshMind&&refreshMind(); refreshKernels&&refreshKernels();
+  }catch(e){ st.textContent="arm switch failed: "+e; st.style.color="var(--pink)"; }
+}
+$("armSel").addEventListener("change", e=>setArm(e.target.value));
 // learning sparkline (Φ over recent steps) — params/vocab are fixed; THIS is what grows with training
 const _SPARK="▁▂▃▄▅▆▇█"; let PHI_SPARK=[];
 function sparkline(v){ return v.map(x=>_SPARK[Math.max(0,Math.min(7,Math.round((x||0)*7)))]).join(""); }

@@ -592,8 +592,45 @@ async def mind_architecture() -> dict[str, Any]:
         "combined_vocab": cv,                                # the coordizer vocab is SHARED across kernels
         "coordizer_vocab": cv,
         "coordizer_ok": coordizer_ok,                        # coordizer vocab matches the kernels' vocab?
+        "arm_mode": getattr(t, "arm_mode", None),            # the raw kernel arm each of the 9 nodes is built from
         "growth": "fixed per run (continuous vocab/param growth is a registered next build)",
     }
+
+
+class ArmRequest(BaseModel):
+    arm_mode: str = "gk"
+
+
+@app.post("/mind/arm")
+async def set_mind_arm(req: ArmRequest, _: None = Depends(verify_key)) -> dict[str, Any]:
+    """Select the RAW KERNEL ARM that forms the constellation — the substrate each of the 9 nodes plugs in
+    from. ``gk`` is node-ready today; ``geo``/``hybrid``/``hetero`` need geo node-parity (WS3) and fail LOUD
+    here until then. Rebuilds the mind FRESH from the selected arm; the next /train saves it to its OWN
+    vocab-named lineage ``genesis-{arm}-{vocab}``, differentiating the avenues. Refused mid-train/stasis."""
+    from .continuity import in_stasis
+    if in_stasis():
+        raise HTTPException(409, "kernel in STASIS (halted for power-off); clear stasis to resume")
+    if _TARGET_LOCK.locked():
+        raise HTTPException(409, "training/chat in progress — stop it before switching the constellation arm")
+    arm = str(req.arm_mode).strip().lower()
+    if arm not in ("gk", "geo", "hybrid", "hetero"):
+        raise HTTPException(400, f"unknown arm {arm!r} (expected gk|geo|hybrid|hetero)")
+    t = _registry().get("mind")
+    if t is None or not hasattr(t, "set_arm"):
+        raise HTTPException(409, "the integrated-mind target is unavailable")
+    t.set_arm(arm)
+    _registry().select("mind")
+    # BUILD now so an un-ready arm (geo/hybrid/hetero pre-WS3) fails LOUD here, not silently at first step;
+    # revert to the node-ready gk so the mind is never left un-buildable.
+    try:
+        t.ensure_loaded()
+    except NotImplementedError as exc:
+        t.set_arm("gk")
+        raise HTTPException(501, str(exc))
+    except Exception as exc:  # noqa: BLE001
+        t.set_arm("gk")
+        raise HTTPException(500, f"failed to build {arm!r} constellation: {exc}")
+    return {"arm_mode": arm, "active_target": "mind", "ready": True}
 
 
 @app.get("/mind/kernels")

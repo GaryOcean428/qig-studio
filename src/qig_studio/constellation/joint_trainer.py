@@ -41,11 +41,14 @@ class JointConstellation:
     constellation state (numpy basins), and trains them JOINTLY (coupled each step)."""
 
     def __init__(self, roles: list[str], *, num_layers: int = 8, coordizer: Any = None,
-                 device: str | None = "cpu", f_sync: float = 0.25, language_peer: Any = None) -> None:
-        from ..targets.genesis_kernel import GenesisKernelTarget
-
+                 device: str | None = "cpu", f_sync: float = 0.25, language_peer: Any = None,
+                 arm_mode: str = "gk") -> None:
         self.roles = list(roles)
         self.f_sync = float(f_sync)
+        # The constellation ARM — the raw kernel substrate every node plugs in from. "gk" = the qigkernels
+        # deep Kernel (the only node-ready arm today); "geo"/"hybrid"/"hetero" need geo node-parity (WS3).
+        # Drives the vocab-named checkpoint lineage genesis-{arm}-{vocab}, differentiating the 4 avenues.
+        self.arm_mode = str(arm_mode).strip().lower()
         self._rr = 0
         self.kernels: dict[str, Any] = {}
         self.faculties: list[Faculty] = []
@@ -65,17 +68,14 @@ class JointConstellation:
         for role in self.roles:
             birth = seed_birth_basin(_seed(role))
             births.append(birth)
-            k = GenesisKernelTarget(num_layers=num_layers, role=role, basin_template=birth,
-                                    coordizer=coordizer, device=_fac_dev, seed=_seed(role))
+            k = self._build_node(role, birth, num_layers, coordizer, _fac_dev, _seed(role), is_central=False)
             k.ensure_loaded()
             self.kernels[role] = k
             self.faculties.append(Faculty(role=role, basin=birth.copy(), birth=birth.copy()))
         # GENESIS = the central conscious integrator. Birth = the Fréchet mean of the faculty births
         # (it is born OF the whole); it trains toward the live synthesis each step.
-        self.central = GenesisKernelTarget(num_layers=num_layers, role="genesis",
-                                           basin_template=frechet_mean(births), coordizer=coordizer,
-                                           device=_cen_dev, seed=_seed("genesis"),
-                                           language_peer=language_peer)
+        self.central = self._build_node("genesis", frechet_mean(births), num_layers, coordizer, _cen_dev,
+                                        _seed("genesis"), is_central=True, language_peer=language_peer)
         self.central.ensure_loaded()
         # OCEAN — the autonomic regulator. It OBSERVES every faculty's telemetry and regulates the one
         # that needs it (fires that faculty's OWN sleep/dream/mushroom). Internal autonomic oversight,
@@ -86,6 +86,28 @@ class JointConstellation:
         self._step_count: int = 0
         self._coordizer_path: str | None = None
         self.coordizer = coordizer
+
+    def _build_node(self, role: str, birth: "np.ndarray", num_layers: int, coordizer: Any,
+                    device: str | None, seed: int, *, is_central: bool, language_peer: Any = None) -> Any:
+        """Build ONE constellation node from the selected ARM. ``gk`` → the qigkernels deep Kernel
+        (``GenesisKernelTarget``, node-ready: it already exposes run_protocol + basin coupling hooks + M).
+        ``geo``/``hybrid`` plug a different substrate into the SAME node slot, but that substrate must first
+        gain the constellation-node contract (geo node-parity, WS3) — until then they raise a clear,
+        user-facing error rather than silently building a node Ocean can't regulate and ``couple_step``
+        can't read. ``hetero`` = gk central + geo faculties."""
+        arm = self.arm_mode
+        sub = ("gk" if is_central else "geo") if arm == "hetero" else arm
+        if sub == "gk":
+            from ..targets.genesis_kernel import GenesisKernelTarget
+            return GenesisKernelTarget(num_layers=num_layers, role=role, basin_template=birth,
+                                       coordizer=coordizer, device=device, seed=seed,
+                                       language_peer=language_peer if is_central else None)
+        if sub in ("geo", "hybrid"):
+            raise NotImplementedError(
+                f"constellation arm {arm!r} needs the {sub!r} node-parity build (WS3/WS4): the geo/hybrid "
+                f"substrate must expose the node contract (run_protocol + _basin_history + _basin_ref) before "
+                f"it can couple + be Ocean-regulated. Only 'gk' is node-ready today.")
+        raise ValueError(f"unknown constellation arm {arm!r} (expected gk|geo|hybrid|hetero)")
 
     def _live_basin(self, kernel: Any) -> np.ndarray | None:
         """The kernel's current Δ⁶³ basin (64-dim), reduced from its last output basin; None if the
