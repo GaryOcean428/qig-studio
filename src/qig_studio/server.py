@@ -121,6 +121,24 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     except PurityGateError as exc:
         app.state.purity = f"FAILED: {exc}"
         raise
+    # VERSION-STALENESS GATE (supply-chain hygiene; council-ratified Devin #1). Offline WARN — NOT fail: the
+    # dev tree runs editable submodules ahead of any pin. If a PUBLISHED (PyPI-pinned) package is below its
+    # floor, log it so "training silently started on stale wheels" is VISIBLE at boot (the live bug it caught
+    # — qig-compute 0.9.1 vs 0.9.2 / qig-warp 0.6.4 vs 0.6.5 — is already fixed; this keeps it from recurring).
+    import importlib.metadata as _md
+    _floors = {"qig-compute": (0, 9, 2), "qig-warp": (0, 6, 5)}
+    app.state.versions = {}
+    for _pkg, _floor in _floors.items():
+        try:
+            _inst = _md.version(_pkg)
+            _it = tuple(int(x) for x in _inst.split("+")[0].split(".")[:3])
+            _stale = _it < _floor
+            app.state.versions[_pkg] = {"installed": _inst, "floor": ".".join(map(str, _floor)), "stale": _stale}
+            if _stale:
+                print(f"⚠️  STALE WHEEL: {_pkg} {_inst} < floor {'.'.join(map(str, _floor))} — run "
+                      f"`uv sync --all-extras` (training on stale wheels; council Devin-#1 boot gate)", flush=True)
+        except Exception:  # noqa: BLE001 — absent ≠ stale
+            app.state.versions[_pkg] = {"installed": None, "stale": False}
     app.state.registry = default_registry(
         default_target=settings.default_target,
         kernel_checkpoint=settings.kernel_checkpoint,
