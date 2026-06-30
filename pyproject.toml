@@ -70,7 +70,10 @@ packages = ["src/qig_studio"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-q"
+# Skip 'slow' tests (those that TRAIN kernels — minutes on CPU) by default so the suite stays fast; the
+# REAL avenue result comes from a GPU run, NOT a tiny CPU test. Run them on demand with: pytest -m slow
+addopts = "-q -m 'not slow'"
+markers = ["slow: trains real kernels (minutes); opt-in only — run with -m slow"]
 
 [tool.ruff]
 line-length = 110

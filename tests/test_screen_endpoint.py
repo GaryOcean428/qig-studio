@@ -31,6 +31,7 @@ def _events(resp) -> list[dict]:
     return out
 
 
+@pytest.mark.slow  # trains 4 tiny kernels on CPU — opt-in only; the REAL avenue result comes from a GPU run
 def test_screen_streams_four_configs_with_flipping_active_target(tmp_path, monkeypatch) -> None:
     """POST /screen {layers:2, steps:4} streams a config event per avenue, each setting active_target to
     its neocortex name, and a final ranked (or under-powered) event."""
@@ -74,6 +75,7 @@ def test_screen_streams_four_configs_with_flipping_active_target(tmp_path, monke
     assert "uniform_dFR_floor" in payload
 
 
+@pytest.mark.slow  # trains kernels on CPU — opt-in only
 def test_screen_writes_runs_json(tmp_path, monkeypatch) -> None:
     """The screen persists runs/screen_<date>.json with the configs + ranking."""
     monkeypatch.setenv("QIG_STUDIO_LIVE_PATH", str(tmp_path / "live.json"))
@@ -99,6 +101,7 @@ def test_screen_writes_runs_json(tmp_path, monkeypatch) -> None:
     assert "ranking" in out and "underpowered" in out
 
 
+@pytest.mark.slow  # trains kernels on CPU — opt-in only
 def test_screen_live_channel_reflects_each_config(tmp_path, monkeypatch) -> None:
     """During /screen the shared live channel's current.source reflects the live config (coherent
     telemetry — the whole point). The LAST config to train owns the final current record."""
