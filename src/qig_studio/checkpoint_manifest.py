@@ -34,11 +34,15 @@ def register_coordizer(file_path: str | Path, notes: str = "") -> None:
     entry: dict[str, Any] = {"file": p.name, "notes": notes}
     try:
         data = json.loads(p.read_text())
-        meta = data.get("metadata", {})
+        meta = data.get("metadata", {}) or {}
+        # target_vocab_size is at the TOP LEVEL of the coordizer JSON (not under metadata); the model's
+        # actual vocab = target + the registered special/geo tags (= len(coordizer.vocab) at train time).
+        tv = data.get("target_vocab_size", meta.get("target_vocab_size"))
+        ntags = len(data.get("special_tokens", {})) if isinstance(data.get("special_tokens"), dict) else 0
         entry.update({
             "created_utc": meta.get("created_utc"),
-            "target_vocab": meta.get("target_vocab_size"),
-            "actual_vocab": meta.get("actual_vocab_size"),
+            "target_vocab": tv,
+            "actual_vocab": (tv + ntags if isinstance(tv, int) else meta.get("actual_vocab_size")),
             "corpus_hash": meta.get("corpus_hash"),
             "git_commit": meta.get("git_commit"),
         })
@@ -166,12 +170,23 @@ def get_coordizer_for_vocab(vocab: int) -> Path | None:
     should load the coordizer the active kernel was TRAINED on — matched by vocab — not the latest by date.
     Matches ``actual_vocab`` (trained vocab incl. the 4 geo tags) OR ``target_vocab``. The caller falls back
     to ``get_latest_coordizer()`` when no match exists (then the UI's mismatch flag is genuinely correct)."""
+    import re
     base = _coordizer_manifest_path().parent
     for c in list_coordizer_checkpoints():
-        if vocab in (c.get("actual_vocab"), c.get("target_vocab")):
-            p = base / str(c.get("file", ""))
-            if p.exists():
-                return p
+        p = base / str(c.get("file", ""))
+        if not p.exists():
+            continue
+        tv = c.get("actual_vocab") or c.get("target_vocab")
+        if tv is None:                       # manifest lacks vocab (pre-fix registration) → read file HEAD
+            try:
+                with p.open() as fh:
+                    m = re.search(r'"target_vocab_size"\s*:\s*(\d+)', fh.read(400))
+                tv = int(m.group(1)) if m else None
+            except Exception:                # noqa: BLE001
+                tv = None
+        # the model's vocab = target_vocab_size + the (≤8) registered geo/special tags; allow that offset
+        if tv is not None and abs(int(vocab) - int(tv)) <= 8:
+            return p
     return None
 
 
