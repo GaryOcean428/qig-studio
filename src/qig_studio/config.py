@@ -55,10 +55,34 @@ class Settings:
         port = int(os.environ.get("QIG_STUDIO_PORT", "8800"))
         # Default to the REAL trained kernel (not mock): resolve via manifest/symlink so the
         # latest dated/versioned checkpoint is always picked up automatically.
-        from .checkpoint_manifest import get_latest_coordizer, get_latest_kernel_ckpt
-        _latest_coord = get_latest_coordizer()
-        _coordizer = str(_latest_coord) if _latest_coord else "../qig-coordizer/checkpoints/coordizer_latest.json"
+        import json
+        from .checkpoint_manifest import (get_coordizer_for_vocab, get_latest_coordizer,
+                                           get_latest_kernel_ckpt)
         _latest_kc = get_latest_kernel_ckpt()
+        # Resolve the coordizer to MATCH the loaded kernel (fixes the '✗ WRONG coordizer' auto-load bug,
+        # where the latest-BY-DATE coordizer mispaired with a kernel of a different vocab — e.g. a 100k
+        # kernel against a freshly-built 32k coordizer). The kernel ckpt records the exact coordizer_path it
+        # trained on (and its vocab_size) in constellation.json: honour that, else vocab-match, else latest.
+        _kc_coord: str | None = None
+        _kc_vocab: int | None = None
+        _kc_cp: str | None = None
+        if _latest_kc is not None:
+            try:
+                _meta = json.loads((_latest_kc / "constellation.json").read_text()).get("metadata", {})
+                _kc_vocab = _meta.get("vocab_size")
+                _kc_cp = _meta.get("coordizer_path")
+            except Exception:  # noqa: BLE001 — best-effort; fall through to vocab-match / latest
+                pass
+        # PREFER the vocab-MATCH (reads the actual coordizer file's vocab — reliable) over the kernel's
+        # recorded coordizer_path, which is often a 'coordizer_latest.json' SYMLINK that has since DRIFTED to
+        # a different-vocab coordizer (the exact mispairing this fixes — a 100k kernel vs the latest 32k).
+        if isinstance(_kc_vocab, int):
+            _m = get_coordizer_for_vocab(_kc_vocab)
+            _kc_coord = str(_m) if _m else None
+        if _kc_coord is None and _kc_cp and _P(_kc_cp).exists():
+            _kc_coord = _kc_cp
+        _latest_coord = _P(_kc_coord) if _kc_coord else get_latest_coordizer()
+        _coordizer = str(_latest_coord) if _latest_coord else "../qig-coordizer/checkpoints/coordizer_latest.json"
         _genesis_ckpt = str(_latest_kc / "kernels" / "genesis.pt") if _latest_kc else None
         _const_ckpt = str(_latest_kc) if _latest_kc else None
         return cls(
