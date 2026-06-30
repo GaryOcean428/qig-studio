@@ -146,7 +146,8 @@ def default_registry(
     # The INTEGRATED MIND — the whole JointConstellation (genesis-central + Core-8 faculties + Ocean) as one
     # interactive target. Shares the coordizer + Qwen boundary peer; restores the trained joint_mind ckpt.
     # This is the default brain: UI Train/Chat operate on the coupled whole, per-kernel telemetry is live.
-    r.register(JointMindTarget(coordizer=coordizer, checkpoint_root=constellation_checkpoint,
+    r.register(JointMindTarget(coordizer=coordizer, coordizer_path=genesis_coordizer_checkpoint,
+                               checkpoint_root=constellation_checkpoint,
                                num_layers=genesis_num_layers, device=device, language_peer=qwen_peer))
     r.register(KernelTarget(checkpoint=kernel_checkpoint, device=device))
     r.register(ConstellationTarget(checkpoint=constellation_checkpoint, device=device))

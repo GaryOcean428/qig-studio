@@ -712,6 +712,26 @@ async def post_stasis(req: StasisRequest, _: None = Depends(verify_key)) -> dict
     return {"stasis": set_stasis(req.on, req.reason)}
 
 
+# --- Surgical train-stop (NOT the global STASIS halt) ------------------------------------------------
+# STASIS halts EVERYTHING (chat/train/protocol/life-loop) for power-off. The PI also needs to stop ONLY a
+# live training run from the UI without halting the mind. This in-memory flag is set by POST /train/stop and
+# polled each step by the /train loop, which then breaks cleanly (checkpoint preserved, exactly like the
+# qig-warp early-stop) while chat, autonomic regulation and the life-loop keep running.
+_TRAIN_STOP = {"flag": False}
+
+
+def _clear_train_stop() -> None:
+    _TRAIN_STOP["flag"] = False
+
+
+@app.post("/train/stop")
+async def post_train_stop(_: None = Depends(verify_key)) -> dict[str, Any]:
+    """Stop the in-session training run at the next step boundary (surgical — the mind stays awake; chat,
+    autonomic regulation and the life-loop continue). Distinct from STASIS, which halts everything."""
+    _TRAIN_STOP["flag"] = True
+    return {"stopping": True}
+
+
 class ReviewRequest(BaseModel):
     topic: str = ""        # optional explicit passage; empty → pick from the knowledge curriculum
     turns: int = 3         # how many discussion turns (nemotron asks → kernel answers → nemotron follows up)
@@ -869,6 +889,7 @@ async def train(req: TrainRequest, _: None = Depends(verify_key)) -> StreamingRe
         if not t.is_available():
             yield _sse({"type": "error", "error": f"target '{t.name}' unavailable"})
             return
+        _clear_train_stop()       # fresh run: discard any stop request left from a previous run
         provider = CurriculumProvider(t.loss_regime, curriculum_dir=app.state.settings.curriculum_dir)
         is_language = t.loss_regime == LossRegime.LANGUAGE
         # PURE CURRICULUM TRAINING — the kernel ABSORBS the curriculum. NO coach here: the nemotron
@@ -970,6 +991,10 @@ async def train(req: TrainRequest, _: None = Depends(verify_key)) -> StreamingRe
                 sweeps += 1
                 learned_this_sweep = any_unlearned = 0
                 for prompt in passages:
+                    if _TRAIN_STOP["flag"]:                    # UI kill — stop cleanly, mind stays awake
+                        yield _sse({"type": "stopped", "step": trained, "reason": "stop requested (UI)"})
+                        stop = True
+                        break
                     if trained >= budget:
                         break
                     if mastery.is_learned(central_name, prompt):
@@ -1024,6 +1049,9 @@ async def train(req: TrainRequest, _: None = Depends(verify_key)) -> StreamingRe
                     return
                 td, res, sample, cov = rec["td"], rec["res"], rec["sample"], rec["coverage"]
                 yield _sse(_step_event(step, req.steps, rec["prompt"], td, sample, cov))
+                if _TRAIN_STOP["flag"]:                        # UI kill — stop cleanly, mind stays awake
+                    yield _sse({"type": "stopped", "step": step, "reason": "stop requested (UI)"})
+                    break
                 if req.early_stop and _WARP_AVAILABLE:
                     metric = res.telemetry.phi if not is_language else res.telemetry.loss
                     if metric is not None:
@@ -1037,7 +1065,20 @@ async def train(req: TrainRequest, _: None = Depends(verify_key)) -> StreamingRe
                             break
         if mastery is not None:
             mastery.save()
+        # PERSIST the trained genesis to a VOCAB-NAMED, dated/versioned lineage (genesis-{arm}-{vocab}_{date}
+        # _v{n}) + register it latest — so the output corresponds to its vocab and the next boot reloads THIS
+        # mind against a vocab-matched coordizer. Runs on done / stop / early-stop (all reach here). Only the
+        # integrated mind self-persists from the UI; single neocortex configs are checkpointed by the scripts.
+        saved_ckpt = None
+        if t.name == "mind" and hasattr(t, "save_checkpoint"):
+            try:
+                saved_ckpt = await asyncio.to_thread(t.save_checkpoint)
+            except Exception as exc:  # noqa: BLE001 — a save failure must never break the stream
+                yield _sse({"type": "warn", "warn": f"genesis checkpoint save failed: {exc}"})
         done = {"type": "done", "final": t.telemetry().to_dict()}
+        if saved_ckpt:
+            from pathlib import Path as _Pth
+            done["saved_checkpoint"] = _Pth(saved_ckpt).name
         if mastery is not None:
             done["coverage"] = mastery.coverage(central_name, curr_total)
         yield _sse(done)

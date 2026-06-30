@@ -73,6 +73,24 @@ def register_coordizer(file_path: str | Path, notes: str = "") -> None:
         pass  # cross-device or permissions — symlink is a convenience, not critical
 
 
+def versioned_ckpt_root(stem: str, vocab: int, base_dir: str | Path = "runs/checkpoints") -> str:
+    """Build a NAMED / DATED / VERSIONED constellation checkpoint root that CARRIES THE VOCAB, so a saved
+    mind is unambiguous about the coordizer it trained on — ``genesis-gk-32004_20260630_v1``. This is the
+    structural fix for the '✗ WRONG coordizer' vocab-mismatch class (a 100k kernel mispaired with a 32k
+    coordizer): the vocab is in the name, and ``config.from_env`` vocab-matches the coordizer to it.
+
+    Auto-increments ``_v{n}`` so a same-day rebuild never clobbers a prior lineage; the 3-checkpoint
+    rotation buffer in :meth:`JointConstellation.save_checkpoint` prunes OLD generations WITHIN a lineage."""
+    from datetime import datetime
+    date_tag = datetime.now().strftime("%Y%m%d")
+    base = f"{stem}-{vocab}_{date_tag}"
+    d = Path(base_dir)
+    n = 1
+    while (d / f"{base}_v{n}").exists():
+        n += 1
+    return str(d / f"{base}_v{n}")
+
+
 def register_kernel_ckpt(dir_path: str | Path, notes: str = "") -> None:
     """Register a kernel checkpoint directory in the manifest and update the ``latest`` pointer."""
     p = Path(dir_path).resolve()

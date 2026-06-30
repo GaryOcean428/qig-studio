@@ -32,16 +32,22 @@ class JointMindTarget(TrainingTarget):
         self,
         *,
         coordizer: Any = None,
+        coordizer_path: str | None = None,
         checkpoint_root: str | None = None,
         num_layers: int = 8,
         device: str | None = None,
         language_peer: Any = None,
+        arm_mode: str = "gk",
     ) -> None:
         self._coordizer = coordizer
+        self._coordizer_path = coordizer_path     # the coordizer FILE path → recorded in the ckpt metadata
         self._ckpt_root = checkpoint_root or "runs/checkpoints/joint_mind"
         self._num_layers = num_layers
         self._device = device or "cpu"
         self._language_peer = language_peer
+        # The constellation ARM (the substrate every node is built from). "gk" = qigkernels (the only arm
+        # today); geo/hybrid/hetero land in WS4. Drives the VOCAB-named save lineage genesis-{arm}-{vocab}.
+        self.arm_mode = arm_mode
         self._mind: Any = None
         self._last = TelemetrySnapshot(extra={"target": "mind"})
 
@@ -102,6 +108,28 @@ class JointMindTarget(TrainingTarget):
             except Exception:  # noqa: BLE001 — mastery is best-effort, never break the step
                 pass
         return StepResult(text="", telemetry=self._last)
+
+    def save_checkpoint(self, root: str | None = None) -> str:
+        """Persist the WHOLE trained mind (9 kernels + coupled basins) to a NAMED / DATED / VERSIONED,
+        VOCAB-CARRYING root — ``genesis-{arm}-{vocab}_{date}_v{n}`` — so the genesis output corresponds to
+        its vocab (the PI's requirement; the structural fix for the '✗ WRONG coordizer' mismatch). Registers
+        it as the latest kernel checkpoint (manifest + symlink) so the NEXT boot reloads THIS mind against a
+        vocab-matched coordizer. Returns the root path. ``root`` overrides the auto-named lineage."""
+        self.ensure_loaded()
+        from ..checkpoint_manifest import register_kernel_ckpt, versioned_ckpt_root
+        vocab = int(getattr(self._mind.central, "vocab_size", 0) or 0)
+        if root is None:
+            root = versioned_ckpt_root(f"genesis-{self.arm_mode}", vocab)
+        from pathlib import Path
+        Path(root).mkdir(parents=True, exist_ok=True)
+        if self._coordizer_path:                    # record the exact coordizer file (hash + path → metadata)
+            self._mind._coordizer_path = self._coordizer_path
+        self._mind.save_checkpoint(root)            # whole mind + the 3-checkpoint rotation buffer
+        try:
+            register_kernel_ckpt(root, notes=f"genesis {self.arm_mode}, vocab {vocab}")
+        except Exception:  # noqa: BLE001 — a manifest write failure must not void a good checkpoint
+            pass
+        return root
 
     # ---- per-kernel inner state (the UI selector + /mind/kernels) -------------------------------------
     def kernels_state(self) -> list[dict]:

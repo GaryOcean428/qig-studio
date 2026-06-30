@@ -228,7 +228,7 @@
     <h2>Train · live <span id="liveDot" class="dot idle" title="live training status"></span></h2>
     <div class="row">
       <div style="flex:0 0 110px"><label>max steps</label><input id="steps" type="number" value="200" min="1" max="9000"/></div>
-      <div style="display:flex;align-items:end"><button class="primary" id="trainBtn" style="width:100%">▶ Train</button></div>
+      <div style="display:flex;align-items:end;gap:.3rem;flex:1"><button class="primary" id="trainBtn" style="flex:1">▶ Train</button><button class="btn" id="stopTrainBtn" style="flex:0 0 auto" disabled title="stop THIS training run at the next step — the mind stays awake (chat/autonomic/life-loop keep running). Not STASIS.">⏹ Stop</button></div>
     </div>
     <div class="hint">Train is automatic: it <b>skips passages the kernel has already learned</b>, trains what's
       left, and <b>stops on its own</b> when a full sweep adds nothing new (more training won't help at this
@@ -606,6 +606,11 @@ async function sendChat(){
   }catch(e){ clearInterval(tmr); wait.remove(); clog("err","chat failed: "+e); }
 }
 $("trainBtn").addEventListener("click", runTrain);
+$("stopTrainBtn").addEventListener("click", async ()=>{
+  // Surgical stop of THIS training run (POST /train/stop) — NOT stasis. The loop breaks at the next step.
+  $("stopTrainBtn").disabled=true; $("liveStatus").textContent="stopping training at the next step…";
+  try{ await fetch("/train/stop",{method:"POST"}); }catch(e){ alog("reg","stop failed: "+e); }
+});
 $("evalBpbBtn").addEventListener("click", async ()=>{
   const out=$("evalBpbOut"); out.textContent="running held-out eval…";
   try{
@@ -624,7 +629,7 @@ async function runTrain(){
   // Train is SMART by default — no knobs for the user to guess: skip already-learned passages, capture what's
   // left, auto-stop when a sweep adds nothing new. Thresholds use the kernel's own novelty + server defaults.
   const body={steps, skip_learned:true, early_stop:true, mastery:true};
-  $("trainBtn").disabled=true;
+  $("trainBtn").disabled=true; $("stopTrainBtn").disabled=false;
   $("liveStatus").textContent = "training — skipping learned, capturing what's left…";
   try{
     const r=await fetch("/train",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(body)});
@@ -647,6 +652,7 @@ async function runTrain(){
           if(ev.mode==="capture") $("liveStatus").textContent=`capture · sweep ${ev.sweep} · trained ${ev.step} · skipped ${ev.skipped} · learned ${ev.coverage?ev.coverage.learned:"?"}/${ev.coverage?ev.coverage.total:"?"}`;
         }
         else if(ev.type==="early_stop"){ alog("reg",`⏹ early-stop @ step ${ev.step}: ${ev.reason} (${ev.lever})`); $("liveStatus").textContent=`converged — early-stopped at step ${ev.step} (more training won't help)`; }
+        else if(ev.type==="stopped"){ alog("reg",`⏹ stopped @ step ${ev.step} (${ev.reason})`); $("liveStatus").textContent=`stopped at step ${ev.step} — the mind is still awake`; }
         else if(ev.type==="capture_complete"){ alog("reg",`✓ capture complete: ${ev.reason} (${ev.sweeps} sweeps, ${ev.skipped} skips)`); $("liveStatus").textContent=`✓ full capture — ${ev.coverage.learned}/${ev.coverage.total} learned`; renderMastery(ev.coverage,"genesis"); }
         else if(ev.type==="capture_stalled"){ alog("reg",`⚠ capture stalled: ${ev.reason}`); $("liveStatus").textContent=`capture stalled at ${ev.coverage.learned}/${ev.coverage.total} — capacity ceiling`; renderMastery(ev.coverage,"genesis"); }
         else if(ev.type==="error"){ const h=document.createElement("div"); h.className="harm crit"; h.textContent="error: "+ev.error; $("liveStream").appendChild(h); }
@@ -654,7 +660,7 @@ async function runTrain(){
       }
     }
   }catch(e){ $("liveStatus").textContent="train failed: "+e; }
-  finally{ $("trainBtn").disabled=false; }
+  finally{ $("trainBtn").disabled=false; $("stopTrainBtn").disabled=true; }
 }
 // coach review & discuss (Phase 2 — SEPARATE from training): nemotron reviews a curriculum passage and
 // converses with the kernel. Shows the real dialogue (nemotron asks → kernel answers → nemotron follows up).
