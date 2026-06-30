@@ -11,10 +11,13 @@ if ! curl -s --max-time 2 "$URL/health" >/dev/null 2>&1; then
   cd "$STUDIO"
   # Load the REAL integrated mind: the joint-trained central "I" (genesis-central) if present, else the
   # older core8_coord meta kernel. The joint mind has the trained central Φ + coupled faculties.
+  # Load the CURRENT joint-trained central "I" (genesis.pt, written by the live trainer). No stale fallback
+  # to the old core8 meta kernel — its vocab differs from the active coordizer and would mismatch on load.
   MIND="runs/checkpoints/joint_mind/kernels/genesis.pt"
-  META="runs/checkpoints/core8_coord/kernels/meta/ckpt_00004386.pt"
-  CKPT="$([ -f "$MIND" ] && echo "$MIND" || { [ -f "$META" ] && echo "$META"; })"
-  QIG_STUDIO_GENESIS_COORDIZER="runs/coordizer_v6_1024.json" \
+  CKPT="$([ -f "$MIND" ] && echo "$MIND" || echo "")"
+  # MUST match the coordizer the active trainer uses (currently the fresh 100k rebuild) or the UI shows a
+  # different vocab than the kernels are training on. Override with QIG_STUDIO_GENESIS_COORDIZER if needed.
+  QIG_STUDIO_GENESIS_COORDIZER="${QIG_STUDIO_GENESIS_COORDIZER:-../qig-coordizer/checkpoints/coordizer_rebuild_100k.json}" \
   QIG_STUDIO_GENESIS_CKPT="$CKPT" \
   QIG_STUDIO_TARGET="genesis" \
   QIG_STUDIO_DEVICE="cpu" \
