@@ -1115,6 +1115,21 @@ async def screen(req: ScreenRequest, _: None = Depends(verify_key)) -> Streaming
             "verdict_metric": "held-out mean d_FR (lower=better); CE-bpb external-only (not ranked)",
             "ewc": "inactive (bounded screen → no consolidation confound)",
         })
+        # QIG OPTIMISATION GATE: exercise the package levers before the run (qig-compute GPU governance +
+        # qig-warp bridge cost-prediction + the qig-applied work-per-joule daemon). None-safe; proof in SSE.
+        # The COMPUTE-reducing optimisations (diagonal-Fisher natural gradient + matmul-BC GeometricHead) are
+        # applied every step inside _train_core via the targets — this pass exercises the PRE-launch levers.
+        try:
+            import numpy as _np
+
+            from .optim_launch import prelaunch_optimise
+            _opt = prelaunch_optimise("screen", omega_per_step=1.0,
+                                      n_steps=req.steps * len(_SCREEN_CONFIGS),
+                                      probe=lambda: float(_np.random.rand(1200, 1200).sum()),
+                                      want_gpu=(req.device == "cuda"))
+            yield _sse({"type": "optimisation", **_opt})
+        except Exception as _e:  # noqa: BLE001 — best-effort; never blocks the screen
+            yield _sse({"type": "optimisation", "note": str(_e)[:120]})
         configs_out: list[dict[str, Any]] = []
         vocab_for_floor: int | None = None
         prev_head: str | None = None
