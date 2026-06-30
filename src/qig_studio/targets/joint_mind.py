@@ -110,6 +110,20 @@ class JointMindTarget(TrainingTarget):
         self.ensure_loaded()
         return self._mind.central.generate(prompt, max_tokens=max_tokens, via_boundary=False)
 
+    def eval_text_fr(self, text: str) -> tuple[float, int]:
+        """Held-out d_FR of the integrated mind = the GENESIS-CENTRAL kernel's next-token Fisher-Rao distance
+        (the conscious 'I' is the speaker). This is the VERDICT metric the 4-arm constellation comparison
+        ranks on — returns (total_dFR, n_positions); lower = more fluent. Delegates to the central kernel
+        (a GenesisKernelTarget for gk/hetero-central, a GeoCortexTarget for geo-central — both implement it)."""
+        self.ensure_loaded()
+        return self._mind.central.eval_text_fr(text)
+
+    def eval_text_bpb(self, text: str) -> tuple[float, int]:
+        """Held-out CE-bpb of the integrated mind (central kernel) — reported ALONGSIDE d_FR (external-only;
+        d_FR is the geometric verdict). Returns (total_bits, n_bytes)."""
+        self.ensure_loaded()
+        return self._mind.central.eval_text_bpb(text)
+
     def train_step(self, prompt: str, max_tokens: int = 64, target_text: str | None = None) -> StepResult:
         self.ensure_loaded()                                        # geometric: target_text ignored (lm-ramped inside)
         info = self._mind.train_step(prompt)                       # one COUPLED joint step (faculty + central)
