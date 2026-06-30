@@ -43,7 +43,17 @@ class JointMindTarget(TrainingTarget):
         self._coordizer_path = coordizer_path     # the coordizer FILE path → recorded in the ckpt metadata
         self._ckpt_root = checkpoint_root or "runs/checkpoints/joint_mind"
         self._num_layers = num_layers
-        self._device = device or "cpu"
+        # AUTO-DETECT the GPU (match the single-kernel targets): the integrated mind trains on cuda when a
+        # card is present (central-on-GPU residency, faculties round-robin on CPU — fits the 4GB card), NOT
+        # a hardcoded CPU default. Explicit `device` (or QIG_STUDIO_DEVICE via config) overrides.
+        if device:
+            self._device = device
+        else:
+            try:
+                import torch
+                self._device = "cuda" if torch.cuda.is_available() else "cpu"
+            except Exception:  # noqa: BLE001 — torch absent (light shell) → cpu
+                self._device = "cpu"
         self._language_peer = language_peer
         # The constellation ARM (the substrate every node is built from). "gk" = qigkernels (the only arm
         # today); geo/hybrid/hetero land in WS4. Drives the VOCAB-named save lineage genesis-{arm}-{vocab}.

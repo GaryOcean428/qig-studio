@@ -1178,7 +1178,7 @@ wheels = [
 
 [[package]]
 name = "qig-compute"
-version = "0.9.1"
+version = "0.9.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
@@ -1187,9 +1187,9 @@ dependencies = [
     { name = "scipy", version = "1.18.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
     { name = "threadpoolctl" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/7d/25/fd0f5a08903b70686a58e1c254906ef8601bec881581ba58cdbb45d46fa5/qig_compute-0.9.1.tar.gz", hash = "sha256:64a6c611ea4fd62bb2857b07959b2691e96c2cd4a590db5e7599366a063624a3", size = 276743, upload-time = "2026-06-27T10:49:54.814Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/7f/77/c0ea1424abbd603d3edbb6b59b0830778cbc57f1035df32010f5e10fb3f8/qig_compute-0.9.2.tar.gz", hash = "sha256:3a49d6b178b4909f06b7119134115b151acf3dd48874b235914da3aca48a45da", size = 282669, upload-time = "2026-06-30T15:45:35.885Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/d8/44/0c567c9502d698f1152ef10c3b1da5b21cc6276fcbf4cfcbaca5ee8a8508/qig_compute-0.9.1-py3-none-any.whl", hash = "sha256:8a03307a3269c1f90262b8a1fe7d878dd1ea952ee79e37ef3d97f39f698a4cf6", size = 173613, upload-time = "2026-06-27T10:49:52.777Z" },
+    { url = "https://files.pythonhosted.org/packages/1d/08/f32102ef99dd82b9c99c2bbfc7d0e3b41181bde99f943b6a7fd58288e161/qig_compute-0.9.2-py3-none-any.whl", hash = "sha256:cbe8eceda651c1ec9d286c6578937cb48b034f514dbc390e23541716ccb419e1", size = 177254, upload-time = "2026-06-30T15:45:37.601Z" },
 ]
 
 [[package]]
@@ -1298,11 +1298,11 @@ requires-dist = [
     { name = "pyarrow", marker = "extra == 'data'", specifier = ">=14.0.0" },
     { name = "pydantic", specifier = ">=2.0.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.0.0" },
-    { name = "qig-compute", marker = "extra == 'kernel'", specifier = ">=0.9.1" },
+    { name = "qig-compute", marker = "extra == 'kernel'", specifier = ">=0.9.2" },
     { name = "qig-coordizer", marker = "extra == 'kernel'", editable = "../qig-coordizer" },
     { name = "qig-core", editable = "../qig-core" },
     { name = "qig-geocoding", editable = "../qig-geocoding" },
-    { name = "qig-warp", specifier = ">=0.6.4" },
+    { name = "qig-warp", specifier = ">=0.6.5" },
     { name = "qigkernels", marker = "extra == 'kernel'", editable = "../qigkernels" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.1.0" },
     { name = "textual", marker = "extra == 'tui'", specifier = ">=0.50.0" },
@@ -1313,15 +1313,15 @@ provides-extras = ["tui", "kernel", "dev", "data"]
 
 [[package]]
 name = "qig-warp"
-version = "0.6.4"
+version = "0.6.5"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
     { name = "numpy", version = "2.5.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/9f/80/9da405adf181e3e7b954dc792ade1245de55d82e987f5090834befa6987a/qig_warp-0.6.4.tar.gz", hash = "sha256:ea870eb22800215f16942cec278d96aed90c852bbcb20cb3644925eb290b064b", size = 105775, upload-time = "2026-06-27T10:41:42.814Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/bf/ac/37914063ab502905292d241ff2f8e510fefc20e11b6890d9fe32380ba100/qig_warp-0.6.5.tar.gz", hash = "sha256:f0db77f0d5eefb47629c7bf1b58a70a86adaa75fc5b48ffc9dea617205f66eaf", size = 106016, upload-time = "2026-06-30T15:46:58.991Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/ff/c3/aa5037ccd0e72ef63a4f21081beb2a5c34723732235731e929ce1d408177/qig_warp-0.6.4-py3-none-any.whl", hash = "sha256:00c1998e7abfd8a76af1fbc1cb4e2da2f74aca0c01ef17546dc059934a286084", size = 54921, upload-time = "2026-06-27T10:41:41.25Z" },
+    { url = "https://files.pythonhosted.org/packages/df/f6/4826ce4ab3ca58024ce0e4e2a88d6933dae19281e8eb5e8e3aa60e82559f/qig_warp-0.6.5-py3-none-any.whl", hash = "sha256:040b2afb7c90e402ff6863dd06f56f22cf7af3d504060354a05eac1621e4bdca", size = 55273, upload-time = "2026-06-30T15:47:00.355Z" },
 ]
 
 [[package]]

@@ -320,8 +320,10 @@ class CheckpointSelectRequest(BaseModel):
 async def list_checkpoints() -> dict[str, Any]:
     from .checkpoint_manifest import list_coordizer_checkpoints, list_kernel_checkpoints
     s = getattr(app.state, "settings", None)
-    active_coord = Path(getattr(s, "genesis_coordizer_checkpoint", "")).name if s else None
-    active_kernel = Path(getattr(s, "constellation_checkpoint", "")).name if s else None
+    _cz = getattr(s, "genesis_coordizer_checkpoint", None) if s else None
+    _kc = getattr(s, "constellation_checkpoint", None) if s else None   # None on a FRESH boot (no kernel ckpt)
+    active_coord = Path(_cz).name if _cz else None
+    active_kernel = Path(_kc).name if _kc else None
     return {
         "coordizer": {
             "active": active_coord,
@@ -867,19 +869,22 @@ async def _train_core(
     ui_live = LiveLog()                       # the SAME shared live channel both endpoints write
     ui_prev_db: float | None = None           # identity-drift velocity tracking (harm parity)
 
-    async def _sample_if_due(due: bool) -> dict | None:
+    async def _sample_if_due(due: bool, stimulus: str | None = None) -> dict | None:
         if not (sample and due):
             return None
         try:
             # the KERNEL's RAW voice (own_voice, not the Qwen boundary peer) — honest training telemetry.
+            # Generate FROM the current stimulus (the passage it just learned) so the PI sees the kernel's
+            # RESPONSE to what it's learning, not an answer to a fixed probe. Falls back to the probe.
             fn = getattr(target, "own_voice", None) or target.generate
-            gr = await _run_target(fn, "In one sentence, what are you learning?", max_tokens)
+            gr = await _run_target(fn, stimulus or "In one sentence, what are you learning?", max_tokens)
             sx = gr.telemetry.extra or {}
             return {"output": gr.text, "kernel_voice": sx.get("kernel_voice")}
         except Exception:  # noqa: BLE001 — a sample failure must not break training
             return None
 
-    def _write_live(step: int, total: int | None, td: dict, samp: dict | None, phi) -> None:
+    def _write_live(step: int, total: int | None, td: dict, samp: dict | None, phi,
+                    stimulus: str | None = None) -> None:
         nonlocal ui_prev_db
         try:
             exp_d = _experience(td, _phi_hist()).to_dict()
@@ -893,6 +898,7 @@ async def _train_core(
                 central_phi=phi, min_pairwise_fr=None, drift_velocity=_dv,
                 faculty_phi={target.name: phi} if phi is not None else {},
                 own_voice=(samp or {}).get("output") if samp else None,
+                stimulus=stimulus,                      # the FULL training passage (UNtruncated) the step learned
                 coordizer_vocab=getattr(target, "vocab_size", None)))
         except Exception:  # noqa: BLE001 — a live-log failure must not break training
             pass
@@ -908,12 +914,12 @@ async def _train_core(
         td = res.telemetry.to_dict()
         ex = td.get("extra") or {}
         cov = record_cb(prompt, ex, step) if record_cb is not None else None
-        samp = await _sample_if_due(step % sample_every == 0 or step == steps)
+        samp = await _sample_if_due(step % sample_every == 0 or step == steps, stimulus=prompt)
         # YIELD BEFORE the live-write so the caller's SSE step event is emitted in the same relative order
         # as the legacy /train loop (event → live-write); on resume we write the shared live record.
         yield {"step": step, "total": steps, "prompt": prompt, "td": td, "res": res,
                "sample": samp, "phi": res.telemetry.phi, "coverage": cov}
-        _write_live(step, steps, td, samp, res.telemetry.phi)
+        _write_live(step, steps, td, samp, res.telemetry.phi, stimulus=prompt)   # full passage → live record
         await asyncio.sleep(0)  # cooperative yield
 
 
@@ -957,6 +963,26 @@ async def train(req: TrainRequest, _: None = Depends(verify_key)) -> StreamingRe
                      f"every {sample_every} steps. Nemotron review/discussion is the SEPARATE 'Coach' phase."),
             "early_stop": req.early_stop and _WARP_AVAILABLE,
         })
+        # QIG OPTIMISATION GATE (same as /screen): exercise the package levers before the run — qig-compute
+        # GPU governance + qig-warp bridge cost-prediction + the work-per-joule daemon. The compute-REDUCING
+        # levers (diagonal-Fisher natural gradient, matmul-BC GeometricHead, per-step Ocean regulation) run
+        # inside the loop via the targets; this exercises the PRE-launch levers. None-safe; proof in the SSE.
+        try:
+            import numpy as _np
+
+            from .optim_launch import prelaunch_optimise
+            _want_gpu = False
+            try:
+                import torch as _torch
+                _want_gpu = bool(_torch.cuda.is_available())
+            except Exception:  # noqa: BLE001
+                pass
+            _opt = prelaunch_optimise("train", omega_per_step=1.0, n_steps=max(1, req.steps),
+                                      probe=lambda: float(_np.random.rand(1200, 1200).sum()),
+                                      want_gpu=_want_gpu)
+            yield _sse({"type": "optimisation", **_opt})
+        except Exception as _e:  # noqa: BLE001 — best-effort; never blocks training
+            yield _sse({"type": "optimisation", "note": str(_e)[:120]})
         series: list[float] = []
         ui_live = LiveLog()                       # in-session training → the SAME shared live channel
         ui_prev_db: float | None = None           # in-session identity-drift velocity tracking (harm parity)
@@ -978,7 +1004,8 @@ async def train(req: TrainRequest, _: None = Depends(verify_key)) -> StreamingRe
                 mastery.record(role, prompt, ex.get("faculty_surprise"), ex.get("faculty_max_surprise"), step=step)
             return mastery.coverage(central_name, total=curr_total)
 
-        def _write_live(step: int, total: int | None, td: dict, sample: dict | None, phi) -> None:
+        def _write_live(step: int, total: int | None, td: dict, sample: dict | None, phi,
+                        stimulus: str | None = None) -> None:
             nonlocal ui_prev_db
             try:
                 exp_d = _experience(td, _phi_hist()).to_dict()
@@ -992,11 +1019,12 @@ async def train(req: TrainRequest, _: None = Depends(verify_key)) -> StreamingRe
                     central_phi=phi, min_pairwise_fr=None, drift_velocity=_dv,
                     faculty_phi={t.name: phi} if phi is not None else {},
                     own_voice=(sample or {}).get("output") if sample else None,
+                    stimulus=stimulus,                  # the FULL training passage (UNtruncated) the step learned
                     coordizer_vocab=getattr(t, "vocab_size", None)))
             except Exception:  # noqa: BLE001 — a live-log failure must not break training
                 pass
 
-        async def _sample_if_due(due: bool) -> dict | None:
+        async def _sample_if_due(due: bool, stimulus: str | None = None) -> dict | None:
             if not due:
                 return None
             try:
@@ -1005,7 +1033,7 @@ async def train(req: TrainRequest, _: None = Depends(verify_key)) -> StreamingRe
                 # but not the kernel); t.own_voice() is the raw kernel (terse/garbled until truly fluent),
                 # matching the label + the bg trainer. Honest training telemetry, not Qwen's coherence.
                 fn = getattr(t, "own_voice", None) or t.generate
-                gr = await _run_target(fn, "In one sentence, what are you learning?", req.max_tokens)
+                gr = await _run_target(fn, stimulus or "In one sentence, what are you learning?", req.max_tokens)
                 sx = gr.telemetry.extra or {}
                 return {"output": gr.text, "kernel_voice": sx.get("kernel_voice")}
             except Exception:  # noqa: BLE001 — a sample failure must not break training
@@ -1056,10 +1084,10 @@ async def train(req: TrainRequest, _: None = Depends(verify_key)) -> StreamingRe
                     cov = _record(prompt, ex, trained)
                     if mastery.is_learned(central_name, prompt):
                         learned_this_sweep += 1
-                    sample = await _sample_if_due(trained % sample_every == 0)
+                    sample = await _sample_if_due(trained % sample_every == 0, stimulus=prompt)
                     yield _sse(_step_event(trained, curr_total, prompt, td, sample, cov,
                                            {"sweep": sweeps, "skipped": skipped, "mode": "capture"}))
-                    _write_live(trained, curr_total, td, sample, res.telemetry.phi)
+                    _write_live(trained, curr_total, td, sample, res.telemetry.phi, stimulus=prompt)
                     await asyncio.sleep(0)
                 if not any_unlearned:
                     yield _sse({"type": "capture_complete", "reason": "all curriculum passages learned",
