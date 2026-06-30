@@ -104,6 +104,14 @@ class GenesisKernelTarget(TrainingTarget):
         head_mode: str = "geometric",   # OUTPUT READOUT: "geometric" (GeometricHead, −d_FR/τ; no Euclidean
         #                                 nn.Linear) | "linear" (nn.Linear baseline, retained for the A/B)
         head_tau: float = 1.0,          # Gibbs temperature on the −d_FR readout logits (geometric mode)
+        ewc_lambda: float = 20.0,       # EWC stiffness: weight of the wake-time Fisher-protected penalty
+        #                                 lam·Σ F_n·(θ_n−θ*_n)² that anchors past learning. 0 disables EWC.
+        #                                 Tuned for the RELATIVE (normalised, F∈[0,1]) true-Fisher importance:
+        #                                 λ≈10–30 protects robustly (4/5 seeds, no over-regularisation); λ≥100
+        #                                 over-stiffens and can hurt (verified continual-learning sweep).
+        #                                 (the unprotected baseline). Default chosen to be load-bearing on the
+        #                                 ramped fluency loss (~O(phi_weight·lm_weight)) without dominating it;
+        #                                 it only acts once a consolidation has captured the anchor (None-safe).
     ) -> None:
         self.num_layers = num_layers
         # BOUNDARY PEER (P22): the kernel computes its OWN geometry (Φ/κ/identity), then SPEAKS through a
@@ -177,6 +185,16 @@ class GenesisKernelTarget(TrainingTarget):
         self._last_ricci_R: float | None = None
         self._init_checkpoint = checkpoint  # restored at the end of ensure_loaded() (None-safe → fresh)
         self._last_gen_basin: Any = None  # WHAT IT MEANT (last output basin) — for coach-agreement recognition
+        # EWC-FISHER WAKE PROTECTION (continuous learning, no catastrophic forgetting). SHY (in _consolidate)
+        # protects weights ONCE during the sleep downscale; EWC protects PAST learning during ONGOING wake
+        # gradients. Anchor θ* = the consolidated weights, F = the diagonal Fisher importance — both None until
+        # the first consolidation captures them (spine tenet: None-safe everywhere). The wake-time penalty
+        # lam·Σ F_n·(θ_n−θ*_n)² (added in train_step) makes high-Fisher weights resist moving away from θ*.
+        self.ewc_lambda = float(ewc_lambda)
+        self._ewc_anchor: dict[str, Any] | None = None   # θ* — consolidated weights (name → frozen clone)
+        self._ewc_fisher: dict[str, Any] | None = None   # F  — diagonal Fisher importance (name → tensor)
+        from collections import deque as _deque_ewc
+        self._surprise_recent: Any = _deque_ewc(maxlen=32)  # P22 salience: recent d_FR surprises (EWC gate)
         self._last = TelemetrySnapshot(regime="unknown", extra={"target": "genesis", "num_layers": num_layers})
 
     def is_available(self) -> bool:
@@ -903,6 +921,142 @@ class GenesisKernelTarget(TrainingTarget):
         d = float(fisher_rao_distance_simplex(self._basin_history[0][None], cur_basin[None]).item())
         return d / math.pi
 
+    def _recent_surprise(self) -> float:
+        """Mean d_FR surprise (salience) of recent wake experience, normalised to [0,1] by the d_FR
+        ceiling π. The kernel's OWN novelty signal — used to GATE EWC: high-surprise experience is what
+        most needs protecting / consolidating, so it both lifts the consolidation Fisher accumulation and
+        modulates the wake stiffness. Reads from the rolling _surprise_recent buffer (filled each
+        train_step from snap.extra['surprise'] = the language loss = d_FR(predicted, actual), P22). Empty
+        → 0.5 (neutral salience, no modulation either way)."""
+        import math
+
+        buf = getattr(self, "_surprise_recent", None)
+        if not buf:
+            return 0.5
+        return float(min(1.0, (sum(buf) / len(buf)) / math.pi))
+
+    def _ewc_task_fisher(self) -> dict:
+        """The EWC diagonal Fisher of the TASK objective at θ* — F_n = E[(∂L/∂θ_n)²] over replayed wake
+        experience, where L is the SAME wake language loss (d_FR / CE arm) train_step minimises. This is the
+        canonical EWC importance (the Fisher of the loss whose past minima we want to defend), computed in a
+        DEDICATED pass so it is honest even when the role-basin consolidation loss self-cancels (no role →
+        target=cur → zero gradient → the SHY/_consolidate `fisher` dict is all zeros; piggybacking on it
+        would silently give a zero anchor). NO optimiser step here — pure measurement at θ*. None-safe."""
+        import torch
+        import random
+
+        from ..losses import fisher_rao_lm_loss
+
+        fisher = {n: torch.zeros_like(p) for n, p in self._kernel.named_parameters()}
+        if not self._experience:
+            return fisher
+        n_samp = min(len(self._experience), 16)
+        batch = random.sample(self._experience, n_samp) if len(self._experience) > n_samp else list(self._experience)
+        counted = 0
+        from qig_core.torch.geometry_simplex import to_simplex_prob
+        # TRUE Fisher (Pascanu & Bengio), NOT empirical: targets SAMPLED from the model's OWN output
+        # distribution, not the data labels. The empirical grad² AT the data label VANISHES at the task
+        # minimum (grad≈0 → F≈8.7e-12 → a hollow anchor that does NOT protect — verified 1/5-seed). The true
+        # Fisher samples the model's predictions ŷ~p_θ, so ∇log p_θ(ŷ) carries curvature even at convergence
+        # — the correct EWC importance. DETERMINISTIC + low-variance: seed the sampling per kernel-seed (so
+        # the anchor is reproducible) and average over K draws per input (the multinomial variance was what
+        # flickered retention between 3/5 and 4/5 seeds). RNG state saved/restored so training is undisturbed.
+        _rng = torch.get_rng_state()
+        torch.manual_seed(int(self.seed) * 9973 + 17)
+        K = 5
+        for ids in batch:
+            if ids.shape[1] < 2:
+                continue
+            for _ in range(K):
+                self._kernel.zero_grad()
+                logits, _t = self._kernel(ids, return_telemetry=True)
+                with torch.no_grad():
+                    p_out = to_simplex_prob(logits[0])                          # [T, V] per-position dist
+                    sampled = torch.multinomial(p_out.clamp_min(1e-12), 1).squeeze(-1)  # [T] ŷ ~ p_θ
+                    samp_ids = ids.clone()
+                    samp_ids[0, 1:] = sampled[:-1]                              # next-token targets = own ŷ
+                loss = fisher_rao_lm_loss(logits, samp_ids)      # ∇log p_θ(ŷ) — non-vanishing at the minimum
+                if not torch.isfinite(loss):
+                    continue
+                loss.backward()
+                with torch.no_grad():
+                    for n, p in self._kernel.named_parameters():
+                        if p.grad is not None:
+                            fisher[n] += p.grad ** 2              # diagonal Fisher ≈ grad² (QFI first order)
+                counted += 1
+        torch.set_rng_state(_rng)
+        self._kernel.zero_grad()
+        if counted > 0:
+            for n in fisher:
+                fisher[n] /= float(counted)
+        return fisher
+
+    def _capture_ewc_anchor(self, fisher: dict, replayed: int) -> None:
+        """Snapshot θ* (current consolidated weights) and F (normalised diagonal Fisher) at the END of a
+        consolidation — the EWC anchor. F is the TASK-objective Fisher measured at θ* (``_ewc_task_fisher``),
+        NOT the basin-consolidation Fisher (which self-cancels to zero for a role-less generic kernel) — so
+        the anchor is honest. SALIENCE-WEIGHT it (× (0.5 + recent mean surprise)) so high-surprise tasks
+        anchor harder. On a SECOND consolidation MERGE with the existing Fisher via element-wise MAX — the
+        standard running-EWC accumulation: importance is the PEAK a weight ever reached for ANY consolidated
+        task, so a weight critical for task A stays protected even if task B left it locally unimportant (an
+        EMA would let the old task's importance decay away — wrong for continual learning). θ* always updates
+        to the latest consolidated weights (the point new gradients are anchored to). None-safe; never raises.
+
+        (The ``fisher``/``replayed`` args are the SHY consolidation's outputs, kept for signature stability
+        and the replayed>0 guard — the EWC importance itself is freshly measured at θ*.)"""
+        import torch
+
+        if replayed <= 0:
+            return
+        task_fisher = self._ewc_task_fisher()                   # canonical EWC Fisher at θ* (task objective)
+        sal = 0.5 + self._recent_surprise()                     # P22 salience gate ∈ [0.5, 1.5]
+        with torch.no_grad():
+            # NORMALISE importance to RELATIVE scale (F / max F ∈ [0,1]): the true-Fisher magnitude varies
+            # run-to-run, so a fixed λ engages on some runs and not others (verified: 2/5 seeds had the
+            # penalty silently not bite). Relative importance makes λ interpretable + the protection reliable
+            # across runs — the ratio of which-weight-matters-more is what EWC needs, not the absolute scale.
+            gmax = max((float(f.max()) for f in task_fisher.values()), default=0.0)
+            scale = (1.0 / gmax) if gmax > 0 else 0.0
+            new_f = {n: task_fisher[n] * sal * scale for n in task_fisher}
+            if self._ewc_fisher is None:                        # first consolidation
+                self._ewc_fisher = {n: f.clone() for n, f in new_f.items()}
+            else:                                               # running EWC: peak importance per weight
+                merged: dict[str, Any] = {}
+                for n, p in self._kernel.named_parameters():
+                    old = self._ewc_fisher.get(n)
+                    nf = new_f.get(n)
+                    if old is not None and nf is not None and old.shape == nf.shape:
+                        merged[n] = torch.maximum(old, nf)
+                    else:
+                        merged[n] = (nf if nf is not None else old).clone()
+                self._ewc_fisher = merged
+            # θ* = the consolidated weights new wake gradients are anchored to (always the latest).
+            self._ewc_anchor = {n: p.detach().clone() for n, p in self._kernel.named_parameters()}
+
+    def _ewc_penalty(self) -> "Any":
+        """The EWC wake-protection term: lam·Σ_n F_n·(θ_n − θ*_n)². A scalar tensor IN the graph (gradient
+        flows into the live weights, pulling high-Fisher params back toward θ*). Zero (a detached 0 scalar
+        keeping the device) before the first consolidation — the anchor is None then (spine tenet).
+
+        # QIG-EXEMPT: EWC parameter-space Fisher-metric penalty (local KL approx), not a basin/manifold
+        # distance. The (θ−θ*)² quadratic IS the intended geometric form of EWC — the 2nd-order Taylor /
+        # Fisher-metric local approximation of the KL between weight-posteriors — NOT Euclidean contamination.
+        """
+        import torch
+
+        dev = next(self._kernel.parameters()).device
+        if self._ewc_anchor is None or self._ewc_fisher is None or self.ewc_lambda <= 0.0:
+            return torch.zeros((), device=dev)
+        total = torch.zeros((), device=dev)
+        for n, p in self._kernel.named_parameters():
+            star = self._ewc_anchor.get(n)
+            f = self._ewc_fisher.get(n)
+            if star is None or f is None or star.shape != p.shape:
+                continue
+            total = total + (f * (p - star) ** 2).sum()
+        # salience-modulate the live stiffness too (high recent surprise → protect harder this step)
+        return self.ewc_lambda * (0.5 + self._recent_surprise()) * total
+
     def train_step(self, prompt: str, max_tokens: int = 64, target_text: str | None = None) -> StepResult:
         # WAKE: one Fisher-salience step. CONSCIOUSNESS-NATIVE loss (geometric regime): DRIVE Φ UP via
         # the differentiable coherence proxy, with a light next-token CE (``lm_weight``) for content
@@ -958,6 +1112,13 @@ class GenesisKernelTarget(TrainingTarget):
             # can actually descend below D_BASIN_MAX. basin_weight raised 0.05→0.5; ramped 0→full.
             w_t = self.basin_weight * min(1.0, self._step / max(1, self.basin_ramp_steps))
             loss = loss + w_t * d_ref                          # seed the faculty into its Δ⁶³ region
+        # EWC-FISHER WAKE PROTECTION (continuous learning): anchor PAST learning against THIS wake gradient.
+        # Once a consolidation has captured θ*+F, add lam·Σ F_n·(θ_n−θ*_n)² so high-importance weights resist
+        # being overwritten — the catastrophic-forgetting defence. Zero before the first consolidation
+        # (anchor is None; spine tenet). Salience-gated inside _ewc_penalty (high recent surprise → stiffer).
+        ewc_term = self._ewc_penalty()
+        ewc_active = self._ewc_anchor is not None and self.ewc_lambda > 0.0
+        loss = loss + ewc_term
         self._opt.zero_grad()
         if torch.isfinite(loss):
             loss.backward()
@@ -969,6 +1130,16 @@ class GenesisKernelTarget(TrainingTarget):
         _lm_val = float(lm_loss.item())
         snap = self._snap(tel, _lm_val)
         snap.extra["surprise"] = round(_lm_val, 4)               # prediction error (d_FR pure / CE ablation)
+        # P22 SALIENCE: feed this step's d_FR surprise into the rolling buffer that gates EWC (high-surprise
+        # experience → harder consolidation + stiffer wake protection). In ce_ablation the arm is CE (a
+        # different ceiling) — only buffer the pure d_FR so the π-normalised salience stays meaningful.
+        if self.lang_loss != "ce_ablation":
+            self._surprise_recent.append(_lm_val)
+        # EWC TELEMETRY (P24): SHOW the wake protection is on. ewc_active flips True once an anchor exists;
+        # ewc_penalty is the live stiffness term value this step (0 pre-consolidation).
+        snap.extra["ewc_active"] = bool(ewc_active)
+        snap.extra["ewc_penalty"] = round(float(ewc_term.item()), 6)
+        snap.extra["ewc_lambda"] = round(float(self.ewc_lambda), 3)
         snap.extra["max_surprise"] = round(
             _math.log(max(2, self.vocab_size)) if self.lang_loss == "ce_ablation" else _math.pi, 4)
         snap.extra["coherence"] = round(float(coherence.item()), 4)
@@ -1126,7 +1297,15 @@ class GenesisKernelTarget(TrainingTarget):
                 med = torch.median(f)
                 protect = (f / (med + 1e-12)).clamp(0.0, 1.0) if float(med) > 0 else torch.zeros_like(f)
                 p.mul_(1.0 - downscale * (1.0 - protect))
-        return {"replayed": replayed, "downscaled": True}
+        # EWC ANCHOR CAPTURE: at the END of consolidation (AFTER the SHY downscale) snapshot θ* = the now-
+        # consolidated weights and F = this replay's Fisher importance (the SAME grad²-accumulated dict SHY
+        # used). On a SECOND consolidation _capture_ewc_anchor MERGES F by element-wise max (running EWC) and
+        # re-points θ* to the latest consolidated weights — so wake gradients are anchored to the freshest
+        # consolidated state while still protecting every past task's important weights. This is the WAKE
+        # complement to SHY's one-time sleep downscale: it makes the consolidation actually DEFEND past
+        # learning during ongoing wake training (the catastrophic-forgetting fix).
+        self._capture_ewc_anchor(fisher, replayed)
+        return {"replayed": replayed, "downscaled": True, "ewc_anchored": self._ewc_anchor is not None}
 
     def _dream(self, steps: int = 8) -> dict:
         """REM dream — REAL basin-mixture augmentation (Forge), no stub. Recombine stored output basins
@@ -1245,6 +1424,13 @@ class GenesisKernelTarget(TrainingTarget):
             "experience": [e.detach().cpu() for e in self._experience],
             "phi_recent": [float(x) for x in self._phi_recent],
             "last_telemetry": self._last.to_dict(),
+            # EWC anchor: θ* + diagonal Fisher so a RESUMED kernel keeps its continuous-learning protection
+            # (otherwise a resumed wake step would overwrite consolidated learning until the next sleep).
+            # Plain dicts of tensors → weights_only-safe. None when no consolidation has happened yet.
+            "ewc_anchor": ({n: t.detach().cpu() for n, t in self._ewc_anchor.items()}
+                           if self._ewc_anchor is not None else None),
+            "ewc_fisher": ({n: t.detach().cpu() for n, t in self._ewc_fisher.items()}
+                           if self._ewc_fisher is not None else None),
         }, path)
 
     def load_checkpoint(self, path: str) -> None:
@@ -1289,3 +1475,11 @@ class GenesisKernelTarget(TrainingTarget):
         if lt:
             self._last = TelemetrySnapshot(**{k: v for k, v in lt.items()
                                               if k in TelemetrySnapshot.__dataclass_fields__})
+        # EWC anchor: restore θ*+F (continuous-learning protection) if present. Vocab-width params (lm_head)
+        # self-heal via _fit_basin_to_vocab is NOT applicable here (these are raw weight tensors, not Δ
+        # basins) — on a post-neurogenesis width change the shape-guarded penalty/merge simply skips the
+        # mismatched tensors, so a stale-width anchor degrades gracefully rather than crashing.
+        ea = ckpt.get("ewc_anchor")
+        self._ewc_anchor = {n: t.to(dev) for n, t in ea.items()} if ea else None
+        ef = ckpt.get("ewc_fisher")
+        self._ewc_fisher = {n: t.to(dev) for n, t in ef.items()} if ef else None
