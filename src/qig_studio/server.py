@@ -1217,6 +1217,77 @@ async def screen(req: ScreenRequest, _: None = Depends(verify_key)) -> Streaming
     return StreamingResponse(gen(), media_type="text/event-stream")
 
 
+# --- Coordizer-from-scratch build (Task 3) — train the coordizer FROM the server/UI ------------------
+# A single in-memory status dict, guarded by a lock, fed by the background build thread's progress_cb.
+# The build is CPU-heavy → it runs OFF the event loop (asyncio.to_thread) so the server stays responsive;
+# POST returns 202 PROMPTLY (not after the whole build). ONE build at a time (409 on a concurrent POST).
+_COORDIZER_LOCK = asyncio.Lock()
+_COORDIZER_STATUS: dict[str, Any] = {
+    "running": False, "phase": None, "pct": 0.0, "vocab": None,
+    "msg": None, "out_path": None, "error": None,
+}
+
+
+class CoordizerTrainRequest(BaseModel):
+    vocab: int = 100_000
+    max_bytes: int = 30_000_000      # OOM guard on the balanced byte corpus
+    validate_tiny: bool = False      # tiny smoke build (vocab≈600, 60 rows/dataset) for tests/UX checks
+
+
+async def _run_coordizer_build(vocab: int, max_bytes: int, validate_tiny: bool) -> None:
+    """Run the coordizer build OFF the event loop and stream phase-level progress into the status dict."""
+    from . import coordizer_build
+
+    def _progress(p: dict[str, Any]) -> None:
+        # called from the worker thread — a plain dict update is fine for a single-writer status channel
+        _COORDIZER_STATUS.update({
+            "phase": p.get("phase"), "pct": p.get("pct"),
+            "vocab": p.get("vocab"), "msg": p.get("msg"),
+        })
+
+    try:
+        res = await asyncio.to_thread(
+            coordizer_build.build, vocab, max_bytes, validate_tiny, _progress
+        )
+        _COORDIZER_STATUS.update({
+            "out_path": res.get("out_path"), "vocab": res.get("vocab"),
+            "phase": "done", "pct": 100.0, "error": None,
+        })
+    except Exception as exc:  # noqa: BLE001 — surface the failure on the status channel
+        _COORDIZER_STATUS.update({"phase": "error", "error": f"{type(exc).__name__}: {exc}"})
+    finally:
+        _COORDIZER_STATUS["running"] = False
+        if _COORDIZER_LOCK.locked():
+            _COORDIZER_LOCK.release()
+
+
+@app.post("/coordizer/train")
+async def coordizer_train(
+    req: CoordizerTrainRequest, _: None = Depends(verify_key)
+) -> Response:
+    """Train the coordizer FROM scratch (the 7-HF-dataset balanced pipeline, ``coordizer_build.build``) in
+    a BACKGROUND thread, streaming phase-level progress to ``GET /coordizer/status``. Returns 202 PROMPTLY
+    (the heavy build runs off the event loop). ONE build at a time — a concurrent POST → 409. On completion
+    the new coordizer is registered (manifest + symlink) so ``/targets``/``/config`` pick it up."""
+    if _COORDIZER_LOCK.locked():
+        raise HTTPException(409, "a coordizer build is already running (one at a time)")
+    await _COORDIZER_LOCK.acquire()
+    _COORDIZER_STATUS.update({
+        "running": True, "phase": "queued", "pct": 0.0, "vocab": req.vocab,
+        "msg": "build queued", "out_path": None, "error": None,
+    })
+    # fire-and-forget: the build runs off-loop; the response returns immediately (lock released in finally)
+    asyncio.create_task(_run_coordizer_build(req.vocab, req.max_bytes, req.validate_tiny))
+    return Response(content=json.dumps({**_COORDIZER_STATUS}), media_type="application/json", status_code=202)
+
+
+@app.get("/coordizer/status")
+async def coordizer_status() -> dict[str, Any]:
+    """The current coordizer-build status — ``{running, phase, pct, vocab, out_path, error, msg}``. The UI
+    polls this while a build runs (phase-level progress; the trainer has no per-merge hook)."""
+    return {**_COORDIZER_STATUS}
+
+
 @app.get("/train/live", response_model=None)
 async def train_live() -> StreamingResponse:
     """SSE — tails the shared live heartbeat (runs/spawn/joint_live.json) and streams each new RICH step

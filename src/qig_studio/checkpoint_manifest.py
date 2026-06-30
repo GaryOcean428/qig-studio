@@ -5,11 +5,18 @@ Auto-generated at save time. Scripts read the manifest to find ``latest`` instea
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Any
 
 
 def _coordizer_manifest_path() -> Path:
+    """The coordizer checkpoint manifest. Lives alongside the coordizer artifacts; the output dir is
+    overridable via ``QIG_STUDIO_COORDIZER_OUT_DIR`` (tests isolate to a throwaway dir, and the server's
+    coordizer build honors the same env), so the manifest tracks whatever dir the artifacts land in."""
+    env = os.environ.get("QIG_STUDIO_COORDIZER_OUT_DIR")
+    if env:
+        return Path(env) / "MANIFEST.json"
     return Path(__file__).resolve().parents[2] / ".." / "qig-coordizer" / "checkpoints" / "MANIFEST.json"
 
 
