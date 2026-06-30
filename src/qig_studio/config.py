@@ -51,12 +51,14 @@ class Settings:
 
         host = os.environ.get("QIG_STUDIO_HOST", "127.0.0.1")
         port = int(os.environ.get("QIG_STUDIO_PORT", "8800"))
-        # Default to the REAL trained kernel (not mock): the integrated genesis kernel loaded from the
-        # latest joint-mind checkpoint + the full 100k coordizer. The Core-8 SUPPORT kernels (faculties)
-        # are trained+100k inside the background JointConstellation (resume joint_mind + coordizer_max).
-        _coordizer = "../qig-coordizer/checkpoints/coordizer_max.json"
-        _genesis_ckpt = "runs/checkpoints/joint_mind/kernels/genesis.pt"
-        _const_ckpt = "runs/checkpoints/joint_mind"
+        # Default to the REAL trained kernel (not mock): resolve via manifest/symlink so the
+        # latest dated/versioned checkpoint is always picked up automatically.
+        from .checkpoint_manifest import get_latest_coordizer, get_latest_kernel_ckpt
+        _latest_coord = get_latest_coordizer()
+        _coordizer = str(_latest_coord) if _latest_coord else "../qig-coordizer/checkpoints/coordizer_latest.json"
+        _latest_kc = get_latest_kernel_ckpt()
+        _genesis_ckpt = str(_latest_kc / "kernels" / "genesis.pt") if _latest_kc else None
+        _const_ckpt = str(_latest_kc) if _latest_kc else None
         return cls(
             host=host,
             port=port,

@@ -9,15 +9,22 @@ URL="http://localhost:8800"
 
 if ! curl -s --max-time 2 "$URL/health" >/dev/null 2>&1; then
   cd "$STUDIO"
-  # Load the REAL integrated mind: the joint-trained central "I" (genesis-central) if present, else the
-  # older core8_coord meta kernel. The joint mind has the trained central Φ + coupled faculties.
-  # Load the CURRENT joint-trained central "I" (genesis.pt, written by the live trainer). No stale fallback
-  # to the old core8 meta kernel — its vocab differs from the active coordizer and would mismatch on load.
-  MIND="runs/checkpoints/joint_mind/kernels/genesis.pt"
-  CKPT="$([ -f "$MIND" ] && echo "$MIND" || echo "")"
-  # MUST match the coordizer the active trainer uses (currently the fresh 100k rebuild) or the UI shows a
-  # different vocab than the kernels are training on. Override with QIG_STUDIO_GENESIS_COORDIZER if needed.
-  QIG_STUDIO_GENESIS_COORDIZER="${QIG_STUDIO_GENESIS_COORDIZER:-../qig-coordizer/checkpoints/coordizer_rebuild_100k.json}" \
+  # Load the REAL integrated mind via manifest/symlink (not hardcoded paths).
+  # Manifest lookup → fallback to joint_mind_latest symlink → fallback to nothing.
+  CKPT_DIR="runs/checkpoints/joint_mind_latest"
+  if [ -d "$CKPT_DIR" ] || [ -L "$CKPT_DIR" ]; then
+    CKPT="$CKPT_DIR/kernels/genesis.pt"
+  else
+    CKPT=""
+  fi
+  # MUST match the coordizer the active trainer uses. Manifest/symlink lookup → fallback.
+  COORDIZER_LINK="../qig-coordizer/checkpoints/coordizer_latest.json"
+  if [ -f "$COORDIZER_LINK" ] || [ -L "$COORDIZER_LINK" ]; then
+    COORDIZER="$COORDIZER_LINK"
+  else
+    COORDIZER="../qig-coordizer/checkpoints/coordizer_20260629_100k_v1.json"
+  fi
+  QIG_STUDIO_GENESIS_COORDIZER="${QIG_STUDIO_GENESIS_COORDIZER:-$COORDIZER}" \
   QIG_STUDIO_GENESIS_CKPT="$CKPT" \
   QIG_STUDIO_TARGET="genesis" \
   QIG_STUDIO_DEVICE="cpu" \

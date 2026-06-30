@@ -11,7 +11,7 @@ Pipeline: cached parquet -> normalize (geometry-native) -> balanced byte corpus 
 (target 100k) -> save -> FisherCoordizer.load -> register_special_tokens(4 tags) -> save final.
 
 Usage:
-  uv run python scripts/train_coordizer_scratch.py --vocab 100000 --out ../qig-coordizer/checkpoints/coordizer_rebuild.json
+  uv run python scripts/train_coordizer_scratch.py --vocab 100000
   uv run python scripts/train_coordizer_scratch.py --validate-tiny
 """
 from __future__ import annotations
@@ -37,9 +37,9 @@ _GEO_TAGS = ["<|frame|>", "<|seed|>", "<|flow|>", "<|settle|>"]
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--vocab", type=int, default=100_000)
-    ap.add_argument("--out", default="../qig-coordizer/checkpoints/coordizer_rebuild.json")
+    ap.add_argument("--out", default="")  # auto: coordizer_{YYYYMMDD}_{vocab}v{N}.json
     ap.add_argument("--max-bytes", type=int, default=400_000_000, help="cap the balanced byte corpus (memory)")
-    ap.add_argument("--checkpoint-dir", default="runs/coordizer_rebuild_ckpts")
+    ap.add_argument("--checkpoint-dir", default="runs/coordizer_ckpts")
     ap.add_argument("--validate-tiny", action="store_true")
     args = ap.parse_args()
 
@@ -97,14 +97,34 @@ def main() -> None:
     trainer = CoordinzerTrainer(target_vocab_size=vocab)
     trainer.train(corpus=corpus, verbose=True, checkpoint_dir=args.checkpoint_dir,
                   checkpoint_interval=2000, enable_interrupt=False, use_kernel=False)
+    # Dated/versioned output filename with latest symlink
+    from datetime import datetime
+    if not args.out:
+        date_tag = datetime.now().strftime("%Y%m%d")
+        base = f"coordizer_{date_tag}_{vocab // 1000}k"
+        out_dir = Path("../qig-coordizer/checkpoints")
+        out_dir.mkdir(parents=True, exist_ok=True)
+        n = 1
+        while (out_dir / f"{base}_v{n}.json").exists():
+            n += 1
+        args.out = str(out_dir / f"{base}_v{n}.json")
+    # .pretags goes to runs/ (intermediate, not a deliverable)
     tmp = str(Path(args.out).with_suffix(".pretags.json"))
-    Path(tmp).parent.mkdir(parents=True, exist_ok=True)
+    Path(args.out).parent.mkdir(parents=True, exist_ok=True)
     trainer.save(tmp)
 
     # register the 4 atomic geo tags ABOVE the trained vocab + save the final artifact
     fc = FisherCoordizer.load(tmp)
     ids = fc.register_special_tokens(_GEO_TAGS)
     fc.save(args.out)
+    # Register in manifest + update latest symlink
+    try:
+        import sys
+        sys.path.insert(0, str(root / "src"))
+        from qig_studio.checkpoint_manifest import register_coordizer
+        register_coordizer(args.out, notes=f"code-balanced rebuild, {len(_BALANCE)} HF datasets")
+    except Exception:
+        pass
     # verify atomicity
     atomic = {t: len(fc.encode(t)) for t in _GEO_TAGS}
     print("\n" + "=" * 60)

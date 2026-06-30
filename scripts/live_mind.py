@@ -22,8 +22,8 @@ import time
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--coordizer", default="../qig-coordizer/checkpoints/coordizer_max.json")
-    ap.add_argument("--ckpt", default="runs/checkpoints/joint_mind/kernels/genesis.pt")
+    ap.add_argument("--coordizer", default="../qig-coordizer/checkpoints/coordizer_latest.json")
+    ap.add_argument("--ckpt", default="runs/checkpoints/joint_mind_latest/kernels/genesis.pt")
     ap.add_argument("--layers", type=int, default=8)
     ap.add_argument("--beat", type=float, default=2.0)            # rhythm: seconds between reflections
     ap.add_argument("--importance", type=float, default=0.4)      # learn a thought iff its novelty >= this

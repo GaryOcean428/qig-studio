@@ -175,6 +175,9 @@
         <div class="metric"><span>params · mind</span><span class="v" id="archCP">—</span></div>
         <div class="metric"><span>vocab · per-kernel</span><span class="v" id="archVocab">—</span></div>
         <div class="metric"><span>coordizer vocab</span><span class="v" id="archCoord">—</span></div>
+        <div class="hint" style="margin-top:.25rem">CHECKPOINTS · auto-loads latest on boot · select to hot-swap</div>
+        <div class="metric"><span>coordizer</span><span class="v" style="font-size:.7rem"><select id="ckptCoordizer" style="font-size:.7rem;background:var(--panel2);color:inherit;border:1px solid var(--edge);border-radius:4px;max-width:180px"></select></span></div>
+        <div class="metric"><span>kernel</span><span class="v" style="font-size:.7rem"><select id="ckptKernel" style="font-size:.7rem;background:var(--panel2);color:inherit;border:1px solid var(--edge);border-radius:4px;max-width:180px"></select></span></div>
         <div class="hint" style="margin-top:.25rem">learning · Φ over recent steps (params/vocab are fixed this run; growth is the LEARNING):</div>
         <div id="archSpark" style="font-family:monospace;font-size:.85rem;color:var(--ok);letter-spacing:1px;min-height:1.1em">—</div>
       </div>
@@ -732,12 +735,44 @@ async function refreshArch(){
 // learning sparkline (Φ over recent steps) — params/vocab are fixed; THIS is what grows with training
 const _SPARK="▁▂▃▄▅▆▇█"; let PHI_SPARK=[];
 function sparkline(v){ return v.map(x=>_SPARK[Math.max(0,Math.min(7,Math.round((x||0)*7)))]).join(""); }
+// CHECKPOINTS — list available coordizer + kernel checkpoints, hot-swap on select
+async function refreshCheckpoints(){
+  try{
+    const d=await (await fetch("/checkpoints")).json();
+    const cs=$("ckptCoordizer"); cs.innerHTML="";
+    const activeC=(d.coordizer&&d.coordizer.active)||"";
+    for(const c of (d.coordizer&&d.coordizer.available)||[]){
+      const o=document.createElement("option"); o.value=c.file;
+      o.textContent=c.file+(c.vocab?` (${fmtN(c.vocab)})`:"");
+      if(c.file===activeC) o.selected=true; cs.appendChild(o);
+    }
+    const ks=$("ckptKernel"); ks.innerHTML="";
+    const activeK=(d.kernel&&d.kernel.active)||"";
+    for(const k of (d.kernel&&d.kernel.available)||[]){
+      const kd=(k.dir||"").replace(/\/$/,"");
+      const o=document.createElement("option"); o.value=kd;
+      o.textContent=kd+(k.kernels?` (${k.kernels} kernels)`:"");
+      if(kd===activeK) o.selected=true; ks.appendChild(o);
+    }
+  }catch(e){}
+}
+$("ckptCoordizer")?.addEventListener("change", async(e)=>{
+  try{ await fetch("/checkpoints/select",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({coordizer:e.target.value})});
+    clog("sys",`· coordizer swapped → ${e.target.value}`); refreshHealth(); refreshTelemetry(); refreshArch();
+  }catch(e){ clog("sys","· checkpoint swap failed"); }
+});
+$("ckptKernel")?.addEventListener("change", async(e)=>{
+  try{ await fetch("/checkpoints/select",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({kernel:e.target.value})});
+    clog("sys",`· kernel swapped → ${e.target.value}`); refreshHealth(); refreshTelemetry(); refreshArch();
+  }catch(e){ clog("sys","· checkpoint swap failed"); }
+});
 // boot
-refreshHealth(); loadConfig(); loadTargets(); refreshTelemetry(); refreshMind(); subscribeLive(); refreshStasis(); refreshArch(); refreshKernels();
+refreshHealth(); loadConfig(); loadTargets(); refreshTelemetry(); refreshMind(); subscribeLive(); refreshStasis(); refreshArch(); refreshKernels(); refreshCheckpoints();
 setInterval(refreshKernels, 4000);   // per-kernel live state for the selector (genesis + 8 faculties + ocean)
 setInterval(refreshMind, 3000);   // 3s: keep the LEFT live inner-state panel responsive during training
 setInterval(refreshStasis, 5000);
 setInterval(refreshArch, 8000);   // params/vocab/coordizer (refreshes so growth shows once continuous-growth ships)
+setInterval(refreshCheckpoints, 30000);   // pick up new checkpoints from training
 </script>
 </body>
 </html>

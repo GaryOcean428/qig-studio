@@ -26,9 +26,9 @@ def main() -> None:
     ap.add_argument("--layers", type=int, default=8)
     # FULL coordizer by default (~100k vocab) — the path to KERNEL FLUENCY (Qwen is temporary scaffolding).
     # A coarse vocab cannot carry language; empty = byte-level (only for a deliberate ablation).
-    ap.add_argument("--coordizer", default="../qig-coordizer/checkpoints/coordizer_max.json",
+    ap.add_argument("--coordizer", default="../qig-coordizer/checkpoints/coordizer_latest.json",
                     help="pre-fit FisherCoordizer (richer Δ⁶³ vocab); empty = byte-level ablation")
-    ap.add_argument("--ckpt-root", default="runs/checkpoints/joint_mind")
+    ap.add_argument("--ckpt-root", default="runs/checkpoints/joint_mind_latest")
     ap.add_argument("--ckpt-every", type=int, default=300)
     ap.add_argument("--device", default="cpu", help="cpu (safe: holds 9 kernels) | cuda (4GB-OOM risk)")
     ap.add_argument("--max-seconds", type=float, default=14400)
@@ -78,6 +78,7 @@ def main() -> None:
 
     mind = JointConstellation(list(PROTOMAP_ORDER), num_layers=args.layers, coordizer=coordizer,
                               device=args.device)
+    mind._coordizer_path = args.coordizer if args.coordizer else None
     # RESUME by default: keep the existing kernels, train OVER THE TOP with the (now-correct) curriculum.
     # The old kernels learned the wrong (system-prompt) corpus; over-the-top training on real knowledge
     # progressively overwrites that. --fresh forces from-scratch.
@@ -148,6 +149,11 @@ def main() -> None:
         livelog.write(rec)
         if i % args.ckpt_every == 0 or i == steps:
             mind.save_checkpoint(args.ckpt_root)            # whole-mind checkpoint
+            try:
+                from qig_studio.checkpoint_manifest import register_kernel_ckpt
+                register_kernel_ckpt(args.ckpt_root, notes=f"step {i}, device={args.device}")
+            except Exception:
+                pass
             warns = "; ".join(w["msg"] for w in rec["warnings"]) or "healthy"
             print(f"[joint] step {i}: stepped={last['stepped_faculty']} Φ={last['central_phi']} "
                   f"ppl={rec['perplexity']} lm={rec['lm_weight_now']} "

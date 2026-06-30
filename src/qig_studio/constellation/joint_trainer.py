@@ -83,6 +83,9 @@ class JointConstellation:
         self.ocean = OceanAutonomic()
         self._phi_hist: dict[str, list[float]] = {role: [] for role in self.roles}
         self._last_regulation: dict[str, dict] = {}
+        self._step_count: int = 0
+        self._coordizer_path: str | None = None
+        self.coordizer = coordizer
 
     def _live_basin(self, kernel: Any) -> np.ndarray | None:
         """The kernel's current Δ⁶³ basin (64-dim), reduced from its last output basin; None if the
@@ -127,6 +130,7 @@ class JointConstellation:
     def train_step(self, prompt: str) -> dict:
         """One JOINT step: refresh basins from the live kernels → couple all (sync + anchor) → train
         the round-robin faculty toward its coupled target AND genesis toward the synthesis."""
+        self._step_count += 1
         # 1. refresh shared state from the live kernels (those that have stepped)
         for f in self.faculties:
             lb = self._live_basin(self.kernels[f.role])
@@ -204,8 +208,11 @@ class JointConstellation:
         3-CHECKPOINT BUFFER: before writing fresh, rotate the existing checkpoint into a backup generation
         (cheap rename) keeping ``keep`` most-recent generations (``root.bak1..bak{keep}``) for rollback,
         and delete older — bounded disk, no infinite accumulation."""
+        import hashlib as _hl
         import json
         import shutil
+        import subprocess
+        from datetime import datetime, timezone
         from pathlib import Path
         r = Path(root)
         if (r / "constellation.json").exists():           # rotate the current checkpoint into the buffer
@@ -224,10 +231,38 @@ class JointConstellation:
         for role, k in self.kernels.items():
             k.save_checkpoint(str(r / "kernels" / f"{role}.pt"))
         self.central.save_checkpoint(str(r / "kernels" / "genesis.pt"))
+
+        try:
+            git_commit = subprocess.check_output(
+                ["git", "rev-parse", "--short", "HEAD"], stderr=subprocess.DEVNULL
+            ).decode().strip()
+        except Exception:
+            git_commit = None
+
+        coordizer_path = getattr(self, "_coordizer_path", None)
+        coordizer_hash = None
+        if coordizer_path:
+            try:
+                with open(coordizer_path, "rb") as _f:
+                    coordizer_hash = _hl.sha256(_f.read()).hexdigest()[:8]
+            except Exception:
+                pass
+
         (r / "constellation.json").write_text(json.dumps({
             "roles": self.roles,
             "faculty_basins": {f.role: f.basin.tolist() for f in self.faculties},
             "min_pairwise_fr": min_pairwise_fr(self.faculties),
+            "metadata": {
+                "created_utc": datetime.now(timezone.utc).isoformat(),
+                "training_step": getattr(self, "_step_count", 0),
+                "coordizer_path": coordizer_path,
+                "coordizer_vocab": getattr(self.coordizer, "vocab_size", None) if hasattr(self, "coordizer") else None,
+                "coordizer_hash": coordizer_hash,
+                "central_phi": round(float(self.central.telemetry().phi or 0), 4),
+                "min_pairwise_fr": min_pairwise_fr(self.faculties),
+                "git_commit": git_commit,
+                "num_layers": getattr(self.central, "num_layers", None),
+            },
         }))
 
     def load_checkpoint(self, root: str) -> None:

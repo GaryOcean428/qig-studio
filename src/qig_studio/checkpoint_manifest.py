@@ -1,0 +1,178 @@
+"""Checkpoint manifest registry — tracks all coordizer and kernel checkpoints with lineage.
+
+Auto-generated at save time. Scripts read the manifest to find ``latest`` instead of hardcoding paths.
+"""
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from typing import Any
+
+
+def _coordizer_manifest_path() -> Path:
+    return Path(__file__).resolve().parents[2] / ".." / "qig-coordizer" / "checkpoints" / "MANIFEST.json"
+
+
+def _kernel_manifest_path() -> Path:
+    return Path(__file__).resolve().parents[2] / "runs" / "checkpoints" / "MANIFEST.json"
+
+
+def register_coordizer(file_path: str | Path, notes: str = "") -> None:
+    """Register a coordizer checkpoint in the manifest and update the ``latest`` pointer."""
+    p = Path(file_path).resolve()
+    manifest_path = _coordizer_manifest_path()
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+
+    manifest: dict[str, Any] = {"checkpoints": [], "latest": None}
+    if manifest_path.exists():
+        try:
+            manifest = json.loads(manifest_path.read_text())
+        except Exception:
+            pass
+
+    # Load metadata from the checkpoint file itself
+    entry: dict[str, Any] = {"file": p.name, "notes": notes}
+    try:
+        data = json.loads(p.read_text())
+        meta = data.get("metadata", {})
+        entry.update({
+            "created_utc": meta.get("created_utc"),
+            "target_vocab": meta.get("target_vocab_size"),
+            "actual_vocab": meta.get("actual_vocab_size"),
+            "corpus_hash": meta.get("corpus_hash"),
+            "git_commit": meta.get("git_commit"),
+        })
+    except Exception:
+        pass
+
+    # Remove existing entry for the same file, then prepend
+    manifest["checkpoints"] = [c for c in manifest["checkpoints"] if c.get("file") != p.name]
+    manifest["checkpoints"].insert(0, entry)
+    manifest["latest"] = p.name
+
+    manifest_path.write_text(json.dumps(manifest, indent=2))
+
+    # Update symlink
+    link = p.parent / "coordizer_latest.json"
+    try:
+        if link.is_symlink() or link.exists():
+            link.unlink()
+        link.symlink_to(p.name)
+    except OSError:
+        pass  # cross-device or permissions — symlink is a convenience, not critical
+
+
+def register_kernel_ckpt(dir_path: str | Path, notes: str = "") -> None:
+    """Register a kernel checkpoint directory in the manifest and update the ``latest`` pointer."""
+    p = Path(dir_path).resolve()
+    manifest_path = _kernel_manifest_path()
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+
+    manifest: dict[str, Any] = {"checkpoints": [], "latest": None}
+    if manifest_path.exists():
+        try:
+            manifest = json.loads(manifest_path.read_text())
+        except Exception:
+            pass
+
+    # Load metadata from constellation.json
+    entry: dict[str, Any] = {"dir": p.name, "notes": notes}
+    cj = p / "constellation.json"
+    if cj.exists():
+        try:
+            data = json.loads(cj.read_text())
+            meta = data.get("metadata", {})
+            entry.update({
+                "created_utc": meta.get("created_utc"),
+                "training_step": meta.get("training_step"),
+                "coordizer": meta.get("coordizer_path"),
+                "central_phi": meta.get("central_phi"),
+                "min_pairwise_fr": meta.get("min_pairwise_fr"),
+                "git_commit": meta.get("git_commit"),
+            })
+        except Exception:
+            pass
+
+    # Remove existing entry for the same dir, then prepend
+    manifest["checkpoints"] = [c for c in manifest["checkpoints"] if c.get("dir") != p.name]
+    manifest["checkpoints"].insert(0, entry)
+    manifest["latest"] = p.name
+
+    manifest_path.write_text(json.dumps(manifest, indent=2))
+
+    # Update symlink
+    link = p.parent / "joint_mind_latest"
+    try:
+        if link.is_symlink() or link.exists():
+            if link.is_dir() and not link.is_symlink():
+                import shutil
+                shutil.rmtree(link, ignore_errors=True)
+            else:
+                link.unlink()
+        link.symlink_to(p.name)
+    except OSError:
+        pass
+
+
+def list_coordizer_checkpoints() -> list[dict[str, Any]]:
+    """Return all registered coordizer checkpoints from the manifest."""
+    manifest_path = _coordizer_manifest_path()
+    if manifest_path.exists():
+        try:
+            manifest = json.loads(manifest_path.read_text())
+            return manifest.get("checkpoints", [])
+        except Exception:
+            pass
+    return []
+
+
+def list_kernel_checkpoints() -> list[dict[str, Any]]:
+    """Return all registered kernel checkpoints from the manifest."""
+    manifest_path = _kernel_manifest_path()
+    if manifest_path.exists():
+        try:
+            manifest = json.loads(manifest_path.read_text())
+            return manifest.get("checkpoints", [])
+        except Exception:
+            pass
+    return []
+
+
+def get_latest_coordizer() -> Path | None:
+    """Return the path to the latest coordizer checkpoint, or None if not found."""
+    manifest_path = _coordizer_manifest_path()
+    if manifest_path.exists():
+        try:
+            manifest = json.loads(manifest_path.read_text())
+            latest = manifest.get("latest")
+            if latest:
+                p = manifest_path.parent / latest
+                if p.exists():
+                    return p
+        except Exception:
+            pass
+    # Fallback: symlink
+    link = manifest_path.parent / "coordizer_latest.json"
+    if link.exists():
+        return link
+    return None
+
+
+def get_latest_kernel_ckpt() -> Path | None:
+    """Return the path to the latest kernel checkpoint dir, or None if not found."""
+    manifest_path = _kernel_manifest_path()
+    if manifest_path.exists():
+        try:
+            manifest = json.loads(manifest_path.read_text())
+            latest = manifest.get("latest")
+            if latest:
+                p = manifest_path.parent / latest
+                if p.exists():
+                    return p
+        except Exception:
+            pass
+    # Fallback: symlink
+    link = manifest_path.parent / "joint_mind_latest"
+    if link.exists():
+        return link
+    return None

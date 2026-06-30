@@ -90,7 +90,7 @@ def main() -> int:
         print("ABORT: Qwen peer (Ollama) not available — cannot run attribution.")
         return 2
     g = GenesisKernelTarget(num_layers=8, coordizer=coordizer, device="cpu", language_peer=peer)
-    ckpt = Path("runs/checkpoints/joint_mind/kernels/genesis.pt")
+    ckpt = Path("runs/checkpoints/joint_mind_latest/kernels/genesis.pt")
     g.ensure_loaded()
     if ckpt.exists():
         try:

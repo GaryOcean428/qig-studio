@@ -201,12 +201,42 @@ async def health() -> dict[str, Any]:
     reg = getattr(app.state, "registry", None)
     pillars = getattr(app.state, "pillars", None)
     active = reg.active if reg else None
+    # Checkpoint provenance — which coordizer + kernel the running mind loaded from
+    ckpt_coord = None
+    ckpt_kernel = None
+    s = getattr(app.state, "settings", None)
+    if s is not None:
+        try:
+            from .checkpoint_manifest import list_coordizer_checkpoints, list_kernel_checkpoints
+            coord_path = getattr(s, "genesis_coordizer_checkpoint", None)
+            if coord_path:
+                coord_name = Path(coord_path).name
+                for c in list_coordizer_checkpoints():
+                    if c.get("file") == coord_name:
+                        ckpt_coord = {"file": coord_name, "vocab": c.get("vocab"), "created": c.get("created_utc")}
+                        break
+                if ckpt_coord is None:
+                    ckpt_coord = {"file": coord_name}
+            const_path = getattr(s, "constellation_checkpoint", None)
+            if const_path:
+                kernel_name = Path(const_path).name
+                for k in list_kernel_checkpoints():
+                    if k.get("dir", "").rstrip("/") == kernel_name:
+                        ckpt_kernel = {"dir": k.get("dir"), "step": k.get("training_step"),
+                                       "min_fr": k.get("min_pairwise_fr"), "created": k.get("created_utc")}
+                        break
+                if ckpt_kernel is None:
+                    ckpt_kernel = {"dir": kernel_name}
+        except Exception:
+            pass
     return {
         "status": "ok",
         "version": __version__,
         "purity": getattr(app.state, "purity", None),
         "pillars": (pillars.origin if pillars and pillars.available else None),
         "active_target": active.name if active else None,
+        "checkpoint_coordizer": ckpt_coord,
+        "checkpoint_kernel": ckpt_kernel,
     }
 
 
@@ -228,6 +258,98 @@ async def select_target(name: str, _: None = Depends(verify_key)) -> dict[str, A
     except KeyError:
         raise HTTPException(404, f"unknown target '{name}'")
     return {"active": t.name, "info": t.info().to_dict()}
+
+
+class CheckpointSelectRequest(BaseModel):
+    coordizer: str | None = None
+    kernel: str | None = None
+
+
+@app.get("/checkpoints")
+async def list_checkpoints() -> dict[str, Any]:
+    from .checkpoint_manifest import list_coordizer_checkpoints, list_kernel_checkpoints
+    s = getattr(app.state, "settings", None)
+    active_coord = Path(getattr(s, "genesis_coordizer_checkpoint", "")).name if s else None
+    active_kernel = Path(getattr(s, "constellation_checkpoint", "")).name if s else None
+    return {
+        "coordizer": {
+            "active": active_coord,
+            "available": list_coordizer_checkpoints(),
+        },
+        "kernel": {
+            "active": active_kernel,
+            "available": list_kernel_checkpoints(),
+        },
+    }
+
+
+@app.post("/checkpoints/select")
+async def select_checkpoint(req: CheckpointSelectRequest, _: None = Depends(verify_key)) -> dict[str, Any]:
+    """Hot-swap the running mind to a different coordizer and/or kernel checkpoint.
+
+    Guard: refuses if training/chat is in progress (``_TARGET_LOCK`` held).
+    Memory: explicitly frees the old registry's targets before loading the new ones.
+    """
+    import gc
+    # Guard: try-acquire the target lock with zero timeout — refuse if training/chat is active
+    if _TARGET_LOCK.locked():
+        raise HTTPException(409, "training in progress — stop training before swapping checkpoints")
+    async with _TARGET_LOCK:
+        s = app.state.settings
+        # Resolve new coordizer path
+        new_coord = s.genesis_coordizer_checkpoint
+        if req.coordizer:
+            new_coord = str(Path("../qig-coordizer/checkpoints") / req.coordizer)
+        # Resolve new kernel checkpoint root
+        new_const = s.constellation_checkpoint
+        if req.kernel:
+            new_const = str(Path("runs/checkpoints") / req.kernel)
+        # Build the new registry
+        new_registry = default_registry(
+            default_target=s.default_target,
+            kernel_checkpoint=s.kernel_checkpoint,
+            constellation_checkpoint=new_const,
+            genesis_num_layers=s.genesis_num_layers,
+            genesis_coordizer_checkpoint=new_coord,
+            genesis_kernel_checkpoint=str(Path(new_const) / "kernels" / "genesis.pt") if new_const else None,
+            device=s.device,
+        )
+        # Swap the registry
+        old_registry = app.state.registry
+        app.state.registry = new_registry
+        # Update settings to reflect the new checkpoints
+        s.genesis_coordizer_checkpoint = new_coord
+        s.constellation_checkpoint = new_const
+        s.genesis_kernel_checkpoint = str(Path(new_const) / "kernels" / "genesis.pt") if new_const else None
+        # Explicitly free old targets (9 kernels × ~200MB = ~1.8GB of torch tensors)
+        for name in old_registry._targets:
+            t = old_registry._targets[name]
+            try:
+                if hasattr(t, '_mind') and t._mind is not None:
+                    del t._mind
+                if hasattr(t, '_kernel') and t._kernel is not None:
+                    del t._kernel
+            except Exception:
+                pass
+        del old_registry
+        gc.collect()
+        try:
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except Exception:
+            pass
+        # Warm up the new active target
+        t = new_registry.active
+        if t is not None and t.is_available():
+            try:
+                await asyncio.get_event_loop().run_in_executor(None, t.ensure_loaded)
+            except Exception:
+                pass
+    return {
+        "coordizer": Path(new_coord).name if new_coord else None,
+        "kernel": Path(new_const).name if new_const else None,
+    }
 
 
 @app.get("/telemetry")

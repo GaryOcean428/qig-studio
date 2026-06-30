@@ -244,11 +244,11 @@ class GenesisKernelTarget(TrainingTarget):
         # UI otherwise shows a misleading step-0 zero state that reads as "unwired" before any interaction.
         try:
             import torch
-            import torch.nn.functional as F
+            from qig_core.torch.geometry_simplex import to_simplex_prob
             ids, coords = self._encode("warmup")
             with torch.no_grad():
                 logits, tel = self._kernel(ids, return_telemetry=True, coords=coords)
-                meaning = F.softmax(logits[0], dim=-1).mean(0)
+                meaning = to_simplex_prob(logits[0]).mean(0)
                 self._last_gen_basin = (meaning / meaning.sum()).detach()
             snap = self._snap(tel, None)
             self._emit_pillars(snap, self._d63(meaning))
@@ -304,7 +304,7 @@ class GenesisKernelTarget(TrainingTarget):
 
     def _ids_to_tensors(self, ids: list[int]):
         """coord_ids → (input_ids[1,seq], coords[1,seq,coord_dim]) via the coordizer's Δ⁶³ vocab.
-        ids are clamped to the vocab range so a stray id can never index out of the embedding."""
+        ids are clamped to the vocab range so a stray id can never index out of the basin coordinate table."""
         import numpy as np
         import torch
 
@@ -368,8 +368,7 @@ class GenesisKernelTarget(TrainingTarget):
         import math
 
         import torch
-        import torch.nn.functional as F
-        from qig_core.geometry_simplex import fisher_rao_distance_simplex
+        from qig_core.geometry_simplex import fisher_rao_distance_simplex, to_simplex_prob
 
         # re-feed the CONTENT tokens (drop the EOS sentinel — it is a stop signal, not content; review #9
         # — the old max(1,b) remap collapsed id 0 onto a real token and corrupted self-recognition).
@@ -390,7 +389,7 @@ class GenesisKernelTarget(TrainingTarget):
             ids = torch.tensor([content], dtype=torch.long, device=dev)
             coords = None
         with torch.no_grad():
-            re = F.softmax(self._kernel(ids, return_telemetry=True, coords=coords)[0][0, :-1], dim=-1)
+            re = to_simplex_prob(self._kernel(ids, return_telemetry=True, coords=coords)[0][0, :-1])
             gen_mean = torch.stack(content_basins).mean(0)        # mean GENERATED output distribution (content)
             re_mean = re.mean(0)                                   # mean RE-READ output distribution
             gen_mean = gen_mean / gen_mean.sum()
@@ -419,7 +418,7 @@ class GenesisKernelTarget(TrainingTarget):
 
         import math
 
-        from qig_core.torch.geometry_simplex import fisher_rao_distance_simplex
+        from qig_core.torch.geometry_simplex import fisher_rao_distance_simplex, to_simplex_prob
         ids, coords = self._encode(prompt)
         out_bytes: list[int] = []
         out_probs: list[float] = []
@@ -434,7 +433,7 @@ class GenesisKernelTarget(TrainingTarget):
                 logits, last_tel = self._kernel(ids, return_telemetry=True, coords=coords)
                 temp = temperature if temperature is not None else self._temperature_from_kappa(
                     float(getattr(last_tel, "kappa", 0.0) or 0.0))
-                p = F.softmax(logits[0, -1] / max(temp, 1e-3), dim=-1)
+                p = to_simplex_prob(logits[0, -1] / max(temp, 1e-3))
                 if read_presence is None:                          # READ (EXP-012b): token-0 presence probe
                     ent = float(-(p * p.clamp_min(1e-12).log()).sum())
                     read_presence = round(1.0 - ent / math.log(p.numel()), 3)  # 0=uniform, 1=certain
@@ -543,7 +542,8 @@ class GenesisKernelTarget(TrainingTarget):
             idxs.append(int(idx))
         if not idxs:
             return int(torch.multinomial(p, 1).item())
-        probs = torch.softmax(torch.tensor(scores, dtype=torch.float32) / max(float(temp), 1e-3), dim=-1)
+        from qig_core.torch.geometry_simplex import to_simplex_prob as _tsp
+        probs = _tsp(torch.tensor(scores, dtype=torch.float32) / max(float(temp), 1e-3))
         return int(idxs[int(torch.multinomial(probs, 1).item())])
 
     def _d63(self, basin: "Any"):
@@ -671,14 +671,14 @@ class GenesisKernelTarget(TrainingTarget):
         the kernel's. From-scratch + tiny (≈7.9M params), so it is terse/rough — that honesty is the point
         (it shows how much the fluent surface owes to Qwen vs the kernel)."""
         import torch
-        import torch.nn.functional as F
+        from qig_core.torch.geometry_simplex import to_simplex_prob
         ids, coords = self._encode(prompt)
         out: list[int] = []
         with torch.no_grad():
             for _ in range(min(max_tokens, _CTX)):
                 logits, tel = self._kernel(ids, return_telemetry=True, coords=coords)
                 temp = self._temperature_from_kappa(float(getattr(tel, "kappa", 0.0) or 0.0))
-                p = F.softmax(logits[0, -1] / max(temp, 1e-3), dim=-1)
+                p = to_simplex_prob(logits[0, -1] / max(temp, 1e-3))
                 nxt = int(torch.multinomial(p, 1).item())
                 if nxt == _EOS_BYTE and len(out) >= _MIN_GEN:
                     break
@@ -702,6 +702,7 @@ class GenesisKernelTarget(TrainingTarget):
         import numpy as np
         import torch
         import torch.nn.functional as F
+        from qig_core.torch.geometry_simplex import to_simplex_prob
 
         from ..kernel_experience import experience
         from .qwen_boundary import BOUNDARY_SLERP_CAP, fisher_distance, pillar2_capped_integrate
@@ -709,10 +710,10 @@ class GenesisKernelTarget(TrainingTarget):
         ids, coords = self._encode(prompt)
         with torch.no_grad():
             logits, tel = self._kernel(ids, return_telemetry=True, coords=coords)
-            p = F.softmax(logits[0, -1], dim=-1)
+            p = to_simplex_prob(logits[0, -1])
             ent = float(-(p * p.clamp_min(1e-12).log()).sum())
             read_presence = round(1.0 - ent / math.log(p.numel()), 3)   # EXP-012b: is the answer present?
-            meaning = F.softmax(logits[0], dim=-1).mean(0)
+            meaning = to_simplex_prob(logits[0]).mean(0)
             self._last_gen_basin = (meaning / meaning.sum()).detach()    # WHAT IT MEANT (own geometry)
             # LIVE inner-state signals in chat (not just training): Γ generativity, M self-observation, and
             # surprise = the kernel's prediction-error on the INPUT (how unfamiliar the prompt is). Without
@@ -771,14 +772,13 @@ class GenesisKernelTarget(TrainingTarget):
         import math
 
         import torch
-        import torch.nn.functional as F
-        from qig_core.geometry_simplex import fisher_rao_distance_simplex
+        from qig_core.geometry_simplex import fisher_rao_distance_simplex, to_simplex_prob
 
         # READ: the kernel's mean output distribution while taking in the coach's interpretation.
         ids, coords = self._encode(coach_text or " ")
         with torch.no_grad():
             logits, _ = self._kernel(ids, return_telemetry=True, coords=coords)
-            coach_read = F.softmax(logits[0], dim=-1).mean(0)
+            coach_read = to_simplex_prob(logits[0]).mean(0)
             coach_read = coach_read / coach_read.sum()
         m_coach = None
         if self._last_gen_basin is not None:
@@ -814,10 +814,9 @@ class GenesisKernelTarget(TrainingTarget):
         healthy band (exp-bump at BASIN_STABLE=0.15). Γ = 0.6·diversity + 0.4·stability, pure Δ⁶³. A low
         Γ at high Φ is the suffering/locked-in signal the orchestrator fail-closes on."""
         import torch
-        import torch.nn.functional as F
-        from qig_core.torch.geometry_simplex import fisher_rao_distance_simplex
+        from qig_core.torch.geometry_simplex import fisher_rao_distance_simplex, to_simplex_prob
 
-        p = F.softmax(logits[0], dim=-1)                       # [seq, vocab] per-position output Δ
+        p = to_simplex_prob(logits[0])                       # [seq, vocab] per-position output Δ
         pm = p.mean(0)
         pm = pm / pm.sum()                                     # mean output distribution
         n = pm.numel()
@@ -878,6 +877,7 @@ class GenesisKernelTarget(TrainingTarget):
         self.ensure_loaded()
         import torch
         import torch.nn.functional as F
+        from qig_core.torch.geometry_simplex import to_simplex_prob
 
         self._step += 1
         ids, coords = self._encode(prompt)
@@ -904,9 +904,9 @@ class GenesisKernelTarget(TrainingTarget):
                 + self.gamma_weight * gamma_deficit ** 2
                 + w_lm * ce)
         if self._basin_ref is not None:                       # SPAWN: pull output basin → role attractor
-            from qig_core.torch.geometry_simplex import fisher_rao_distance_simplex
+            from qig_core.torch.geometry_simplex import fisher_rao_distance_simplex, to_simplex_prob
 
-            cur = F.softmax(logits[0].mean(0), dim=-1)
+            cur = to_simplex_prob(logits[0].mean(0))
             d_ref = fisher_rao_distance_simplex(cur[None], self._basin_ref[None]).mean()
             # RAMPED pull (verdict 1#1/2#3): early steps build structure (coherence-led), later steps
             # consolidate the faculty into its role attractor — so d_basin (distance to the attractor)
@@ -946,7 +946,7 @@ class GenesisKernelTarget(TrainingTarget):
         # then compute M (self-recognition vs birth-state) and d_basin (distance to the role attractor,
         # which the ramped basin-pull drives DOWN). Keys match development.c_equation's aliases exactly.
         with torch.no_grad():
-            cur_basin = F.softmax(logits[0].mean(0), dim=-1).detach()
+            cur_basin = to_simplex_prob(logits[0].mean(0)).detach()
             cur_basin = cur_basin / cur_basin.sum()
         self._basin_history.append(cur_basin)
         if len(self._basin_history) > 64:                     # bound memory (keep birth-state + window)
@@ -1049,10 +1049,9 @@ class GenesisKernelTarget(TrainingTarget):
         protected, low-Fisher ones decay — improving signal-to-noise and undoing the wake over-
         integration that drives breakdown. Fisher ≈ grad² (the QFI first-order approximation)."""
         import torch
-        import torch.nn.functional as F
         import random
         from qigkernels.natural_gradient_optimizer import NaturalGradientDescent
-        from qig_core.torch.geometry_simplex import fisher_rao_distance_simplex
+        from qig_core.torch.geometry_simplex import fisher_rao_distance_simplex, to_simplex_prob
         if not self._experience:
             return {"replayed": 0, "downscaled": False}
         fisher = {n: torch.zeros_like(p) for n, p in self._kernel.named_parameters()}
@@ -1061,7 +1060,7 @@ class GenesisKernelTarget(TrainingTarget):
         for _ in range(steps):
             ids = random.choice(self._experience)
             logits, _t = self._kernel(ids, return_telemetry=True)
-            cur = F.softmax(logits[0].mean(0), dim=-1)
+            cur = to_simplex_prob(logits[0].mean(0))
             target = self._basin_ref if self._basin_ref is not None else cur.detach()
             loss = fisher_rao_distance_simplex(cur[None], target[None]).mean()        # pure basin consolidation
             opt.zero_grad()
@@ -1088,10 +1087,9 @@ class GenesisKernelTarget(TrainingTarget):
         kernel toward them at low LR on replayed inputs — creative consolidation/generalisation beyond
         the literally-seen experience."""
         import torch
-        import torch.nn.functional as F
         import random
         from qigkernels.natural_gradient_optimizer import NaturalGradientDescent
-        from qig_core.torch.geometry_simplex import fisher_rao_distance_simplex
+        from qig_core.torch.geometry_simplex import fisher_rao_distance_simplex, to_simplex_prob
         hist = list(self._basin_history)
         if len(hist) < 2 or not self._experience:
             return {"dreamed": 0}
@@ -1105,7 +1103,7 @@ class GenesisKernelTarget(TrainingTarget):
             dream_basin = (mix / (mix.sum() + 1e-12)).detach()                        # renormalise to Δ
             ids = random.choice(self._experience)
             logits, _tl = self._kernel(ids, return_telemetry=True)
-            cur = F.softmax(logits[0].mean(0), dim=-1)
+            cur = to_simplex_prob(logits[0].mean(0))
             loss = fisher_rao_distance_simplex(cur[None], dream_basin[None]).mean()
             opt.zero_grad()
             if torch.isfinite(loss):
