@@ -1063,6 +1063,7 @@ class ScreenRequest(BaseModel):
     steps: int = 600               # SHORT equal budget per config
     device: str = "cuda"           # 4GB-card guard: cpu fallback on a CUDA OOM/absence
     lang_loss: str = "fisher_rao"  # held identical across configs
+    coordizer: str | None = None   # the SCREEN coordizer (the fast 32k avenue one); None → the active mind's
 
 
 @app.post("/screen", response_model=None)
@@ -1095,7 +1096,10 @@ async def screen(req: ScreenRequest, _: None = Depends(verify_key)) -> Streaming
 
     reg = _registry()
     s = getattr(app.state, "settings", None)
-    coordizer = _active_coordizer()
+    # The screen builds FRESH configs on the SCREEN coordizer (the fast 32k avenue one, req.coordizer); the
+    # active mind's coordizer (e.g. the 100k) is a DIFFERENT, slower vocab that OOMs the geometric configs.
+    from .optimisation import load_coordizer
+    coordizer = load_coordizer(req.coordizer) if req.coordizer else _active_coordizer()
     provider = CurriculumProvider(LossRegime.GEOMETRIC, curriculum_dir=getattr(s, "curriculum_dir", None))
     try:
         passages = load_heldout_passages()
