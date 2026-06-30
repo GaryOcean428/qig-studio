@@ -30,6 +30,11 @@ dependencies = [
     "httpx>=0.26.0",
     "qig-core>=2.12.2",   # Δ⁶³ Fisher-Rao geometry + consciousness (pillars/sensations/neurochemistry) — numpy-only, light
     "qig-warp>=0.6.4",    # convergence early-stop lever (check_ci_stabilized) + screening_cutoff — numpy-only, light
+    # ARM A (neocortex geocoding GeoModel cortex). Installed EDITABLE from the sibling submodule via
+    # [tool.uv.sources] below (matches the qigkernels/qig-coordizer dev pattern; co-developed). The >=0.1.1
+    # floor pins the published version a non-editable consumer resolves — the version the coords-off
+    # faithfulness + loss-value parity (both ≤1e-5) passed against (editable SHA recorded in the Phase-4 note).
+    "qig-geocoding>=0.1.1",
 ]
 # qig-compute IS NOW A KERNEL DEP (above): its metric-GENERIC differential geometry
 # (parameter_manifold.compute_full_curvature) powers the REAL response-manifold Ricci that replaced the
@@ -78,3 +83,6 @@ target-version = "py311"
 [[tool.mypy.overrides]]
 module = ["textual.*", "qigkernels.*", "qig_coordizer.*", "qig_warp.*", "qig_applied.*", "qig_consciousness.*"]
 ignore_missing_imports = true
+
+[tool.uv.sources]
+qig-geocoding = { path = "../qig-geocoding", editable = true }

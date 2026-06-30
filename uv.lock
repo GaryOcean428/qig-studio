@@ -1170,6 +1170,25 @@ wheels = [
 ]
 
 [[package]]
+name = "qig-geocoding"
+version = "0.1.1"
+source = { editable = "../qig-geocoding" }
+dependencies = [
+    { name = "qig-core" },
+    { name = "torch" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.11" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8" },
+    { name = "qig-core", specifier = ">=2.6.0" },
+    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.6" },
+    { name = "torch", specifier = ">=2.2" },
+]
+provides-extras = ["dev"]
+
+[[package]]
 name = "qig-studio"
 version = "0.1.0"
 source = { editable = "." }
@@ -1178,6 +1197,7 @@ dependencies = [
     { name = "httpx" },
     { name = "pydantic" },
     { name = "qig-core" },
+    { name = "qig-geocoding" },
     { name = "qig-warp" },
     { name = "uvicorn", extra = ["standard"] },
 ]
@@ -1208,6 +1228,7 @@ requires-dist = [
     { name = "qig-compute", marker = "extra == 'kernel'", specifier = ">=0.9.1" },
     { name = "qig-coordizer", marker = "extra == 'kernel'", specifier = ">=0.1.1" },
     { name = "qig-core", specifier = ">=2.12.2" },
+    { name = "qig-geocoding", editable = "../qig-geocoding" },
     { name = "qig-warp", specifier = ">=0.6.4" },
     { name = "qigkernels", marker = "extra == 'kernel'", specifier = ">=0.4.2" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.1.0" },
