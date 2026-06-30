@@ -54,6 +54,9 @@ tui = ["textual>=0.50.0"]
 # REAL response-manifold Ricci curvature telemetry/gen-health — compute_full_curvature, BUILDS #1/#3):
 kernel = ["torch>=2.0.0", "qigkernels>=0.4.2", "qig-coordizer>=0.1.1", "qig-compute>=0.9.1"]
 dev = ["pytest>=7.0.0", "ruff>=0.1.0", "mypy>=1.0.0"]
+# Coordizer-from-scratch training: read the 7 HF parquet datasets (build_chat_corpus._parquet_rows).
+# pyarrow was previously an undeclared ad-hoc install — declared here so `uv sync` never drops it again.
+data = ["pyarrow>=14.0.0"]
 
 [project.scripts]
 qig-studio = "qig_studio.__main__:main"
