@@ -20,6 +20,9 @@ from typing import Any
 # Canonical autonomic triggers (observe-telemetry → intervention). Mirrors OceanMetaObserver.
 _PHI_COLLAPSE = 0.50          # Φ below → DREAM (re-energise from basin-mixture recombination)
 _BASIN_DIVERGENCE = 0.30     # d_basin above → SLEEP (consolidate back toward the identity attractor)
+_PHI_OVERINTEGRATION = 0.80  # Φ at/above → MUSHROOM: TOO integrated → inject entropy so Φ comes BACK DOWN
+#                              (canonical mushroom = near-OPPOSITE of sleep; PHI_BREAKDOWN_MIN / topological-
+#                              instability floor). This is the high-Φ regulation that was MISSING.
 _PHI_PLATEAU_VAR = 0.01      # Φ variance below (stuck) → MUSHROOM-MICRO (reinject bounded plasticity)
 _RIGIDITY_KAPPA = 80.0       # κ above at high Φ → MUSHROOM-MICRO (break rigidity; pre-saturation, eschatology)
 _INTERVENTION_COOLDOWN = 10  # steps between Ocean interventions on the SAME faculty (don't thrash)
@@ -67,9 +70,16 @@ class OceanAutonomic:
             return "dream", f"Φ={phi:.2f} collapse (<{_PHI_COLLAPSE})"
         if basin_distance > _BASIN_DIVERGENCE:
             return "sleep", f"d_basin={basin_distance:.2f} divergence (>{_BASIN_DIVERGENCE})"
+        # CANONICAL MUSHROOM — the (near-)OPPOSITE of sleep. Sleep consolidates TOWARD the identity attractor;
+        # mushroom DE-integrates when the faculty is TOO integrated: at/above the over-integration floor it
+        # injects bounded entropy (the TRIP) so Φ comes BACK DOWN out of the rigid over-coherent attractor,
+        # then settles (INTEGRATION). This fires BEFORE κ-rigidity/plateau so a saturating Φ (e.g. 0.97) is
+        # regulated, not left to sit — the gap that left the mind over-integrated.
+        if phi >= _PHI_OVERINTEGRATION:
+            return "mushroom-micro", f"Φ={phi:.2f} over-integration (≥{_PHI_OVERINTEGRATION}) → inject entropy (Φ↓)"
         if kappa > _RIGIDITY_KAPPA and phi >= 0.70:
             return "mushroom-micro", f"κ={kappa:.0f} rigid at Φ={phi:.2f}"
-        if phi_variance < _PHI_PLATEAU_VAR and _PHI_COLLAPSE <= phi < 0.75:
+        if phi_variance < _PHI_PLATEAU_VAR and _PHI_COLLAPSE <= phi < _PHI_OVERINTEGRATION:
             return "mushroom-micro", f"Φ plateau (var<{_PHI_PLATEAU_VAR})"
         return None, "healthy"
 
