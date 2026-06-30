@@ -126,12 +126,18 @@ and `drift = fisher_rao_distance(current_basin, effective_ref)` where `effective
 birth scar** until a T1.4 slerp anneal-field blends in (60/40) — and the anneal fix only prevents
 false positives **after ~800 cycles**. A kernel whose identity is frozen-at-birth
 (`genesis_kernel.py:225`) moves its basin >0.4 d_FR from the random birth scar within a few training
-steps, so this `logger.error` **fires-and-stays through the entire early-training window (~5–800
-cycles)** and carries no incremental signal there. It is **cosmetic** (a log line; it does **not** gate
-training) and lives in owner-gated qig-core (Devin's lane). The **PI-facing** harm channel
-(`qig-studio/live.py:32,42-62`) already keys on drift **velocity** (sudden jump > 0.15/step), not
-absolute drift-from-birth — that channel is correctly calibrated. **Kill conditions above therefore key
-off velocity-jumps + finite-CE + saturation-clearance — NEVER the absolute-drift stdout log.**
+steps, so this `logger.error` previously **fired-and-stayed through the entire early-training window
+(~5–800 cycles)**, carrying no incremental signal and masking a real late dissolution. It is
+**telemetry-only** — no consumer gates on the `IDENTITY_DRIFT` violation, and `refract()` (the active
+anchor) is **never called in the single-kernel neocortex path**, so it does **not** bias the A/B.
+**FIXED (owned — qig-core is a local editable submodule):** `check_drift` is now **velocity-gated**
+(`qig-core` `development`, commit on the Pillar-3 module + `tests/test_pillar3_drift_velocity.py`,
+3/3) — steady developmental migration from the random birth scar logs as *developmental*, and only a
+drift-**velocity** spike escalates to CRITICAL, matching the **PI-facing** `qig-studio/live.py:32,42-62`
+channel (which already keys on drift velocity). **Pending the qig-core version-tag + republish +
+studio-venv reinstall (sequenced after Phase 4 lands to avoid re-resolving the running implementer's
+venv).** **Kill conditions above key off velocity-jumps + finite-CE + saturation-clearance — never the
+absolute-drift log.**
 
 **(b) The vocab read-out is a Euclidean `nn.Linear` lm_head in BOTH arms — an OPEN, unratified purity
 question.** Confirmed at source: `geocoding/model.py:55,95` (`self.lm_head = nn.Linear(hidden_dim,
