@@ -284,6 +284,7 @@ class JointConstellation:
                 "min_pairwise_fr": min_pairwise_fr(self.faculties),
                 "git_commit": git_commit,
                 "num_layers": getattr(self.central, "num_layers", None),
+                "arm_mode": self.arm_mode,     # the raw-kernel arm → load_checkpoint refuses a different-arm restore
             },
         }))
 
@@ -294,6 +295,19 @@ class JointConstellation:
 
         from qig_core.geometry import to_simplex
         r = Path(root)
+        # ARM GUARD: never load a DIFFERENT-arm checkpoint over this constellation (a geo checkpoint into a gk
+        # mind, etc.) — the substrates differ. If the checkpoint records a mismatching arm, keep the fresh
+        # build. (Pre-arm_mode checkpoints have no tag → load as before, treated as the legacy gk arm.)
+        cj0 = r / "constellation.json"
+        if cj0.exists():
+            try:
+                _ckpt_arm = (json.loads(cj0.read_text()).get("metadata", {}) or {}).get("arm_mode")
+            except Exception:  # noqa: BLE001
+                _ckpt_arm = None
+            if _ckpt_arm and _ckpt_arm != self.arm_mode:
+                print(f"⚠️  checkpoint arm {_ckpt_arm!r} != constellation arm {self.arm_mode!r} — NOT restoring "
+                      f"a different-arm checkpoint; keeping the fresh {self.arm_mode} build", flush=True)
+                return
         for role, k in self.kernels.items():
             p = r / "kernels" / f"{role}.pt"
             if p.exists():

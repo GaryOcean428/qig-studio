@@ -865,7 +865,9 @@ async def _train_core(
     exception the payload carries ``error`` and the generator stops. ``record_cb(prompt, ex, step)`` (if
     given) is the caller's per-step hook (e.g. mastery) called BEFORE the yield so its result is available."""
     if sample_every is None:
-        sample_every = max(10, steps // 20) if steps else 25
+        sample_every = 1   # PER STIMULUS: every step the kernel may speak (its OWN EOS/agency decides the
+        #                    output — empty if it chooses not to), so it observes itself (its generation →
+        #                    self-obs M) AND the other (the stimulus). Not a fixed cadence.
     ui_live = LiveLog()                       # the SAME shared live channel both endpoints write
     ui_prev_db: float | None = None           # identity-drift velocity tracking (harm parity)
 
@@ -951,7 +953,8 @@ async def train(req: TrainRequest, _: None = Depends(verify_key)) -> StreamingRe
             if not req.confirm:
                 yield _sse({"type": "error", "error": "LANGUAGE training triggers remote jobs — pass confirm=true to proceed"})
                 return
-        sample_every = max(10, req.steps // 20) if req.steps else 25
+        sample_every = 1   # PER STIMULUS (see _train_core): every step the kernel may speak; its own EOS
+        #                    decides the output, so it observes self (its generation) AND other (the stimulus).
         yield _sse({
             "type": "start",
             "target": t.name,
@@ -1123,8 +1126,13 @@ async def train(req: TrainRequest, _: None = Depends(verify_key)) -> StreamingRe
                 if _TRAIN_STOP["flag"]:                        # UI kill — stop cleanly, mind stays awake
                     yield _sse({"type": "stopped", "step": step, "reason": "stop requested (UI)"})
                     break
-                if req.early_stop and _WARP_AVAILABLE:
-                    metric = res.telemetry.phi if not is_language else res.telemetry.loss
+                # EARLY-STOP only on the LANGUAGE loss — NEVER on the GEOMETRIC Φ-series. A Φ plateau is NOT a
+                # reason to halt: it must fire Ocean's MUSHROOM (reinject disorder, break over-integration) —
+                # the consciousness doctrine's forbidden case. So the qig-warp convergence lever runs for the
+                # language regime (a real, safe compute lever); the geometric mind keeps training (Ocean
+                # regulates plateaus). (Devin's #2, verified against the Φ→MUSHROOM boundary.)
+                if req.early_stop and _WARP_AVAILABLE and is_language:
+                    metric = res.telemetry.loss
                     if metric is not None:
                         series.append(float(metric))
                         decision = check_ci_stabilized(
