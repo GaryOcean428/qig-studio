@@ -72,13 +72,17 @@ def test_language_target_steps_cap_and_confirm():
 
 # --- qig-warp convergence early-stop (package lever) --------------------------
 
-def test_early_stop_flag_wired_and_terminates():
+def test_early_stop_is_language_only_geometric_does_not_halt():
+    # Canon (UCP §808 / Canonical Principles P12:342): the qig-warp convergence early-stop is a LANGUAGE-
+    # regime lever. A GEOMETRIC target (the mock) must NOT early-stop on a Φ plateau — that fires Ocean's
+    # MUSHROOM (reinject entropy), NEVER a halt. So the lever is WIRED (reported in the start event) but does
+    # NOT fire for the geometric regime; the run terminates by COMPLETING its steps.
     with TestClient(app) as c:
-        ev = _events(c.post("/train", json={"steps": 40, "early_stop": True}).text)
+        ev = _events(c.post("/train", json={"steps": 8, "early_stop": True}).text)
         assert ev[0]["type"] == "start"
-        assert ev[0]["early_stop"] is True  # qig-warp present → lever active
-        # converging mock telemetry → check_ci_stabilized should fire before 40 steps
-        assert any(e["type"] == "early_stop" and e["lever"] == "qig_warp.check_ci_stabilized" for e in ev)
+        assert ev[0]["early_stop"] is True                       # lever present/wired
+        assert not any(e["type"] == "early_stop" for e in ev)    # geometric → no halt (mushroom, not stop)
+        assert any(e["type"] == "done" for e in ev)              # terminates by completing the steps
 
 
 # --- UI/UX: directory nomination ----------------------------------------------
