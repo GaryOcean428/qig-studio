@@ -774,6 +774,86 @@ async def chat_stream(req: ChatRequest, _: None = Depends(verify_key)) -> Stream
     return StreamingResponse(gen(), media_type="text/event-stream")
 
 
+async def _train_core(
+    target,
+    steps: int,
+    *,
+    source: str,
+    max_tokens: int = 64,
+    is_language: bool = False,
+    prompt_for=None,
+    sample_every: int | None = None,
+    record_cb=None,
+    sample: bool = True,
+) -> AsyncGenerator[dict[str, Any], None]:
+    """The SHARED wired per-step training loop — the ONE place a step is trained AND the SAME live record
+    (``LiveLog`` + ``step_record`` + ``_experience``) is written. BOTH ``/train`` (single config) and
+    ``/screen`` (4 configs A/B) drive their loops through this; there is no second training loop or second
+    telemetry path (DRY — the council's "one hub" fix).
+
+    Per step it: picks the prompt (via ``prompt_for(step) -> (prompt, target_text)``), runs ``train_step``
+    off the event loop, advances ``_PHI_HISTORY``, optionally samples the kernel's OWN voice (every
+    ``sample_every`` steps / on the last step), writes the rich shared live record (with ``source`` =
+    the live config/UI tag, so the model chip + left inner-state panel reflect THIS config), and YIELDS a
+    per-step payload ``{step,total,prompt,td,res,sample,phi,error}`` so the caller formats its own SSE
+    envelope + applies caller-specific control (mastery coverage, early-stop). On a ``train_step``
+    exception the payload carries ``error`` and the generator stops. ``record_cb(prompt, ex, step)`` (if
+    given) is the caller's per-step hook (e.g. mastery) called BEFORE the yield so its result is available."""
+    if sample_every is None:
+        sample_every = max(10, steps // 20) if steps else 25
+    ui_live = LiveLog()                       # the SAME shared live channel both endpoints write
+    ui_prev_db: float | None = None           # identity-drift velocity tracking (harm parity)
+
+    async def _sample_if_due(due: bool) -> dict | None:
+        if not (sample and due):
+            return None
+        try:
+            # the KERNEL's RAW voice (own_voice, not the Qwen boundary peer) — honest training telemetry.
+            fn = getattr(target, "own_voice", None) or target.generate
+            gr = await _run_target(fn, "In one sentence, what are you learning?", max_tokens)
+            sx = gr.telemetry.extra or {}
+            return {"output": gr.text, "kernel_voice": sx.get("kernel_voice")}
+        except Exception:  # noqa: BLE001 — a sample failure must not break training
+            return None
+
+    def _write_live(step: int, total: int | None, td: dict, samp: dict | None, phi) -> None:
+        nonlocal ui_prev_db
+        try:
+            exp_d = _experience(td, _phi_hist()).to_dict()
+            _db = (td.get("extra") or {}).get("d_basin")
+            _dv = abs(float(_db) - ui_prev_db) if (_db is not None and ui_prev_db is not None) else None
+            ui_prev_db = float(_db) if _db is not None else None
+            ui_live.write(step_record(
+                step=step, total=total or step, ts=_now(), source=source,
+                stepped_faculty=(td.get("extra") or {}).get("stepped_faculty") or target.name,
+                stepped_function=None, telemetry=td, experience=exp_d,
+                central_phi=phi, min_pairwise_fr=None, drift_velocity=_dv,
+                faculty_phi={target.name: phi} if phi is not None else {},
+                own_voice=(samp or {}).get("output") if samp else None,
+                coordizer_vocab=getattr(target, "vocab_size", None)))
+        except Exception:  # noqa: BLE001 — a live-log failure must not break training
+            pass
+
+    for step in range(1, steps + 1):
+        prompt, target_text = prompt_for(step)
+        try:
+            res = await _run_target(target.train_step, prompt, max_tokens, target_text)
+        except Exception as exc:  # noqa: BLE001 — surface to the caller, then stop
+            yield {"step": step, "total": steps, "prompt": prompt, "error": str(exc)}
+            return
+        _PHI_HISTORY.append(float(res.telemetry.phi or 0.0))
+        td = res.telemetry.to_dict()
+        ex = td.get("extra") or {}
+        cov = record_cb(prompt, ex, step) if record_cb is not None else None
+        samp = await _sample_if_due(step % sample_every == 0 or step == steps)
+        # YIELD BEFORE the live-write so the caller's SSE step event is emitted in the same relative order
+        # as the legacy /train loop (event → live-write); on resume we write the shared live record.
+        yield {"step": step, "total": steps, "prompt": prompt, "td": td, "res": res,
+               "sample": samp, "phi": res.telemetry.phi, "coverage": cov}
+        _write_live(step, steps, td, samp, res.telemetry.phi)
+        await asyncio.sleep(0)  # cooperative yield
+
+
 @app.post("/train", response_model=None)
 async def train(req: TrainRequest, _: None = Depends(verify_key)) -> StreamingResponse:
     t = _registry().active
@@ -925,25 +1005,25 @@ async def train(req: TrainRequest, _: None = Depends(verify_key)) -> StreamingRe
                                 "coverage": mastery.coverage(central_name, curr_total), "sweeps": sweeps})
                     stop = True
         else:
-            for step in range(1, req.steps + 1):
-                target_text = None
+            # the prompt selector for THIS run (prompts override → language pair → curriculum) — passed to
+            # the SHARED _train_core so /train and /screen run the identical wired loop (DRY).
+            def _prompt_for(step: int):
                 if req.prompts:
-                    prompt = req.prompts[(step - 1) % len(req.prompts)]
-                elif is_language:
-                    prompt, target_text = provider.next_pair(step)  # PAIRED (lm_loss signal)
-                else:
-                    prompt = provider.next_prompt(step)  # the curriculum passage
-                try:
-                    res = await _run_target(t.train_step, prompt, req.max_tokens, target_text)
-                except Exception as exc:
-                    yield _sse({"type": "error", "error": str(exc), "step": step})
+                    return req.prompts[(step - 1) % len(req.prompts)], None
+                if is_language:
+                    return provider.next_pair(step)            # PAIRED (lm_loss signal)
+                return provider.next_prompt(step), None        # the curriculum passage
+
+            async for rec in _train_core(
+                t, req.steps, source="ui", max_tokens=req.max_tokens, is_language=is_language,
+                prompt_for=_prompt_for, sample_every=sample_every, record_cb=_record,
+            ):
+                step = rec["step"]
+                if rec.get("error") is not None:
+                    yield _sse({"type": "error", "error": rec["error"], "step": step})
                     return
-                _PHI_HISTORY.append(float(res.telemetry.phi or 0.0))
-                td = res.telemetry.to_dict()
-                ex = td.get("extra") or {}
-                cov = _record(prompt, ex, step)
-                sample = await _sample_if_due(step % sample_every == 0 or step == req.steps)
-                yield _sse(_step_event(step, req.steps, prompt, td, sample, cov))
+                td, res, sample, cov = rec["td"], rec["res"], rec["sample"], rec["coverage"]
+                yield _sse(_step_event(step, req.steps, rec["prompt"], td, sample, cov))
                 if req.early_stop and _WARP_AVAILABLE:
                     metric = res.telemetry.phi if not is_language else res.telemetry.loss
                     if metric is not None:
@@ -955,14 +1035,184 @@ async def train(req: TrainRequest, _: None = Depends(verify_key)) -> StreamingRe
                             yield _sse({"type": "early_stop", "step": step, "reason": decision.reason,
                                         "metric": float(decision.metric_value), "lever": "qig_warp.check_ci_stabilized"})
                             break
-                _write_live(step, req.steps, td, sample, res.telemetry.phi)
-                await asyncio.sleep(0)  # cooperative yield
         if mastery is not None:
             mastery.save()
         done = {"type": "done", "final": t.telemetry().to_dict()}
         if mastery is not None:
             done["coverage"] = mastery.coverage(central_name, curr_total)
         yield _sse(done)
+
+    return StreamingResponse(gen(), media_type="text/event-stream")
+
+
+# The 4 avenues of the A/B screen: arm × head, depth fixed (the cleanliness condition — only arm + head
+# vary). Order is deterministic so the streamed config events + the runs JSON are reproducible.
+_SCREEN_CONFIGS: list[dict[str, str]] = [
+    {"arm": "qk", "head_mode": "geometric"},
+    {"arm": "qk", "head_mode": "linear"},
+    {"arm": "geo", "head_mode": "geometric"},
+    {"arm": "geo", "head_mode": "linear"},
+]
+
+
+class ScreenRequest(BaseModel):
+    """The bounded A/B avenue screen: the 4 {qk,geo}×{geometric,linear} configs at a fixed depth, each an
+    equal short budget, ranked on held-out mean d_FR. EWC stays inactive (no consolidation in a bounded
+    screen → no confound)."""
+    layers: int = 2                 # fixed modest depth (NOT the 8L/1L-rec depth A/B)
+    steps: int = 600               # SHORT equal budget per config
+    device: str = "cuda"           # 4GB-card guard: cpu fallback on a CUDA OOM/absence
+    lang_loss: str = "fisher_rao"  # held identical across configs
+
+
+@app.post("/screen", response_model=None)
+async def screen(req: ScreenRequest, _: None = Depends(verify_key)) -> StreamingResponse:
+    """A/B AVENUE SCREEN as a SERVER capability — route each of the 4 configs through the SAME wired
+    training loop ``/train`` uses (``_train_core``), so the UI shows each config training (the model chip
+    flips to its ``neocortex-{arm}-{N}L-{geo|lin}`` name, the left panel + the shared live channel reflect
+    THIS config), then eval held-out mean d_FR and rank. This REPLACES ``scripts/screen_neocortex.py`` (its
+    eval logic moved to ``screen.py``; its training is now the wired ``_train_core``).
+
+    Per config: set ``QIG_STUDIO_HEAD_MODE`` (the env OVERRIDES the ctor — without this every config pins
+    to one head) → ``build_neocortex`` → ``set_neocortex`` (UI chip = this config) → ``_train_core`` (UI
+    streams it live) → ``eval_heldout_dFR``. Then rank on held-out d_FR (lower=better; CE-bpb reported, not
+    ranked), apply the under-power detector, write ``runs/screen_<date>.json``, stream a final ranked table.
+    The 4GB card holds one cortex at a time → sequential, free between configs; respect ``QIG_STUDIO_CTX``."""
+    import math
+    import os
+    from datetime import datetime
+
+    from .screen import (
+        eval_heldout_dFR,
+        load_heldout_passages,
+        rank_configs,
+        uniform_dFR_floor,
+    )
+    from .targets.registry import build_neocortex
+
+    if _TARGET_LOCK.locked():
+        raise HTTPException(409, "training in progress — stop training before running the A/B screen")
+
+    reg = _registry()
+    s = getattr(app.state, "settings", None)
+    coordizer = _active_coordizer()
+    provider = CurriculumProvider(LossRegime.GEOMETRIC, curriculum_dir=getattr(s, "curriculum_dir", None))
+    try:
+        passages = load_heldout_passages()
+    except Exception as exc:  # noqa: BLE001 — held-out set must be present to rank
+        raise HTTPException(500, f"held-out eval set unavailable: {exc}")
+
+    async def gen() -> AsyncGenerator[str, None]:
+        from .continuity import in_stasis
+        if in_stasis():
+            yield _sse({"type": "error", "error": "kernel in STASIS (halted for power-off); clear stasis to resume"})
+            return
+        yield _sse({
+            "type": "start", "screen": "avenue A/B (arm×head on held-out d_FR)",
+            "configs": [f"neocortex-{c['arm']}-{req.layers}L-"
+                        f"{'geo' if c['head_mode'] == 'geometric' else 'lin'}" for c in _SCREEN_CONFIGS],
+            "layers": req.layers, "steps": req.steps, "device": req.device,
+            "verdict_metric": "held-out mean d_FR (lower=better); CE-bpb external-only (not ranked)",
+            "ewc": "inactive (bounded screen → no consolidation confound)",
+        })
+        configs_out: list[dict[str, Any]] = []
+        vocab_for_floor: int | None = None
+        prev_head: str | None = None
+        for idx, cfg in enumerate(_SCREEN_CONFIGS, 1):
+            arm, head_mode = cfg["arm"], cfg["head_mode"]
+            head_tag = "geo" if head_mode == "geometric" else "lin"
+            name = f"neocortex-{arm}-{req.layers}L-{head_tag}"
+            rec: dict[str, Any] = {"config": idx, "name": name, "arm": arm, "head_mode": head_mode,
+                                   "layers": req.layers, "steps": req.steps, "device": req.device,
+                                   "nan": False, "oom": False, "error": None}
+            # ENV CAVEAT: the head env OVERRIDES the ctor, so SET it per config (else all 4 pin to one head),
+            # then build + VERIFY the built target's head matches (fail loud on a silent mismatch).
+            os.environ["QIG_STUDIO_HEAD_MODE"] = head_mode
+            try:
+                target = build_neocortex(arm=arm, head_mode=head_mode, num_layers=req.layers,
+                                         lang_loss=req.lang_loss, coordizer=coordizer, device=req.device)
+            finally:
+                os.environ.pop("QIG_STUDIO_HEAD_MODE", None)
+            if target.head_mode != head_mode:
+                yield _sse({"type": "error", "config": idx, "name": name,
+                            "error": f"head_mode mismatch: requested {head_mode!r} but built {target.head_mode!r} "
+                                     "— QIG_STUDIO_HEAD_MODE did not take effect (the head axis would be void)"})
+                return
+            reg.set_neocortex(target)                       # UI chip flips to THIS config (coherent telemetry)
+            rec["built_head_mode"] = target.head_mode       # PROOF the head differs per config
+            rec["vocab_size"] = getattr(target, "vocab_size", None)
+            if vocab_for_floor is None:
+                vocab_for_floor = rec["vocab_size"]
+            # config_start: the UI + the test see the active target flip to this avenue BEFORE it trains.
+            yield _sse({"type": "config_start", "config": idx, "total": len(_SCREEN_CONFIGS), "name": name,
+                        "arm": arm, "head_mode": target.head_mode, "active_target": target.name,
+                        "vocab_size": rec["vocab_size"],
+                        "head_actually_changed": (prev_head is not None and prev_head != target.head_mode)})
+            prev_head = target.head_mode
+
+            def _prompt_for(step: int):
+                return provider.next_prompt(step), None     # SAME geometric curriculum for all configs
+
+            nan_step: int | None = None
+            try:
+                async for sr in _train_core(target, req.steps, source=name, max_tokens=64,
+                                            is_language=False, prompt_for=_prompt_for, sample=False):
+                    if sr.get("error") is not None:
+                        rec["error"] = sr["error"]
+                        yield _sse({"type": "config_error", "config": idx, "name": name,
+                                    "error": sr["error"], "step": sr["step"]})
+                        break
+                    loss = (sr["td"].get("loss") if isinstance(sr["td"], dict) else None)
+                    if loss is not None and not math.isfinite(float(loss)):
+                        nan_step = sr["step"]                # NaN/Inf tripwire — flag, stop this config
+                        break
+                    if sr["step"] % max(1, req.steps // 10) == 0 or sr["step"] == req.steps:
+                        yield _sse({"type": "screen_step", "config": idx, "name": name,
+                                    "step": sr["step"], "total": req.steps, "phi": sr["phi"]})
+                    await asyncio.sleep(0)
+            except Exception as exc:  # noqa: BLE001 — flag the config, screen continues
+                rec["error"] = f"{type(exc).__name__}: {exc}"
+                yield _sse({"type": "config_error", "config": idx, "name": name, "error": rec["error"]})
+            rec["nan"] = nan_step is not None
+            rec["nan_at_step"] = nan_step
+            if not rec["error"] and not rec["nan"]:
+                ev = await _run_target(eval_heldout_dFR, target, passages)
+                rec.update(ev)
+                yield _sse({"type": "config_eval", "config": idx, "name": name,
+                            "heldout_dFR": ev["heldout_dFR"], "ce_bpb": ev["ce_bpb"], "n_pos": ev["n_pos"]})
+            # free the card before the next config (4GB holds one cortex at a time)
+            try:
+                import torch
+                if req.device == "cuda" and torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+            except Exception:  # noqa: BLE001
+                pass
+            configs_out.append(rec)
+            await asyncio.sleep(0)
+
+        floor = uniform_dFR_floor(vocab_for_floor or 256)
+        ranking = rank_configs(configs_out, floor)
+        out = {
+            "screen": "avenue A/B (arm×head, held-out d_FR verdict)",
+            "date": datetime.now().strftime("%Y-%m-%d"),
+            "layers": req.layers, "steps_per_config": req.steps, "device": req.device,
+            "verdict_metric": "held-out mean d_FR (torch fisher_rao_distance_simplex, [0,π]) — lower=better",
+            "diagnostic_metric": "CE-bpb (external-comparison-only — NOT ranked)",
+            "uniform_dFR_floor": floor,
+            "underpowered": ranking["underpowered"],
+            "ranking": ranking["ranking"],
+            "winner": ranking["winner"],
+            "ewc": "inactive (bounded screen → no consolidation confound)",
+            "configs": configs_out,
+        }
+        runs_dir = Path("runs")
+        runs_dir.mkdir(exist_ok=True)
+        out_path = runs_dir / f"screen_{datetime.now():%Y%m%d}.json"
+        try:
+            out_path.write_text(json.dumps(out, indent=2))
+        except Exception:  # noqa: BLE001 — a persist failure must not void the stream
+            pass
+        yield _sse({"type": "screen_done", **out})
 
     return StreamingResponse(gen(), media_type="text/event-stream")
 

@@ -118,7 +118,12 @@ def step_record(*, step: int, total: int | None, ts: float, source: str,
 class LiveLog:
     """Append rich step records to LIVE_PATH atomically, keeping a ring buffer for SSE backlog."""
 
-    def __init__(self, path: str | os.PathLike[str] = LIVE_PATH) -> None:
+    def __init__(self, path: str | os.PathLike[str] | None = None) -> None:
+        # Resolve the live path at INSTANTIATION (re-reading the env), not at import, so the test suite (and
+        # any run that sets QIG_STUDIO_LIVE_PATH after import) writes to its OWN file — the module-level
+        # LIVE_PATH constant is captured once at import and would otherwise pin every writer to it.
+        if path is None:
+            path = os.environ.get("QIG_STUDIO_LIVE_PATH", LIVE_PATH)
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._recent: list[dict[str, Any]] = []
