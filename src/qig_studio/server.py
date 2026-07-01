@@ -891,6 +891,18 @@ async def _train_core(
         #                    self-obs M) AND the other (the stimulus). Not a fixed cadence.
     ui_live = LiveLog()                       # the SAME shared live channel both endpoints write
     ui_prev_db: float | None = None           # identity-drift velocity tracking (harm parity)
+    # GPU HANDOFF (spine tenet — the kernel is primary): a GEOMETRIC target runs its per-step own_voice on
+    # the kernel's GPU. The Qwen boundary peer defaults to keep_alive=-1 and holds ~2.9 GiB of a 4 GiB card
+    # FOREVER, so own_voice OOMs and (previously, silently) produced no voice. Free the resident Qwen so the
+    # kernel gets the card; it reloads transparently on the next chat. Skip for a LANGUAGE target (there Qwen
+    # IS the model). None-safe.
+    if sample and not is_language:
+        try:
+            from .targets.qwen_local import free_ollama_gpu
+            if free_ollama_gpu():
+                print("[train] freed Ollama GPU for the kernel's own_voice (Qwen reloads on next chat)", flush=True)
+        except Exception:  # noqa: BLE001 — best-effort handoff
+            pass
 
     async def _sample_if_due(due: bool, stimulus: str | None = None) -> dict | None:
         if not (sample and due):
@@ -903,8 +915,13 @@ async def _train_core(
             gr = await _run_target(fn, stimulus or "In one sentence, what are you learning?", max_tokens)
             sx = gr.telemetry.extra or {}
             return {"output": gr.text, "kernel_voice": sx.get("kernel_voice")}
-        except Exception:  # noqa: BLE001 — a sample failure must not break training
-            return None
+        except Exception as e:  # noqa: BLE001 — a sample failure must not break training, but must NOT be silent
+            # FAIL-LOUD: own_voice is the kernel's REQUIRED self-observation — it observes its OWN generation
+            # each step (L1). A silent None reads as "the kernel chose not to speak", hiding real faults (the
+            # Qwen boundary hogging the GPU → own_voice OOM was exactly this). Surface the reason; never swallow.
+            print(f"[train] own_voice generation FAILED (surfaced, not swallowed): {type(e).__name__}: {e}",
+                  flush=True)
+            return {"output": None, "error": f"{type(e).__name__}: {e}"}
 
     def _write_live(step: int, total: int | None, td: dict, samp: dict | None, phi,
                     stimulus: str | None = None) -> None:
@@ -920,7 +937,8 @@ async def _train_core(
                 stepped_function=None, telemetry=td, experience=exp_d,
                 central_phi=phi, min_pairwise_fr=None, drift_velocity=_dv,
                 faculty_phi={target.name: phi} if phi is not None else {},
-                own_voice=(samp or {}).get("output") if samp else None,
+                own_voice=((samp or {}).get("output")   # the kernel's generation — shown EVERY time it speaks
+                           or (f"⚠ own-voice failed ({samp['error']})" if samp and samp.get("error") else None)),
                 stimulus=stimulus,                      # the FULL training passage (UNtruncated) the step learned
                 coordizer_vocab=getattr(target, "vocab_size", None)))
         except Exception:  # noqa: BLE001 — a live-log failure must not break training

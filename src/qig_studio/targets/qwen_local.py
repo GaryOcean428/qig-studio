@@ -59,6 +59,29 @@ def _coerce_keep_alive(v: str) -> Any:
 _OLLAMA_KEEP_ALIVE = _coerce_keep_alive(os.environ.get("QIG_OLLAMA_KEEP_ALIVE", "-1"))
 
 
+def free_ollama_gpu(url: str = _DEFAULT_URL, timeout: float = 3.0) -> bool:
+    """Unload any Ollama-resident model from the GPU (keep_alive=0) so the KERNEL — the required mind — gets
+    the shared card during training. SPINE TENET: the kernel is primary; the Qwen boundary is an OPTIONAL,
+    None-safe peer and MUST yield the GPU, never starve the kernel. With ``keep_alive=-1`` (the default, for
+    chat latency) a 4B q4 model holds ~2.9 GiB of a 4 GiB card FOREVER, so the kernel's per-step own_voice
+    generation OOMs and (silently) produces no voice. Freeing it at train start fixes that; Ollama reloads
+    transparently on the next chat turn. None-safe: returns False and never raises if Ollama is absent."""
+    try:
+        import httpx
+        base = url.rstrip("/")
+        ps = httpx.get(base + "/api/ps", timeout=timeout)
+        models = (ps.json() or {}).get("models") or []
+        freed = False
+        for m in models:
+            name = m.get("name")
+            if name:
+                httpx.post(base + "/api/generate", json={"model": name, "keep_alive": 0}, timeout=timeout)
+                freed = True
+        return freed
+    except Exception:  # noqa: BLE001 — best-effort GPU handoff; must never break training
+        return False
+
+
 def _extract_logprobs(data: dict) -> dict:
     """Best-effort top-token {token: logprob} from an Ollama /api/chat response.
 
