@@ -67,11 +67,14 @@ class JointConstellation:
         # 100k+ case (which genuinely does NOT fit) is unchanged. Fail-safe: on OOM the caller lowers CTX.
         import torch as _torch
         _full_gpu = os.environ.get("QIG_STUDIO_FULL_GPU", "").strip().lower() in ("1", "true", "yes", "on")
-        _cuda_ok = (device == "cuda") and _torch.cuda.is_available()
+        _want_cuda = (device == "cuda")
+        _cuda_ok = _want_cuda and _torch.cuda.is_available()
+        # cuda requested but absent → fall back to cpu (never assign a device torch can't place tensors on).
+        _eff_dev = ("cuda" if _cuda_ok else "cpu") if _want_cuda else device
         _resident = _cuda_ok and not _full_gpu
         _all_cuda = _cuda_ok and _full_gpu
-        _fac_dev = "cuda" if _all_cuda else ("cpu" if _resident else device)
-        _cen_dev = "cuda" if (_resident or _all_cuda) else device
+        _fac_dev = "cuda" if _all_cuda else ("cpu" if _resident else _eff_dev)
+        _cen_dev = "cuda" if (_resident or _all_cuda) else _eff_dev
         if _all_cuda:
             print(f"[joint] FULL-GPU: central + {len(self.roles)} faculties all→cuda (QIG_STUDIO_FULL_GPU)",
                   flush=True)
