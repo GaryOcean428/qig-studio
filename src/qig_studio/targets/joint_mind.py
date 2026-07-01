@@ -164,9 +164,10 @@ class JointMindTarget(TrainingTarget):
         it as the latest kernel checkpoint (manifest + symlink) so the NEXT boot reloads THIS mind against a
         vocab-matched coordizer. Returns the root path. ``root`` overrides the auto-named lineage."""
         self.ensure_loaded()
-        from ..checkpoint_manifest import register_kernel_ckpt, versioned_ckpt_root
+        from ..checkpoint_manifest import prune_lineage, register_kernel_ckpt, versioned_ckpt_root
         vocab = int(getattr(self._mind.central, "vocab_size", 0) or 0)
-        if root is None:
+        _auto = root is None
+        if _auto:
             root = versioned_ckpt_root(f"genesis-{self.arm_mode}", vocab)
         from pathlib import Path
         Path(root).mkdir(parents=True, exist_ok=True)
@@ -177,6 +178,13 @@ class JointMindTarget(TrainingTarget):
             register_kernel_ckpt(root, notes=f"genesis {self.arm_mode}, vocab {vocab}")
         except Exception:  # noqa: BLE001 — a manifest write failure must not void a good checkpoint
             pass
+        if _auto:
+            # PRUNE the auto-named lineage to the newest 3 (each periodic save auto-increments _v{n}; without
+            # this the 100k run's ~1 GiB/12-min saves filled the disk). The just-written root is newest → kept.
+            try:
+                prune_lineage(f"genesis-{self.arm_mode}", vocab, keep=3)
+            except Exception:  # noqa: BLE001 — a prune failure must not void a good checkpoint
+                pass
         return root
 
     # ---- per-kernel inner state (the UI selector + /mind/kernels) -------------------------------------

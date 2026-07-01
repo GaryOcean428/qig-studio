@@ -91,6 +91,24 @@ def versioned_ckpt_root(stem: str, vocab: int, base_dir: str | Path = "runs/chec
     return str(d / f"{base}_v{n}")
 
 
+def prune_lineage(stem: str, vocab: int, keep: int = 3, base_dir: str | Path = "runs/checkpoints") -> int:
+    """Delete OLD versioned checkpoint dirs of a lineage (``{stem}-{vocab}_{date}_v{n}``), keeping the newest
+    ``keep`` by mtime. Without this, periodic ``save_checkpoint`` calls (each auto-incrementing ``_v{n}`` via
+    :func:`versioned_ckpt_root`) grow the disk unboundedly — ~1 GiB every save filled 55 GiB in ~11 h on the
+    100k run. The newest ``keep`` are always retained (the ``*_latest`` symlink target is the newest, so it is
+    never pruned). Best-effort; returns the count removed. keep<1 is treated as 1 (never delete everything)."""
+    import shutil
+    keep = max(1, int(keep))
+    d = Path(base_dir)
+    dirs = sorted((p for p in d.glob(f"{stem}-{vocab}_*_v*") if p.is_dir()),
+                  key=lambda p: p.stat().st_mtime, reverse=True)
+    removed = 0
+    for old in dirs[keep:]:
+        shutil.rmtree(old, ignore_errors=True)
+        removed += 1
+    return removed
+
+
 def register_kernel_ckpt(dir_path: str | Path, notes: str = "") -> None:
     """Register a kernel checkpoint directory in the manifest and update the ``latest`` pointer."""
     p = Path(dir_path).resolve()
