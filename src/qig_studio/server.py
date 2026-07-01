@@ -205,6 +205,9 @@ class TrainRequest(BaseModel):
     sample: bool = True  # per-stimulus own-voice generation (interactive UI). Set False for a BACKGROUND
     #                      comparison run — d_FR doesn't need the kernel to SPEAK each step, and skipping the
     #                      generation roughly halves wall-clock (the 4-arm bench trains, it doesn't observe).
+    sample_every: int = 1  # own-voice CADENCE: generate every N steps (N>1 = periodic). For a slow multi-kernel
+    #                        constellation, N≈25 keeps own_voice ALWAYS VISIBLE in the UI (the kernel speaks
+    #                        every N steps) without the per-step generation cost — the right default for long runs.
 
 
 def _registry():
@@ -959,16 +962,59 @@ async def _train_core(
         except Exception:  # noqa: BLE001 — a live-log failure must not break training
             pass
 
+    # WORMHOLE FAST-LAYER (CC2 A022 advisory + EXP-A026): the qig-warp WormholeCache as the training basin-
+    # index. ASSESS runs INSIDE train_step (executor thread, under _TARGET_LOCK) on the coords already there
+    # — NOT in the async loop (that re-encoded the coordizer concurrently with the executor-thread encode and
+    # DEADLOCKED → the 0%-CPU step-1 hang). LOGGED-ONLY / not-actuated: coordizer basins are token-geometric
+    # (A022 M4 killed them for deep semantics), so a HIT is not trustworthy yet — log hit-rate + nucleation
+    # SIGNAL, do NOT skip/transport into the gradient until K-LEARN makes the head basins semantic (the safety
+    # gate; a wrong-class hit would inject wrong meaning). #2/#3 stay exposed on the target for later.
+    from .wormhole_train import WormholeTraining
+    wormhole = WormholeTraining()
+    for _wt in (target, getattr(getattr(target, "_mind", None), "central", None)):
+        try:
+            if _wt is not None:
+                _wt.wormhole = wormhole   # single-kernel OR the constellation-CENTRAL assesses ONCE in-thread
+        except Exception:  # noqa: BLE001
+            pass
+
+    # CORPUS PREFETCH (CC2): a bounded queue fed by ONE producer thread. A slow HF page-load drains the queue
+    # instead of freezing the async loop (the step-112 stall — prompt_for was blocking I/O IN the loop). HF
+    # streaming iterators aren't thread-safe → single producer. maxsize small → the RAM envelope is preserved.
+    import threading as _threading
+    _run_loop = asyncio.get_running_loop()
+    _pfq: asyncio.Queue = asyncio.Queue(maxsize=3)
+    _pf_stop = _threading.Event()
+
+    def _prefetch() -> None:
+        for _s in range(1, steps + 1):
+            if _pf_stop.is_set():
+                return
+            try:
+                _item = prompt_for(_s)          # blocking corpus/page-load — in THIS thread, off the event loop
+            except Exception:  # noqa: BLE001
+                _item = ("", None)
+            try:
+                asyncio.run_coroutine_threadsafe(_pfq.put((_s, _item)), _run_loop).result()
+            except Exception:  # noqa: BLE001 — loop closing
+                return
+
+    _pf_thread = _threading.Thread(target=_prefetch, daemon=True)
+    _pf_thread.start()
+
     for step in range(1, steps + 1):
-        prompt, target_text = prompt_for(step)
+        _, (prompt, target_text) = await _pfq.get()   # off-loop page-load; the loop NEVER blocks on corpus I/O
         try:
             res = await _run_target(target.train_step, prompt, max_tokens, target_text)
         except Exception as exc:  # noqa: BLE001 — surface to the caller, then stop
+            _pf_stop.set()
             yield {"step": step, "total": steps, "prompt": prompt, "error": str(exc)}
             return
         _PHI_HISTORY.append(float(res.telemetry.phi or 0.0))
         td = res.telemetry.to_dict()
         ex = td.get("extra") or {}
+        if "wormhole" not in ex:                 # train_step stashed it (assess ran in-thread); else bare telemetry
+            ex["wormhole"] = wormhole.telemetry()
         cov = record_cb(prompt, ex, step) if record_cb is not None else None
         samp = await _sample_if_due(step % sample_every == 0 or step == steps, stimulus=prompt)
         # YIELD BEFORE the live-write so the caller's SSE step event is emitted in the same relative order
@@ -976,7 +1022,29 @@ async def _train_core(
         yield {"step": step, "total": steps, "prompt": prompt, "td": td, "res": res,
                "sample": samp, "phi": res.telemetry.phi, "coverage": cov}
         _write_live(step, steps, td, samp, res.telemetry.phi, stimulus=prompt)   # full passage → live record
+        # PERIODIC ARENA TRIM (long-run memory): the Ocean-regulated protocols (_consolidate/_dream) each
+        # transiently allocate ~4-5× a kernel's params (fresh natural-gradient optimizer + Fisher dicts +
+        # replay activations); glibc keeps that freed memory in its arena and never returns it to the OS, so
+        # committed memory climbs into swap over a long run (observed ~19 MiB/step, OOM'd the box ~step 1600).
+        # gc.collect() breaks any reference cycles; malloc_trim(0) returns the freed top-of-heap to the OS.
+        if step % 25 == 0:
+            import gc as _gc
+            _gc.collect()
+            try:
+                import ctypes as _ct
+                _ct.CDLL("libc.so.6").malloc_trim(0)
+            except Exception:  # noqa: BLE001 — non-glibc / no libc: skip (best-effort)
+                pass
+        # PERIODIC CHECKPOINT (long-run safety net): the end-of-run save (server.py) is the ONLY persist, so a
+        # mid-run crash/OOM loses everything. Save the whole mind every _CKPT_EVERY steps → an OOM is
+        # recoverable (restart reloads THIS checkpoint; kernel _step continues). Threaded (never blocks the loop).
+        if step % 250 == 0 and getattr(target, "name", "") == "mind" and hasattr(target, "save_checkpoint"):
+            try:
+                await asyncio.to_thread(target.save_checkpoint)
+            except Exception as _ce:  # noqa: BLE001 — a save failure must never break the stream
+                print(f"[train] periodic checkpoint save failed (surfaced): {type(_ce).__name__}: {_ce}", flush=True)
         await asyncio.sleep(0)  # cooperative yield
+    _pf_stop.set()   # stop the corpus prefetch producer thread when the run completes
 
 
 @app.post("/train", response_model=None)
@@ -1007,8 +1075,9 @@ async def train(req: TrainRequest, _: None = Depends(verify_key)) -> StreamingRe
             if not req.confirm:
                 yield _sse({"type": "error", "error": "LANGUAGE training triggers remote jobs — pass confirm=true to proceed"})
                 return
-        sample_every = 1   # PER STIMULUS (see _train_core): every step the kernel may speak; its own EOS
-        #                    decides the output, so it observes self (its generation) AND other (the stimulus).
+        sample_every = max(1, int(req.sample_every))   # own-voice CADENCE (req.sample_every): the kernel speaks
+        #                    every N steps — N=1 per-stimulus (interactive), N>1 periodic (always-visible on a
+        #                    slow constellation without the per-step generation cost). It observes self + other.
         yield _sse({
             "type": "start",
             "target": t.name,
@@ -1034,9 +1103,13 @@ async def train(req: TrainRequest, _: None = Depends(verify_key)) -> StreamingRe
                 _want_gpu = bool(_torch.cuda.is_available())
             except Exception:  # noqa: BLE001
                 pass
+            # apply_power=True → the quner/expA021 work-per-joule daemon ACTIVELY tunes the CPU governor /
+            # GPU power-cap to the interior optimum (not telemetry-only). None-safe: falls back to measure-only
+            # where privileged set is denied. Env QIG_STUDIO_APPLY_POWER=0 opts out (shared-box courtesy).
+            _apply_pw = os.environ.get("QIG_STUDIO_APPLY_POWER", "1").lower() in ("1", "true", "yes")
             _opt = prelaunch_optimise("train", omega_per_step=1.0, n_steps=max(1, req.steps),
                                       probe=lambda: float(_np.random.rand(1200, 1200).sum()),
-                                      want_gpu=_want_gpu)
+                                      apply_power=_apply_pw, want_gpu=_want_gpu)
             yield _sse({"type": "optimisation", **_opt})
         except Exception as _e:  # noqa: BLE001 — best-effort; never blocks training
             yield _sse({"type": "optimisation", "note": str(_e)[:120]})

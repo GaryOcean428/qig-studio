@@ -43,9 +43,15 @@ class JointConstellation:
 
     def __init__(self, roles: list[str], *, num_layers: int = 8, coordizer: Any = None,
                  device: str | None = "cpu", f_sync: float = 0.25, language_peer: Any = None,
-                 arm_mode: str = "gk") -> None:
+                 arm_mode: str = "gk", head_mode: str = "basin") -> None:
         self.roles = list(roles)
         self.f_sync = float(f_sync)
+        # OUTPUT READOUT for every node — DEFAULT "basin" (the ratified K-COMPRESS coordizer-tied head:
+        # predict h→Δ⁶³ basin, loss = pure d_FR to the frozen per-token basin, NEVER materialize [seq,vocab]).
+        # This is the constellation architecture the PI approved; it must NOT depend on an env var being set
+        # (dropping QIG_STUDIO_HEAD_MODE would otherwise silently build the geometric seq×vocab OOM path).
+        # Per-node QIG_STUDIO_HEAD_MODE (genesis_kernel.py:138) still overrides this for the A/B avenue sweep.
+        self.head_mode = str(head_mode).strip().lower()
         # The constellation ARM — the raw kernel substrate every node plugs in from. "gk" = the qigkernels
         # deep Kernel (the only node-ready arm today); "geo"/"hybrid"/"hetero" need geo node-parity (WS3).
         # Drives the vocab-named checkpoint lineage genesis-{arm}-{vocab}, differentiating the 4 avenues.
@@ -118,6 +124,7 @@ class JointConstellation:
             from ..targets.genesis_kernel import GenesisKernelTarget
             return GenesisKernelTarget(num_layers=num_layers, role=role, basin_template=birth,
                                        coordizer=coordizer, device=device, seed=seed,
+                                       head_mode=self.head_mode,
                                        language_peer=language_peer if is_central else None)
         if sub == "geo":
             # WS3: the GeoCortexTarget is now a full ConstellationNode (run_protocol + _basin_history +
@@ -127,6 +134,7 @@ class JointConstellation:
             from ..targets.geo_cortex import GeoCortexTarget
             return GeoCortexTarget(num_layers=num_layers, role=role, basin_template=birth,
                                    coordizer=coordizer, device=device, seed=seed,
+                                   head_mode=self.head_mode,
                                    language_peer=language_peer if is_central else None)
         if sub == "hybrid":
             # WS4: the HybridCortexTarget is a full ConstellationNode (run_protocol + _basin_history +
@@ -136,6 +144,9 @@ class JointConstellation:
             # constellation mode the basin-pull term engages once _set_pull writes _basin_ref. language_peer
             # is accepted + ignored (the hybrid cortex has no boundary peer — a cortex baseline like geo).
             from ..targets.hybrid_cortex import HybridCortexTarget
+            # NOTE: HybridCortexTarget has no basin head (WS4 is a GeometricHead cortex baseline) and its ctor
+            # takes no head_mode — do NOT thread self.head_mode here (it would TypeError). The hybrid arm is
+            # out of scope for the basin K-COMPRESS run; if it is ever made basin-capable, add head_mode there.
             return HybridCortexTarget(num_layers=num_layers, role=role, basin_template=birth,
                                       coordizer=coordizer, device=device, seed=seed,
                                       language_peer=language_peer if is_central else None)
@@ -172,9 +183,12 @@ class JointConstellation:
         else:
             _m = getattr(kernel, "_kernel", None) or getattr(kernel, "_model", None)
             dev = next(_m.parameters()).device
+        # BASIN head: the pull reference lives in the 384-dim GEO-CODER (hidden) Δ — the space the kernel's
+        # identity basin (_basin_cur) uses under K-COMPRESS (no vocab-wide logits). geometric/linear → vocab.
+        _dim = kernel.hidden_dim if getattr(kernel, "head_mode", "") == "basin" else kernel.vocab_size
         ref = torch.as_tensor(np.asarray(target64, dtype=np.float32), device=dev)
-        if ref.numel() != kernel.vocab_size:
-            ref = kernel._resize_basin(ref, kernel.vocab_size)
+        if ref.numel() != _dim:
+            ref = kernel._resize_basin(ref, _dim)
         kernel._basin_ref = to_simplex_prob(ref[None])[0].detach()
 
     def _synthesis(self) -> np.ndarray:

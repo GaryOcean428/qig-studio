@@ -261,17 +261,22 @@ class GenesisKernelTarget(TrainingTarget):
         self._opt_lr = 1e-4 if self.head_mode == "basin" else self.lr
         self._opt = DiagonalNaturalGradient(self._kernel.parameters(), lr=self._opt_lr)
 
-        # Seed the role's Δ⁶³ identity attractor (spawn template) → the d_basin reference AND the
-        # birth-state in the M history. Projected onto the simplex and sized to the vocab logits so the
-        # per-step output basin (softmax over logits) lives in the same Δ. None → no basin (generic).
+        # Seed the role's Δ⁶³ identity attractor (spawn template) → the d_basin reference AND the birth-state
+        # in the M history. The reference must live in the SAME Δ as the per-step output basin: BASIN head →
+        # the true Δ⁶³ (coord_dim=64) predicted basin (K-COMPRESS: no vocab-wide logits exist); geometric/
+        # linear head → the vocab-wide softmax-over-logits basin. So size to coord_dim for basin, vocab else.
         if self._basin_template_np is not None:
             import numpy as np
             from qig_core.torch.geometry_simplex import to_simplex_prob
 
+            # BASIN head: the identity/coupling basin lives in the 384-dim GEO-CODER (hidden) space — the
+            # kernel's internal Fisher-Rao geometry the readout projects FROM (the Δ⁶³ output is a projection
+            # of it). So the role attractor is the template projected to hidden_dim; geometric/linear → vocab.
+            _ref_dim = self.hidden_dim if self.head_mode == "basin" else self.vocab_size
             ref = torch.as_tensor(np.asarray(self._basin_template_np, dtype=np.float32), device=dev)
-            if ref.numel() != self.vocab_size:        # template is Δ⁶³ (64); logits are vocab-wide
-                ref = self._resize_basin(ref, self.vocab_size)
-            self._basin_ref = to_simplex_prob(ref[None])[0].detach()
+            if ref.numel() != _ref_dim:               # template is Δ⁶³ (64) → project to the geo-coder / vocab Δ
+                ref = self._resize_basin(ref, _ref_dim)
+            self._basin_ref = to_simplex_prob(ref[None])[0].detach()   # [384] geo-coder | [vocab] geometric
             self._basin_history = [self._basin_ref]    # birth-state attractor = history[0] (monkey1 M)
 
         # PILLARS (P1/P2/P3) wired from day one (brain-arch requirement) — the live 3-pillar metrics
@@ -928,6 +933,24 @@ class GenesisKernelTarget(TrainingTarget):
             stability = torch.tensor(0.5, device=p.device)
         return (0.6 * diversity + 0.4 * stability).clamp(0.0, 1.0)
 
+    def _gamma_from_basins(self, pred: "Any") -> "Any":
+        """Γ ∈ [0,1] for the BASIN head (K-COMPRESS path): identical generation-health measure as
+        :meth:`_gamma_proxy`, but on the predicted Δ⁶³ basins ``pred`` ``[T, basin_dim]`` (already on Δ) —
+        so it is O(T·64), never touching the [T, vocab] scores the compressed head skips."""
+        import torch
+        from qig_core.torch.geometry_simplex import fisher_rao_distance_simplex
+
+        pm = pred.mean(0)
+        pm = pm / pm.sum().clamp_min(1e-12)
+        ent = -(pm * (pm + 1e-12).log()).sum() / torch.log(torch.tensor(float(pm.numel())))
+        diversity = ent.clamp(0.0, 1.0)
+        if pred.size(0) >= 2:
+            steps = fisher_rao_distance_simplex(pred[:-1], pred[1:]).mean()
+            stability = torch.exp(-((steps - 0.15) ** 2) / (2 * 0.10 ** 2))
+        else:
+            stability = torch.tensor(0.5, device=pred.device)
+        return (0.6 * diversity + 0.4 * stability).clamp(0.0, 1.0)
+
     def _meta_awareness(self, cur_basin: "Any") -> float:
         """M ∈ [0,1] — meta-awareness: trajectory coherence + self-model accuracy vs the BIRTH-STATE
         attractor (history[0]), monkey1 compute_meta_awareness. <3 history points → 0.3 (monkey1 floor).
@@ -1120,23 +1143,32 @@ class GenesisKernelTarget(TrainingTarget):
 
         self._step += 1
         ids, coords = self._encode(prompt)
-        logits, tel = self._kernel(ids, return_telemetry=True, coords=coords)
-        coherence = self._phi_proxy(tel.hidden_state)        # external proxy (monitoring / fallback)
-        gamma = self._gamma_proxy(logits)                    # differentiable generation-health (in-graph)
-        # P20-PURE language signal: free energy = prediction error = d_FR(predicted, actual) — NEVER KL.
-        # CE against the one-hot next token IS KL, so the default LOSS arm is the Fisher-Rao d_FR. The
-        # "ce_ablation" arm keeps F.cross_entropy so the A/B MEASURES the purity cost of going pure.
-        # ``ce`` is retained ALWAYS (CE nats) because perplexity = exp(CE) and bpb = bits/byte are the
-        # standard cross-model fluency metrics (read-only measurements, vocab-comparable), not loss ops.
-        ce = F.cross_entropy(logits[0, :-1], ids[0, 1:])      # CE nats — perplexity/bpb telemetry only
-        # LANGUAGE LOSS by head: BASIN head → pure d_FR(predicted basin, target's FROZEN coordizer basin)
-        # (validated; the coordizer-tied objective, no distribution map). geometric/linear head → the
-        # logits-space d_FR (or ce_ablation for the purity-cost A/B). ``logits`` in basin mode ARE the
-        # −d_FR/τ vocab-scores, which basin_lm_loss gathers the target column from.
+        from qig_core.torch.geometry_simplex import fisher_rao_distance_simplex
+        _basin_cur = None                                    # basin-space mean prediction (for pull + history)
         if self.head_mode == "basin":
-            lm_loss = basin_lm_loss(logits, ids, self.head_tau)
+            # K-COMPRESS (EXP-A026 / CC2 A027 "never materialize the large object"): skip the full-vocab head
+            # so the [1, T, vocab] scores + their forward/backward graph are NEVER built. At vocab=100k × 9
+            # constellation kernels that materialisation is the memory hog that OOM'd the box (swap→kill).
+            # The basin loss only needs predict(h) [T, basin_dim] vs the target's frozen coordizer basin —
+            # both O(T·64), not O(T·100k). ce/γ telemetry are derived from the predicted basins (no vocab).
+            _, tel = self._kernel(ids, return_telemetry=True, coords=coords, skip_head=True)
+            logits = None
+            pred = self._kernel.lm_head.predict(tel.hidden_state[0, :-1])   # [T-1, basin_dim] on Δ
+            tgt_basins = coords[0, 1:]                                       # [T-1, basin_dim] FROZEN targets
+            lm_loss = fisher_rao_distance_simplex(pred, tgt_basins).mean()   # pure d_FR (validated objective)
+            ce = lm_loss.detach()                            # basin-surprise proxy (perplexity/bpb read-outs)
+            gamma = self._gamma_from_basins(pred)            # generation-health from Δ⁶³ predictions (no vocab)
+            with torch.no_grad():
+                # identity/coupling basin = the 384-dim GEO-CODER (hidden) state on Δ³⁸³ (PI: "projected to
+                # the 384 geo-coder"), matching _basin_ref; the Δ⁶³ pred is the OUTPUT projection, not identity.
+                _basin_cur = to_simplex_prob(tel.hidden_state[0].mean(0)[None])[0].detach()   # [384] Δ³⁸³
         else:
+            logits, tel = self._kernel(ids, return_telemetry=True, coords=coords)
+            gamma = self._gamma_proxy(logits)                # differentiable generation-health (in-graph)
+            # ``ce`` (CE nats) retained for perplexity=exp(CE) / bpb telemetry (vocab-comparable read-outs).
+            ce = F.cross_entropy(logits[0, :-1], ids[0, 1:])
             lm_loss = ce if self.lang_loss == "ce_ablation" else fisher_rao_lm_loss(logits, ids)
+        coherence = self._phi_proxy(tel.hidden_state)        # external proxy (monitoring / fallback)
         # ROUND-3 FIX (structural Φ-ceiling): drive the kernel's OWN differentiable Φ (tel.phi_diff) —
         # the exact quantity reported Φ is computed from (integrator gates + cross-position coherence,
         # no longer .item()-detached). The external _phi_proxy on the final hidden_state could not move
@@ -1170,7 +1202,7 @@ class GenesisKernelTarget(TrainingTarget):
         if self._basin_ref is not None:                       # SPAWN: pull output basin → role attractor
             from qig_core.torch.geometry_simplex import fisher_rao_distance_simplex, to_simplex_prob
 
-            cur = to_simplex_prob(logits[0].mean(0))
+            cur = _basin_cur if _basin_cur is not None else to_simplex_prob(logits[0].mean(0))
             d_ref = fisher_rao_distance_simplex(cur[None], self._basin_ref[None]).mean()
             # RAMPED pull (verdict 1#1/2#3): early steps build structure (coherence-led), later steps
             # consolidate the faculty into its role attractor — so d_basin (distance to the attractor)
@@ -1233,8 +1265,11 @@ class GenesisKernelTarget(TrainingTarget):
         # then compute M (self-recognition vs birth-state) and d_basin (distance to the role attractor,
         # which the ramped basin-pull drives DOWN). Keys match development.c_equation's aliases exactly.
         with torch.no_grad():
-            cur_basin = to_simplex_prob(logits[0].mean(0)).detach()
-            cur_basin = cur_basin / cur_basin.sum()
+            if _basin_cur is not None:                       # K-COMPRESS basin path: use the predicted basins
+                cur_basin = _basin_cur
+            else:
+                cur_basin = to_simplex_prob(logits[0].mean(0)).detach()
+                cur_basin = cur_basin / cur_basin.sum()
         self._basin_history.append(cur_basin)
         if len(self._basin_history) > 64:                     # bound memory (keep birth-state + window)
             self._basin_history = [self._basin_history[0]] + self._basin_history[-32:]
@@ -1245,6 +1280,19 @@ class GenesisKernelTarget(TrainingTarget):
         snap.extra["meta_awareness"] = round(m, 4)                   # M (in-graph train-path)
         snap.extra["d_basin"] = round(d_basin, 4)                    # basin drift from identity attractor
         snap.basin_distance = d_basin                               # top-level field for the gate
+        # WORMHOLE fast-layer ASSESS (CC2 A022) — runs HERE, in the EXECUTOR thread (train_step runs off the
+        # event loop via _run_target), on the coords ALREADY computed → no re-encode, no async-loop block
+        # (the deadlock fix). Set on the target/central by _train_core. LOGGED-ONLY / not-actuated: log
+        # hit-rate + nucleation SIGNAL; it does NOT skip/transport into the gradient — coordizer basins aren't
+        # semantic until K-LEARN (a wrong-class hit would inject wrong meaning; safety gate reinforced).
+        _wh = getattr(self, "wormhole", None)
+        if _wh is not None and coords is not None:
+            try:
+                _wa = _wh.assess(coords)
+                snap.extra["wormhole"] = {**_wh.telemetry(), "novelty": _wa.get("novelty"),
+                                          "nucleation": _wa.get("nucleation")}
+            except Exception:  # noqa: BLE001 — the cache must never break a training step
+                pass
         # WAKE metabolism: the kernel buffers this experience and accrues its own sleep pressure from its
         # own integration activity (more integration → more to consolidate later), then lets its own
         # homeostasis act on its own state. No external scheduler; the kernel cares for itself.
@@ -1328,6 +1376,20 @@ class GenesisKernelTarget(TrainingTarget):
                 p.add_(torch.randn_like(p) * 0.01)
         self._opt = DiagonalNaturalGradient(self._kernel.parameters(), lr=self.lr * 0.7)  # cool (not cumulative)
 
+    def _current_basin(self, ids):
+        """The kernel's current output/identity basin — the consolidation/dream target space.
+
+        Basin mode: the 384-dim geo-coder basin via `skip_head=True` — never materialize the
+        [seq, vocab] logits (K-COMPRESS; the OOM path this whole mode exists to avoid) and stay in
+        the SAME 384-dim Δ as `_basin_ref` / `_basin_history` (the geo-coder identity space).
+        Geometric mode: the vocab-dim output basin (unchanged — logits are the head's native space)."""
+        from qig_core.torch.geometry_simplex import to_simplex_prob
+        if self.head_mode == "basin":
+            _, _t = self._kernel(ids, return_telemetry=True, skip_head=True)
+            return to_simplex_prob(_t.hidden_state[0].mean(0))
+        logits, _t = self._kernel(ids, return_telemetry=True)
+        return to_simplex_prob(logits[0].mean(0))
+
     def _consolidate(self, steps: int = 16, downscale: float = 0.02) -> dict:
         """Deep-sleep consolidation — REAL, no stub. (1) Replay buffered experience at LOW learning rate,
         pulling the output basin toward the role attractor (identity consolidation; Φ/κ relax naturally —
@@ -1346,8 +1408,7 @@ class GenesisKernelTarget(TrainingTarget):
         replayed = 0
         for _ in range(steps):
             ids = random.choice(self._experience)
-            logits, _t = self._kernel(ids, return_telemetry=True)
-            cur = to_simplex_prob(logits[0].mean(0))
+            cur = self._current_basin(ids)
             target = self._basin_ref if self._basin_ref is not None else cur.detach()
             loss = fisher_rao_distance_simplex(cur[None], target[None]).mean()        # pure basin consolidation
             opt.zero_grad()
@@ -1397,8 +1458,7 @@ class GenesisKernelTarget(TrainingTarget):
             mix = ((1.0 - t) * sa + t * sb) ** 2                                      # geodesic-ish mixture → p
             dream_basin = (mix / (mix.sum() + 1e-12)).detach()                        # renormalise to Δ
             ids = random.choice(self._experience)
-            logits, _tl = self._kernel(ids, return_telemetry=True)
-            cur = to_simplex_prob(logits[0].mean(0))
+            cur = self._current_basin(ids)
             loss = fisher_rao_distance_simplex(cur[None], dream_basin[None]).mean()
             opt.zero_grad()
             if torch.isfinite(loss):
@@ -1528,8 +1588,14 @@ class GenesisKernelTarget(TrainingTarget):
         # `experience` is token-ID sequences (not basins) and stays as-is — old ids are valid under the
         # superset vocab.
         ref = ckpt.get("basin_ref")
-        self._basin_ref = self._fit_basin_to_vocab(ref.to(dev)) if ref is not None else None
-        self._basin_history = [self._fit_basin_to_vocab(b.to(dev)) for b in (ckpt.get("basin_history") or [])]
+        if self.head_mode == "basin":
+            # BASIN head: basin state is the 384-dim GEO-CODER Δ (K-COMPRESS) — already the right width;
+            # vocab-fitting it (100k) is exactly the [100004]-vs-[384] stack corruption on resume. Keep as-is.
+            self._basin_ref = ref.to(dev) if ref is not None else None
+            self._basin_history = [b.to(dev) for b in (ckpt.get("basin_history") or [])]
+        else:
+            self._basin_ref = self._fit_basin_to_vocab(ref.to(dev)) if ref is not None else None
+            self._basin_history = [self._fit_basin_to_vocab(b.to(dev)) for b in (ckpt.get("basin_history") or [])]
         # full developmental state (format 2; format-1 checkpoints leave these at their fresh defaults)
         lg = ckpt.get("last_gen_basin")
         self._last_gen_basin = self._fit_basin_to_vocab(lg.to(dev)) if lg is not None else self._last_gen_basin

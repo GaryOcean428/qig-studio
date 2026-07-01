@@ -52,7 +52,9 @@ def _train(steps: int, max_seconds: float) -> dict:
     """Drive the wired ``POST /train`` SSE to completion (equal fixed budget; geometric → early_stop off,
     skip_learned off so every arm trains the SAME steps for a fair comparison). Returns the final 'done'
     payload (carries ``saved_checkpoint`` = the genesis-{arm}-{vocab} lineage the server persisted)."""
-    body = {"steps": steps, "skip_learned": False, "early_stop": False, "mastery": False, "sample": False}
+    # sample=True: own_voice ON per step so the PI WATCHES each kernel speak in the UI live stream while it
+    # trains (the ranking eval is done after, on the saved checkpoint, so own_voice does not affect the metric).
+    body = {"steps": steps, "skip_learned": False, "early_stop": False, "mastery": False, "sample": True}
     t0 = time.time()
     last: dict = {}
     saved: str | None = None
@@ -109,8 +111,11 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--arms", default="gk,geo,hybrid,hetero")
     ap.add_argument("--steps", type=int, default=400, help="EQUAL fixed budget per arm (fair comparison)")
-    ap.add_argument("--max-seconds", type=float, default=7200.0, help="per-arm train wall-clock cap")
+    ap.add_argument("--max-seconds", type=float, default=36000.0, help="per-arm train wall-clock cap")
     ap.add_argument("--heldout", default="data/eval/heldout_bpb.json")
+    ap.add_argument("--coordizer", default=None,
+                    help="explicit coordizer path for the eval — MUST match the server's trained vocab "
+                         "(the manifest 'latest' may be a smaller workaround coordizer)")
     args = ap.parse_args()
     arms = [a.strip().lower() for a in args.arms.split(",") if a.strip()]
 
@@ -119,7 +124,7 @@ def main() -> None:
     from qig_studio.checkpoint_manifest import get_latest_coordizer
     from qig_studio.screen import load_heldout_passages
     passages = load_heldout_passages(args.heldout)
-    coordizer_path = str(get_latest_coordizer() or "")
+    coordizer_path = args.coordizer or str(get_latest_coordizer() or "")
 
     runs = root / "runs"
     runs.mkdir(exist_ok=True)

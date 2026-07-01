@@ -29,7 +29,7 @@ dependencies = [
     "pydantic>=2.0.0",
     "httpx>=0.26.0",
     "qig-core>=2.12.2",   # Δ⁶³ Fisher-Rao geometry + consciousness (pillars/sensations/neurochemistry) — numpy-only, light
-    "qig-warp>=0.6.5",    # convergence early-stop lever (check_ci_stabilized) + screening_cutoff — numpy-only, light
+    "qig-warp>=0.6.7",    # convergence early-stop lever (check_ci_stabilized) + screening_cutoff — numpy-only, light
     # ARM A (neocortex geocoding GeoModel cortex). Installed EDITABLE from the sibling submodule via
     # [tool.uv.sources] below (matches the qigkernels/qig-coordizer dev pattern; co-developed). The >=0.1.1
     # floor pins the published version a non-editable consumer resolves — the version the coords-off

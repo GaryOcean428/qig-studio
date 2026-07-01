@@ -29,14 +29,20 @@ from typing import Any, Callable
 
 # (dataset, kind, fields, cap, upsample) — cap giants, upsample code so the vocab is code-aware.
 # These are the 7 HF datasets the coordizer's balanced vocab-learning sample is drawn from.
+# Caps raised 4× (2026-07-01) so the coordizer learns 100k merges from the FULL local dataset (2.6GB
+# parquet cache), not the ~30MB thin sample — bounded by ``max_bytes`` (RAM: corpus_coords is an in-memory
+# list the BPE loop mutates, + the IncrementalCouplingCache DLL, both O(corpus); ~120MB is the RAM-safe
+# ceiling on a 31GB box). Balance RATIO (cap giants, 30× code upsample) is preserved so the vocab stays
+# code-aware. TRULY-full (all 2.6GB) needs a STREAMING trainer (BPE needs global pair counts → the corpus
+# can't just be chunked) — registered follow-up, not a wiring shortcut.
 _BALANCE = [
-    ("roneneldan/TinyStories", "narrative", ("text",), 150_000, 1),
+    ("roneneldan/TinyStories", "narrative", ("text",), 600_000, 1),
     ("Estwld/empathetic_dialogues_llm", "conversations", ("conversations",), None, 1),
-    ("Anthropic/hh-rlhf", "hh", ("chosen",), 100_000, 1),
+    ("Anthropic/hh-rlhf", "hh", ("chosen",), 400_000, 1),
     ("armand0e/claude-fable-5-claude-code", "messages", ("messages",), None, 30),
     ("PawanKrd/claude-fable-5-code", "messages", ("messages",), None, 30),
     ("WithinUsAI/GPT_5.5_Distilled", "tagged", ("text",), None, 1),
-    ("mlabonne/open-perfectblend", "conversations", ("conversations",), 150_000, 1),
+    ("mlabonne/open-perfectblend", "conversations", ("conversations",), 600_000, 1),
 ]
 _GEO_TAGS = ["<|frame|>", "<|seed|>", "<|flow|>", "<|settle|>"]
 

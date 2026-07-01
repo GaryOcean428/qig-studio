@@ -3,8 +3,10 @@ absent — never assign a dead 'cuda' device string that torch cannot place tens
 
 from __future__ import annotations
 
+import pytest
 import torch
 
+pytest.importorskip("qig_coordizer")
 from qig_coordizer import FisherCoordizer
 from qig_studio.constellation.joint_trainer import JointConstellation
 from qig_studio.development import PROTOMAP_ORDER
