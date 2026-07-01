@@ -106,12 +106,12 @@ class JointConstellation:
 
     def _build_node(self, role: str, birth: "np.ndarray", num_layers: int, coordizer: Any,
                     device: str | None, seed: int, *, is_central: bool, language_peer: Any = None) -> Any:
-        """Build ONE constellation node from the selected ARM. ``gk`` → the qigkernels deep Kernel
-        (``GenesisKernelTarget``, node-ready: it already exposes run_protocol + basin coupling hooks + M).
-        ``geo``/``hybrid`` plug a different substrate into the SAME node slot, but that substrate must first
-        gain the constellation-node contract (geo node-parity, WS3) — until then they raise a clear,
-        user-facing error rather than silently building a node Ocean can't regulate and ``couple_step``
-        can't read. ``hetero`` = gk central + geo faculties."""
+        """Build ONE constellation node from the selected ARM. All four arms are node-ready (WS3/WS4): each
+        substrate exposes the ConstellationNode contract (run_protocol + _basin_history + _basin_ref +
+        _meta_awareness M) so it couples + is Ocean-regulated identically. ``gk`` → qigkernels deep Kernel
+        (``GenesisKernelTarget``); ``geo`` → ``GeoCortexTarget`` (qig-geocoding FisherRaoAttention, WS3);
+        ``hybrid`` → ``HybridCortexTarget`` (both mixers combined per-position as a geodesic mean on Δ⁶³,
+        WS4); ``hetero`` = gk central + geo faculties. Unknown arms raise."""
         arm = self.arm_mode
         sub = ("gk" if is_central else "geo") if arm == "hetero" else arm
         if sub == "gk":

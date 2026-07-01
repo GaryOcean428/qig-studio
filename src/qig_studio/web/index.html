@@ -177,10 +177,10 @@
         <div class="metric"><span>coordizer vocab</span><span class="v" id="archCoord">—</span></div>
         <div class="hint" style="margin-top:.3rem">CONSTELLATION ARM · the raw kernel each of the 9 nodes plugs in from (names the checkpoint genesis-{arm}-{vocab})</div>
         <div class="metric"><span>arm</span><span class="v" style="font-size:.72rem"><select id="armSel" style="font-size:.72rem;background:var(--panel2);color:inherit;border:1px solid var(--edge);border-radius:4px;max-width:200px">
-          <option value="gk">gk · qigkernels deep kernel (ready)</option>
-          <option value="geo" disabled>geo · needs node-parity (WS3)</option>
-          <option value="hybrid" disabled>hybrid · needs WS3/WS4</option>
-          <option value="hetero" disabled>hetero · needs WS3</option>
+          <option value="gk">gk · qigkernels deep kernel</option>
+          <option value="geo">geo · qig-geocoding FisherRaoAttention</option>
+          <option value="hybrid">hybrid · both mixers, geodesic-mean on Δ⁶³</option>
+          <option value="hetero">hetero · gk central + geo faculties</option>
         </select></span></div>
         <div id="armStatus" class="hint" style="margin-top:.1rem">—</div>
         <div class="hint" style="margin-top:.25rem">CHECKPOINTS · auto-loads latest on boot · select to hot-swap</div>
