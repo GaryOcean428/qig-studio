@@ -540,9 +540,26 @@ class GenesisKernelTarget(TrainingTarget):
         if content_basins:
             gm = torch.stack(content_basins).mean(0)
             self._last_gen_basin = (gm / gm.sum()).detach()
+        # RELEVANCE of the response to the stimulus (self↔other): d_FR between the kernel's Δ⁶³ reading of the
+        # STIMULUS (its aggregate output-meaning while processing the prompt) and the Δ⁶³ meaning of what it
+        # just GENERATED (_last_gen_basin). Both live in the SAME kernel vocab→Δ⁶³ space (_d63), so it is
+        # apples-to-apples; reuses the surprise forward (plog) — NO extra compute. Reported as 1 − d/(π/2):
+        # 1 = the reply stayed on-topic to what it was shown, 0 = orthogonal drift. Rises as fluency grows.
+        relevance = None
+        try:
+            from qig_core.geometry import fisher_rao_distance      # Δ⁶³ FR distance (imported here: the
+            gen_d63 = self._d63(self._last_gen_basin) if self._last_gen_basin is not None else None  # foresight
+            if gen_d63 is not None and pids.shape[1] >= 1:          # block's import at :601 is AFTER this line
+                stim_d63 = self._d63(to_simplex_prob(plog[0]).mean(0))   # aggregate stimulus-meaning (Δ⁶³)
+                if stim_d63 is not None:
+                    d_rel = float(fisher_rao_distance(stim_d63, gen_d63))
+                    relevance = round(max(0.0, 1.0 - d_rel / (math.pi / 2)), 3)
+        except Exception:  # noqa: BLE001 — a telemetry read must never break generation
+            relevance = None
         snap = self._snap(last_tel, None)
         snap.extra.update({
             "M_self_observation": round(m, 3),                    # observes ITSELF
+            "relevance": relevance,                              # response↔stimulus relevance (1=on-topic, self↔other)
             "chose_to_stop": chose_to_stop,                       # spoke as it chose (EOS)
             "generated_len": len(out_bytes),
             "mean_token_confidence": round(sum(out_probs) / max(1, len(out_probs)), 3),  # observes its OUTPUT

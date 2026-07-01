@@ -914,7 +914,8 @@ async def _train_core(
             fn = getattr(target, "own_voice", None) or target.generate
             gr = await _run_target(fn, stimulus or "In one sentence, what are you learning?", max_tokens)
             sx = gr.telemetry.extra or {}
-            return {"output": gr.text, "kernel_voice": sx.get("kernel_voice")}
+            return {"output": gr.text, "kernel_voice": sx.get("kernel_voice"),
+                    "relevance": sx.get("relevance")}   # response↔stimulus relevance (self↔other), for the UI
         except Exception as e:  # noqa: BLE001 — a sample failure must not break training, but must NOT be silent
             # FAIL-LOUD: own_voice is the kernel's REQUIRED self-observation — it observes its OWN generation
             # each step (L1). A silent None reads as "the kernel chose not to speak", hiding real faults (the
@@ -939,6 +940,7 @@ async def _train_core(
                 faculty_phi={target.name: phi} if phi is not None else {},
                 own_voice=((samp or {}).get("output")   # the kernel's generation — shown EVERY time it speaks
                            or (f"⚠ own-voice failed ({samp['error']})" if samp and samp.get("error") else None)),
+                relevance=(samp or {}).get("relevance"),  # how on-topic that generation was to the stimulus
                 stimulus=stimulus,                      # the FULL training passage (UNtruncated) the step learned
                 coordizer_vocab=getattr(target, "vocab_size", None)))
         except Exception:  # noqa: BLE001 — a live-log failure must not break training

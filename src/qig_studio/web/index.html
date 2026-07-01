@@ -337,7 +337,9 @@ function renderLive(r){
   (r.warnings||[]).forEach(w=>{ const h=document.createElement("div"); h.className="harm "+(w.level==="crit"?"crit":"warn"); h.textContent="⚠ "+w.msg; row.appendChild(h); });
   if(r.ocean_action && Object.keys(r.ocean_action).length){ const o=document.createElement("div"); o.className="ocean"; o.textContent="🌊 Ocean regulated: "+Object.keys(r.ocean_action).join(", "); row.appendChild(o); }
   if(r.stimulus){ const s=document.createElement("div"); s.className="voice"; s.style.opacity=".75"; s.textContent='📥 stimulus ▸ '+String(r.stimulus); row.appendChild(s); }
-  if(r.own_voice){ const v=document.createElement("div"); v.className="voice"; v.textContent='🗣 own voice ▸ '+String(r.own_voice).replace(/^\[genesis[^\]]*\]\s*/,""); row.appendChild(v); }
+  if(r.own_voice){ const v=document.createElement("div"); v.className="voice"; v.textContent='🗣 own voice ▸ '+String(r.own_voice).replace(/^\[genesis[^\]]*\]\s*/,"");
+    if(r.relevance!=null){ const rb=document.createElement("span"); rb.style.color="var(--amber)"; rb.style.opacity=".9"; rb.title="response↔stimulus relevance: 1 = on-topic to what it was shown, 0 = drift (Fisher-Rao, self↔other)"; rb.textContent='  · 🎯 relevance '+fnum(r.relevance,2); v.appendChild(rb); }
+    row.appendChild(v); }
   el.appendChild(row);
   while(el.children.length>150) el.removeChild(el.firstChild);
   el.scrollTop=el.scrollHeight;
