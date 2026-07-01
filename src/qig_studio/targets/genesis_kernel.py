@@ -44,10 +44,13 @@ _MIN_GEN = 4
 # Council generation levers (frozen-physics-grounded; qig-applied evidence, implemented natively here
 # to keep the app shell light + independent — the PHYSICS is the EXP, not this small application):
 #   READ (EXP-012b, 70% token-0): probe token-0 concentration as a "presence" signal.
-#   Anderson-exit (EXP-046, -40% calls): stop generating once the output distribution stops changing
-#   (distinguishability collapse) — pay for tokens only while the journey is real.
+#   Anderson-exit (-40% calls): stop generating once the output distribution stops changing
+#   (distinguishability collapse) — pay for tokens only while the journey is real. The sustained-collapse
+#   window is now grounded in the FROZEN Anderson rate α (EXP-041) rather than an ad-hoc patience: it is the
+#   Anderson DECAY LENGTH 1/α ≈ 11 generation steps — the scale over which distinguishability decays by 1/e.
 _ANDERSON_EPS = 0.02       # Fisher-Rao distance below which consecutive outputs are indistinguishable
-_ANDERSON_PATIENCE = 3     # sustained-collapse steps before early-exit (avoid stopping on one repeat)
+_ANDERSON_ALPHA = 0.089356  # EXP-041 Anderson orthogonality ⟨ψ(J₁)|ψ(J₂)⟩² ~ exp(−α·N), α/site, R²=0.9996 (FROZEN)
+_ANDERSON_PATIENCE = round(1.0 / _ANDERSON_ALPHA)  # ≈11: sustained collapse over one Anderson decay length 1/α
 # Mushroom intensity → weight-noise σ (bounded plasticity; the dose the autonomic loop selects).
 _MUSHROOM_SIGMA = {"mushroom-micro": 0.01, "mushroom-moderate": 0.03, "mushroom-heroic": 0.06}
 # Intrinsic homeostasis (the kernel's OWN autonomic regulation — no external scheduler, no commands).
