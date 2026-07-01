@@ -21,6 +21,7 @@ card), yet genuinely joint via the shared coupled state. Geometry single-sourced
 from __future__ import annotations
 
 import hashlib
+import os
 from typing import Any
 
 import numpy as np
@@ -57,11 +58,24 @@ class JointConstellation:
         # learner) + ONE round-robin faculty actually train. So put the central on the GPU (fast every step)
         # and the 8 faculties on CPU (each trains 1/N steps → tolerable). Kernels exchange only numpy basins,
         # so there are NO cross-device tensor ops. device="cuda" → residency; otherwise uniform `device`.
+        #
+        # ALL-GPU override (QIG_STUDIO_FULL_GPU): the residency's CPU-faculty offload assumed the constellation
+        # is ~3 GiB (it is NOT — each node builds at ~88 MiB at 32k, profiled 2026-07-01). At a bounded vocab +
+        # short context (e.g. 32k, QIG_STUDIO_CTX=64 → peak ~1.7 GiB central) ALL 9 nodes fit on the 4 GB card,
+        # and the CPU-faculty step (~10 s) is the wall-clock bottleneck. Setting QIG_STUDIO_FULL_GPU=1 keeps
+        # every node on cuda → the round-robin faculty step is GPU-fast. Default (unset) = residency, so the
+        # 100k+ case (which genuinely does NOT fit) is unchanged. Fail-safe: on OOM the caller lowers CTX.
         import torch as _torch
-        _resident = (device == "cuda") and _torch.cuda.is_available()
-        _fac_dev = "cpu" if _resident else device
-        _cen_dev = "cuda" if _resident else device
-        if _resident:
+        _full_gpu = os.environ.get("QIG_STUDIO_FULL_GPU", "").strip().lower() in ("1", "true", "yes", "on")
+        _cuda_ok = (device == "cuda") and _torch.cuda.is_available()
+        _resident = _cuda_ok and not _full_gpu
+        _all_cuda = _cuda_ok and _full_gpu
+        _fac_dev = "cuda" if _all_cuda else ("cpu" if _resident else device)
+        _cen_dev = "cuda" if (_resident or _all_cuda) else device
+        if _all_cuda:
+            print(f"[joint] FULL-GPU: central + {len(self.roles)} faculties all→cuda (QIG_STUDIO_FULL_GPU)",
+                  flush=True)
+        elif _resident:
             print(f"[joint] GPU residency: central→cuda (4GB), {len(self.roles)} faculties→cpu (round-robin)",
                   flush=True)
         births: list[np.ndarray] = []

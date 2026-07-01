@@ -36,20 +36,40 @@ The 4-arm constellation pipeline works end-to-end and is committed + tested gree
 - gk/geo/hetero each trained 250 steps, checkpointed to their `genesis-{arm}-8004` lineage, and were
   evaluated on held-out d_FR + bpb.
 
-## Hardware findings (the real blocker)
+## Memory findings (CORRECTED 2026-07-01 — the earlier "hardware limit" was WRONG)
 
-The **3.63 GiB card cannot run the 32k constellation comparison**:
-1. **Base memory:** the 32k constellation is ~3 GiB once the optimizer Fisher-state + activation
-   buffers allocate (706 MiB built → ~3 GiB training) — no headroom. 8k drops the build to 282 MiB.
-2. **A vocab-INDEPENDENT ~3 MiB/step GPU creep** (kernel/optimizer, not the head — basin history is
-   detached + bounded, verified). At 8k/CTX=512 this still reaches OOM by ~step 220; CTX=256 lowers
-   the plateau to 2294 MiB and 250 steps stays under the line.
-3. **Hybrid** runs two mixers → ~2× memory → OOMs in ~8 s even at 8k/CTX=256.
+The 3.63 GiB card **CAN** run the 32k constellation. The OOM was never a hardware limit — it was
+**activation memory = sequence_length × vocab** (the GeometricHead's per-position d_FR to every basin,
+plus the metric attention), which I mis-diagnosed. Direct CUDA profiling (`runs/memprofile*.log`):
+
+| what | reading |
+|------|---------|
+| 8k constellation, **short** (~4-tok) prompt, 45 steps | build 51 MiB → **PEAK 313 MiB**, creep **0.033 MiB/step** |
+| 8k constellation, **long** (~300-tok) prompt | **OOM** (3.33 GiB) — same constellation |
+| 32k constellation, build (central on cuda) | **88.6 MiB** |
+| 32k, seq~16 / 32 / 64 / 128 tok (peak) | 836 / 1089 / **1746** / 3557 MiB |
+
+Three prior claims were **retracted** by the profile:
+1. **"~3 GiB base"** — false. The 32k constellation *builds* at 88 MiB; the model+optimizer are small.
+2. **"~3 MiB/step vocab-independent creep"** — false. Real per-step model growth is **0.033 MiB/step**
+   (33 KB — the bounded basin history). The apparent "creep" in the server run was seq-VARYING
+   curriculum-passage lengths across steps, not a monotonic leak.
+3. **"needs a bigger card / Modal"** — false. 32k trains on THIS card at seq ≤ ~64 (peak 1746 MiB).
+
+**Root cause of the OOM'd runs:** `_CTX` (`QIG_STUDIO_CTX`) defaults to **1024**; the OOM'd 32k
+comparison used CTX 256+. At 32k a 256-token passage → head activation ≈ 7 GiB → OOM. 2 days ago fit
+because the effective training sequence was short. The lm-loss uses the **curriculum** one-hot target
+(`fisher_rao_lm_loss(logits, ids)`), NOT the Qwen peer, so training never loads Ollama on the GPU —
+ruling out the peer as the culprit.
 
 ## Recommendation
 
-A meaningful 4-arm verdict (d_FR off the floor, all four arms including hybrid, at 32k) needs **more
-GPU memory** — a bigger card or Modal. There it can run thousands of steps at 32k. Worth doing first:
-**investigate the ~3 MiB/step GPU creep** (a real per-step leak that caps local training length) — fixing
-it would let even this card run far longer. fp16/autocast was deliberately NOT used (risk to the
-Fisher-Rao `acos` numerics, unattended).
+1. **Immediate (this card):** re-run the 4-arm 32k comparison at **`QIG_STUDIO_CTX=64`** (peak 1746 MiB,
+   comfortable headroom; hybrid's 2 mixers at `CTX=32`), with **thousands of steps** — the 250-step 8k
+   run was under-powered on STEPS (all arms pinned at the d_FR floor with uniform-output perplexity),
+   not blocked by memory.
+2. **Proper package lever (follow-up):** wire **GeometricHead vocab-streaming** — compute the d_FR to
+   basins in vocab-BLOCKS so peak head activation is `seq × block` instead of `seq × 32004`. This is the
+   qig-compute streaming/site-local philosophy applied to the head, and would let 32k train at LONG
+   sequence on the same card. Not yet wired (the head computes the full `seq × vocab` at once).
+   fp16/autocast still deliberately NOT used (risk to the Fisher-Rao `acos` numerics, unattended).
