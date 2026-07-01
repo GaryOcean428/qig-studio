@@ -128,6 +128,16 @@ class JointMindTarget(TrainingTarget):
         self.ensure_loaded()                                        # geometric: target_text ignored (lm-ramped inside)
         info = self._mind.train_step(prompt)                       # one COUPLED joint step (faculty + central)
         self._last = self._mind.central.telemetry()                # central surprise/max_surprise in .extra
+        # Surface the CONSTELLATION-level telemetry the joint step computed — per-faculty Φ, Ocean's
+        # regulation, and the individuation min-FR — into .extra so the server's live record (and the UI's
+        # right panel) shows the faculties + Ocean. Without this only the central's telemetry is returned,
+        # so the per-faculty rows read "—", Ocean shows nothing, and min-FR reads 0.000 (it is ~0.17).
+        try:
+            self._last.extra["faculty_phi"] = (info or {}).get("faculty_phi") or {}
+            self._last.extra["ocean_regulation"] = (info or {}).get("ocean_regulation") or {}
+            self._last.extra["min_pairwise_fr"] = (info or {}).get("min_pairwise_fr")
+        except Exception:  # noqa: BLE001 — telemetry surfacing is best-effort, never break the step
+            pass
         # surface the stepped faculty's OWN surprise too, so MASTERY is tracked per kernel (central every step,
         # the round-robin faculty when it steps). central's own surprise is already in self._last.extra.
         role = (info or {}).get("stepped_faculty")

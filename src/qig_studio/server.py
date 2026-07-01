@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import secrets
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -71,6 +72,11 @@ def _now() -> float:
 # state (model, optimizer, telemetry) that is NOT safe under concurrent requests
 # (council red-team #6). One lock; fine for the single-user v1, removes the race.
 _TARGET_LOCK = asyncio.Lock()
+# Own-voice DISPLAY cap (separate from the training max_tokens): the per-step own_voice should show a
+# COMPLETE utterance, not get cut off mid-sentence at the small training cap. A fluent kernel stops early
+# at EOS/Anderson-exit; an early one rambles to this cap. Bigger = less cut-off but slower per step (each
+# token is a full vocab-head forward). Env-tunable. NOTE: the kernel's OWN EOS/Anderson-exit still stops it.
+_OWNVOICE_MAX = int(os.environ.get("QIG_STUDIO_OWNVOICE_MAX", "160"))
 
 # Rolling Φ history so inner-state derivatives (phi_trend, variance → motivators, senses) MOVE across
 # conversation turns instead of sitting static (a single telemetry snapshot has no trend).
@@ -912,7 +918,9 @@ async def _train_core(
             # Generate FROM the current stimulus (the passage it just learned) so the PI sees the kernel's
             # RESPONSE to what it's learning, not an answer to a fixed probe. Falls back to the probe.
             fn = getattr(target, "own_voice", None) or target.generate
-            gr = await _run_target(fn, stimulus or "In one sentence, what are you learning?", max_tokens)
+            # _OWNVOICE_MAX (not the small training max_tokens): let the displayed utterance COMPLETE — the
+            # kernel's own EOS/Anderson-exit still stops it early once fluent, so this only bounds rambling.
+            gr = await _run_target(fn, stimulus or "In one sentence, what are you learning?", _OWNVOICE_MAX)
             sx = gr.telemetry.extra or {}
             return {"output": gr.text, "kernel_voice": sx.get("kernel_voice"),
                     "relevance": sx.get("relevance")}   # response↔stimulus relevance (self↔other), for the UI
@@ -936,8 +944,13 @@ async def _train_core(
                 step=step, total=total or step, ts=_now(), source=source,
                 stepped_faculty=(td.get("extra") or {}).get("stepped_faculty") or target.name,
                 stepped_function=None, telemetry=td, experience=exp_d,
-                central_phi=phi, min_pairwise_fr=None, drift_velocity=_dv,
-                faculty_phi={target.name: phi} if phi is not None else {},
+                central_phi=phi, min_pairwise_fr=(td.get("extra") or {}).get("min_pairwise_fr"),
+                drift_velocity=_dv,
+                # per-faculty Φ + Ocean regulation from the constellation (falls back to the central-only
+                # form for single-kernel targets that don't surface a faculty map).
+                faculty_phi=((td.get("extra") or {}).get("faculty_phi")
+                             or ({target.name: phi} if phi is not None else {})),
+                ocean_action=(td.get("extra") or {}).get("ocean_regulation") or {},
                 own_voice=((samp or {}).get("output")   # the kernel's generation — shown EVERY time it speaks
                            or (f"⚠ own-voice failed ({samp['error']})" if samp and samp.get("error") else None)),
                 relevance=(samp or {}).get("relevance"),  # how on-topic that generation was to the stimulus
