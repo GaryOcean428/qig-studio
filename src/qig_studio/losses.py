@@ -22,3 +22,19 @@ def fisher_rao_lm_loss(logits: torch.Tensor, ids: torch.Tensor) -> torch.Tensor:
     p = logits_to_simplex(lg)                  # DENSE P20 map (NOT softmax, NOT Duchi) → live gradient
     onehot = torch.zeros_like(p).scatter_(-1, tgt[:, None], 1.0)
     return fisher_rao_distance_simplex(p, onehot).mean()
+
+
+def basin_lm_loss(scores: torch.Tensor, ids: torch.Tensor, tau: float) -> torch.Tensor:
+    """BASIN-SPACE next-token loss — the validated (overfit d_FR 1.46→0.072, decode 91.3%) objective for
+    ``head_mode='basin'``. NOT a logits→distribution map: it is the pure geodesic distance from the
+    predicted Δ⁶³ basin to the target token's FROZEN coordizer basin, averaged over positions.
+
+    ``BasinReadout.forward`` already returns ``scores = −d_FR(predict(h), coord_basins)/τ`` over the vocab,
+    so the score at the target COLUMN is ``−d_FR(pred, coord_basins[target])/τ`` and ``coord_basins[target]``
+    IS the target token's basin. Hence ``d_FR(pred, target_basin) = −τ · scores[target]`` — recovered by a
+    gather, reusing the forward output (no extra full-vocab compute). Pure d_FR, no softmax, no distribution
+    map; the frozen target means a low loss is real predictive signal, not target collapse (Matrix §H)."""
+    sc = scores[0, :-1]                         # [T-1, V] = −d_FR(predict(h), coord_basins)/τ
+    tgt = ids[0, 1:]                            # [T-1]
+    d_target = -float(tau) * sc.gather(-1, tgt[:, None]).squeeze(-1)   # [T-1] = d_FR(pred, target_basin)
+    return d_target.mean()

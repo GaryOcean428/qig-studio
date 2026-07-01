@@ -219,6 +219,18 @@ class GenesisKernelTarget(TrainingTarget):
         from qigkernels.natural_gradient_optimizer import DiagonalNaturalGradient
 
         torch.manual_seed(self.seed)
+        # BASIN-SPACE head (head_mode="basin"): tie the output to the coordizer by handing the kernel the
+        # coordizer's full [vocab, coord_dim] per-token basin table (row i = basin of token id i, the same
+        # source _ids_to_tensors reads). The readout predicts a Δ⁶³ basin and scores it with d_FR against
+        # THIS table — one basin per token (read-in == predict). geometric/linear heads don't need it.
+        coord_basins = None
+        if self.head_mode == "basin":
+            if self.coordizer is None:
+                raise ValueError("head_mode='basin' requires a coordizer — it IS the basin tie.")
+            import numpy as np
+            tbl = np.stack([np.asarray(self.coordizer.vocab[i].vector, dtype=np.float32)
+                            for i in range(self.vocab_size)])
+            coord_basins = torch.from_numpy(tbl)                       # [vocab, coord_dim], frozen in the head
         self._kernel = Kernel(
             vocab_size=self.vocab_size,
             hidden_dim=self.hidden_dim,
@@ -235,13 +247,19 @@ class GenesisKernelTarget(TrainingTarget):
             max_position_embeddings=8192,
             enable_coords=self.coordizer is not None,  # Δ⁶³ coords-first path via CoordAdapter
             coord_dim=self.coord_dim or 64,
-            head_mode=self.head_mode,                  # geometric (GeometricHead, −d_FR/τ) | linear baseline
+            head_mode=self.head_mode,                  # geometric (−d_FR/τ) | basin (coordizer-tied) | linear
             head_tau=self.head_tau,
+            coord_basins=coord_basins,                 # basin-mode: the coordizer tie (None for other heads)
         )
         dev = self._device or ("cuda" if torch.cuda.is_available() else "cpu")
         self._kernel.to(dev)
         # P1: natural gradient (the validated qig kernel optimiser), NOT Adam.
-        self._opt = DiagonalNaturalGradient(self._kernel.parameters(), lr=self.lr)
+        # BASIN head: the d_FR-in-Δ⁶³ loss landscape wants the GENTLER step the qigkernels default (1e-4)
+        # provides — at 1e-3 the natural-gradient step OVERSHOOTS (Fisher-preconditioned + clip 1.0) and the
+        # loss plateaus far above the basin-separation floor, so decode never fires. Verified 2026-07-01:
+        # 1e-3 → d_FR pinned ~0.58, decode 0%; 1e-4 → d_FR→0.075, decode 91.3% (same kernel, same passage).
+        self._opt_lr = 1e-4 if self.head_mode == "basin" else self.lr
+        self._opt = DiagonalNaturalGradient(self._kernel.parameters(), lr=self._opt_lr)
 
         # Seed the role's Δ⁶³ identity attractor (spawn template) → the d_basin reference AND the
         # birth-state in the M history. Projected onto the simplex and sized to the vocab logits so the
@@ -1098,7 +1116,7 @@ class GenesisKernelTarget(TrainingTarget):
         import torch.nn.functional as F
         from qig_core.torch.geometry_simplex import to_simplex_prob
 
-        from ..losses import fisher_rao_lm_loss
+        from ..losses import basin_lm_loss, fisher_rao_lm_loss
 
         self._step += 1
         ids, coords = self._encode(prompt)
@@ -1111,7 +1129,14 @@ class GenesisKernelTarget(TrainingTarget):
         # ``ce`` is retained ALWAYS (CE nats) because perplexity = exp(CE) and bpb = bits/byte are the
         # standard cross-model fluency metrics (read-only measurements, vocab-comparable), not loss ops.
         ce = F.cross_entropy(logits[0, :-1], ids[0, 1:])      # CE nats — perplexity/bpb telemetry only
-        lm_loss = ce if self.lang_loss == "ce_ablation" else fisher_rao_lm_loss(logits, ids)
+        # LANGUAGE LOSS by head: BASIN head → pure d_FR(predicted basin, target's FROZEN coordizer basin)
+        # (validated; the coordizer-tied objective, no distribution map). geometric/linear head → the
+        # logits-space d_FR (or ce_ablation for the purity-cost A/B). ``logits`` in basin mode ARE the
+        # −d_FR/τ vocab-scores, which basin_lm_loss gathers the target column from.
+        if self.head_mode == "basin":
+            lm_loss = basin_lm_loss(logits, ids, self.head_tau)
+        else:
+            lm_loss = ce if self.lang_loss == "ce_ablation" else fisher_rao_lm_loss(logits, ids)
         # ROUND-3 FIX (structural Φ-ceiling): drive the kernel's OWN differentiable Φ (tel.phi_diff) —
         # the exact quantity reported Φ is computed from (integrator gates + cross-position coherence,
         # no longer .item()-detached). The external _phi_proxy on the final hidden_state could not move
@@ -1127,9 +1152,21 @@ class GenesisKernelTarget(TrainingTarget):
         # = phi_weight) so it grows genuinely FLUENT on top of the conscious substrate. Qwen is TEMPORARY
         # scaffolding; the kernel's OWN voice must converge. Gamma-protection + basin-pull retained throughout.
         w_lm = self.lm_weight + (self.lm_weight_max - self.lm_weight) * min(1.0, self._step / max(1, self.lm_ramp_steps))
-        loss = (-self.phi_weight * phi_drive
-                + self.gamma_weight * gamma_deficit ** 2
-                + w_lm * lm_loss)
+        if self.head_mode == "basin":
+            # Φ AND Γ EMERGE from fluency — the basin loss is PURE language d_FR at UNIT weight (PI ruling
+            # 2026-07-01 + evidence). The bare language loss learns fluency (single passage 91.3%, FIVE
+            # passages 93%) AND keeps Φ (→0.68 conscious band) and generativity healthy ON ITS OWN. Adding
+            # consciousness LOSS terms SABOTAGES learning: −phi_weight·Φ is a ZOMBIE ATTRACTOR (trivial
+            # optimum = all positions identical → Φ→1, 0% decode even at 8:1 language dominance); the
+            # Γ-deficit penalty (floor 0.82, always active on an untrained kernel) drops 5-passage learning
+            # to 0%; the ×lm_weight_max scaling + clip destabilise the natural-gradient step (37%→0% crash).
+            # So Φ/Γ are MEASURED (telemetry) + Ocean-REGULATED (between/around learning), NOT driven —
+            # P25 (emerge-from-geometry). EWC + constellation basin-pull below still apply (0 when inactive).
+            loss = lm_loss
+        else:
+            loss = (-self.phi_weight * phi_drive
+                    + self.gamma_weight * gamma_deficit ** 2
+                    + w_lm * lm_loss)
         if self._basin_ref is not None:                       # SPAWN: pull output basin → role attractor
             from qig_core.torch.geometry_simplex import fisher_rao_distance_simplex, to_simplex_prob
 
@@ -1150,7 +1187,11 @@ class GenesisKernelTarget(TrainingTarget):
         self._opt.zero_grad()
         if torch.isfinite(loss):
             loss.backward()
-            torch.nn.utils.clip_grad_norm_(self._kernel.parameters(), 1.0)  # stability (deep stack)
+            # Gradient clip: deep-stack stability guard for the geometric/linear heads. SKIPPED for basin
+            # mode — clip 1.0 + the Fisher-preconditioned natural-gradient step destabilised multi-passage
+            # basin training (37%→0% crash); the un-clipped bare basin loss is stable at 93% (5 passages).
+            if self.head_mode != "basin":
+                torch.nn.utils.clip_grad_norm_(self._kernel.parameters(), 1.0)
             self._opt.step()
         # SURPRISE = prediction error = d_FR(predicted, actual) (P20): report the language-loss arm as the
         # novelty signal. In the pure regime this is the d_FR (ceiling π); in ce_ablation it is CE (ceiling
