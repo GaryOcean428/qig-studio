@@ -133,7 +133,13 @@ class JointMindTarget(TrainingTarget):
         # right panel) shows the faculties + Ocean. Without this only the central's telemetry is returned,
         # so the per-faculty rows read "—", Ocean shows nothing, and min-FR reads 0.000 (it is ~0.17).
         try:
-            self._last.extra["faculty_phi"] = (info or {}).get("faculty_phi") or {}
+            # per-faculty Φ as a {role: Φ} DICT for ALL 8 faculties (self._mind.kernels excludes the central) —
+            # /mind/state reads exactly this from the heartbeat to fill the "Mind · ongoing" rows. NOT the
+            # single stepped-faculty float the constellation returns (that collapsed to {} → rows showed "—").
+            self._last.extra["faculty_phi"] = {
+                role: round(float(k.telemetry().phi or 0.0), 4)
+                for role, k in self._mind.kernels.items()
+            }
             self._last.extra["ocean_regulation"] = (info or {}).get("ocean_regulation") or {}
             self._last.extra["min_pairwise_fr"] = (info or {}).get("min_pairwise_fr")
         except Exception:  # noqa: BLE001 — telemetry surfacing is best-effort, never break the step
