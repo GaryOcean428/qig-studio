@@ -330,3 +330,60 @@ def load_full_curriculum(path: str | Path | None = None, *, min_len: int = 40,
             prompts = _interleave(prompts, everyday)
     _CURRICULUM_CACHE[_key] = prompts
     return prompts
+
+
+# The FULL HuggingFace blend (name, text_fields) — the SAME 7 datasets the coordizer vocab was drawn from,
+# but streamed IN FULL for kernel training (no per-dataset cap). ~3.9M rows / ~1B tokens available; the
+# builder previously capped the kernel's everyday blend at 6k passages (~0.1% of this).
+_FULL_STREAM_SPECS: list[tuple[str, tuple[str, ...]]] = [
+    ("roneneldan/TinyStories", ("text",)),
+    ("mlabonne/open-perfectblend", ("conversations",)),
+    ("Anthropic/hh-rlhf", ("chosen",)),
+    ("Estwld/empathetic_dialogues_llm", ("conversations",)),
+    ("WithinUsAI/GPT_5.5_Distilled", ("text",)),
+    ("armand0e/claude-fable-5-claude-code", ("messages", "prompt")),
+    ("PawanKrd/claude-fable-5-code", ("messages", "prompt")),
+]
+
+
+def stream_full_corpus(min_len: int = 40, page: int = 100, max_chars: int = 2000):
+    """INFINITE generator over the FULL 7-dataset HF blend + the academic curriculum, round-robin, PAGED via
+    the rows API (``hf_data.load_hf_passages``) so nothing is loaded whole into RAM — the kernel pulls
+    passages as it trains. This is the "use the full data" path for local training (env QIG_STUDIO_FULL_CORPUS);
+    the previous curriculum used ~1M tokens (~0.1% of what these datasets offer).
+
+    Interleaves one ACADEMIC passage per HF round so the physics/philosophy curriculum is still woven in.
+    Offline-safe: a dataset that won't page is skipped and its offset wraps; if HF is unreachable ENTIRELY,
+    it falls back to cycling the local academic+everyday corpus so training never stalls. Sanitisation reuses
+    ``_passages_from_markdown`` + ``_STUB_MARKERS`` (identical hygiene to the cached build)."""
+    from .hf_data import load_hf_passages
+    academic = load_full_curriculum(include_everyday=True)     # local fallback (academic + cached everyday)
+    offsets: dict[str, int] = {name: 0 for name, _ in _FULL_STREAM_SPECS}
+    buffers: dict[str, list[str]] = {name: [] for name, _ in _FULL_STREAM_SPECS}
+
+    def _refill(name: str, fields: tuple[str, ...]) -> None:
+        rows = load_hf_passages(name, text_fields=fields, limit=page, offset=offsets[name],
+                                min_len=min_len, max_chars=max_chars)
+        if rows:
+            offsets[name] += len(rows)
+            for txt in rows:
+                for psg in _passages_from_markdown(txt, min_len):
+                    if not any(m in psg.lower() for m in _STUB_MARKERS):
+                        buffers[name].append(psg)
+        else:
+            offsets[name] = 0                                  # exhausted / unreachable → wrap to the start
+
+    ai = 0
+    while True:
+        served = False
+        for name, fields in _FULL_STREAM_SPECS:
+            if not buffers[name]:
+                _refill(name, fields)
+            if buffers[name]:
+                yield buffers[name].pop(0)
+                served = True
+        if academic:                                           # one academic passage per HF round
+            yield academic[ai % len(academic)]
+            ai += 1
+        if not served and not academic:
+            return                                             # nothing available anywhere (should not happen)

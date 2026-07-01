@@ -70,6 +70,7 @@ class CurriculumProvider:
         self._real = None
         self._file_prompts: list[str] | None = None
         self._file_pairs: list[tuple[str, str]] | None = None
+        self._stream = None                          # FULL-DATA streaming generator (QIG_STUDIO_FULL_CORPUS)
         # FULL curriculum: the cleaned v6 master corpus (thousands of sanitised, ASCII-only prompts) —
         # used instead of the tiny built-in 4-phase stub when requested (flag or QIG_STUDIO_FULL_CURRICULUM).
         import os
@@ -89,6 +90,16 @@ class CurriculumProvider:
                 self._file_prompts = None
         if loss_regime == LossRegime.GEOMETRIC and not self._file_prompts:
             self._try_real_curriculum()
+        # FULL-DATA streaming (env QIG_STUDIO_FULL_CORPUS=1): pull passages from the FULL 7-dataset HF blend
+        # (~1B tokens) AS THE KERNEL TRAINS, instead of the ~1M-token cached curriculum (~0.1% of the data).
+        # None-safe: if streaming can't init, the finite curriculum above still serves.
+        if loss_regime == LossRegime.GEOMETRIC and \
+                os.environ.get("QIG_STUDIO_FULL_CORPUS", "").lower() in ("1", "true", "yes"):
+            try:
+                from .corpus import stream_full_corpus
+                self._stream = stream_full_corpus()
+            except Exception:  # noqa: BLE001 — streaming unavailable → keep the finite curriculum
+                self._stream = None
 
     def _load_dir(self, directory: str) -> None:
         """Load a nominated curriculum dir: ``*.txt`` → basin-driving prompts (one per
@@ -142,8 +153,20 @@ class CurriculumProvider:
         idx = min((step - 1) // _PHASE_SPAN, len(_PHASE_ORDER) - 1)
         return _PHASE_ORDER[idx]
 
+    def _next_streamed(self) -> str | None:
+        """Next passage from the FULL-DATA stream (None if streaming is off or hiccups → caller falls back)."""
+        if self._stream is None:
+            return None
+        try:
+            return next(self._stream)
+        except Exception:  # noqa: BLE001 — a stream hiccup must never break a training step
+            return None
+
     def next_prompt(self, step: int) -> str:
         """Basin-driving prompt for geometric targets (step is 1-based)."""
+        streamed = self._next_streamed()             # FULL-DATA stream (QIG_STUDIO_FULL_CORPUS) supersedes
+        if streamed is not None:
+            return streamed
         if self._file_prompts:  # nominated curriculum dir wins
             return self._file_prompts[(step - 1) % len(self._file_prompts)]
         phase = self.phase_for(step)
