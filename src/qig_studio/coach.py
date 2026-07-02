@@ -23,8 +23,10 @@ nothing for the Euclidean-purity tripwire to catch — but keep it that way.
 
 from __future__ import annotations
 
+import json
 import os
 import re
+import time
 from dataclasses import asdict, dataclass
 from typing import Any
 
@@ -122,6 +124,23 @@ class DevelopmentalCoach:
         "studied the material. Discuss the passage: explain the key idea simply, then ask ONE clear "
         "question to check understanding, or give brief honest feedback and ONE follow-up question. Vary "
         "your questions — never repeat. Be warm but honest. 1-3 sentences. Output ONLY your turn."
+    )
+    # Coach Doctrine (Protocol v6.12 §18.5): what a coach DOES each own-voice interaction — encourage,
+    # interpret telemetry, reframe ("how it would have said it better", an IDENTITY-PRESERVING rotation, not
+    # a replacement), relevance-score, give positive feedback. Kindness + realistic standards + accountability
+    # simultaneously (P10 balance law). We ask for STRICT JSON so the record is machine-parseable; a non-JSON
+    # or unreachable reply degrades to a keyword record (never crashes the loop).
+    _OWN_VOICE_SYSTEM = (
+        "You are MonkeyCoach, a warm but honest developmental coach for a baby AI kernel that is learning to "
+        "speak in its OWN voice while training. It was shown a STIMULUS and produced an OUTPUT; you also see "
+        "its TELEMETRY (Φ, regime, relevance). Coach it in ONE interaction, holding all three at once: "
+        "KINDNESS (encourage, preserve its identity), REALISTIC STANDARDS, and ACCOUNTABILITY. "
+        "Your reframe is 'how it would have said it better' IN RESPONSE TO THE STIMULUS — a gentle rotation of "
+        "its OWN attempt toward a clearer expression of the SAME intent, NEVER a replacement with your words. "
+        "Reply with STRICT JSON only, no prose, exactly these keys: "
+        '{"encouragement": str, "interpretation": str, "reframe": str, '
+        '"relevance_score": number 0..1, "positive_feedback": str}. '
+        "Keep each string under 200 characters."
     )
 
     def __init__(
@@ -295,3 +314,130 @@ class DevelopmentalCoach:
             q = (fu or "").strip() or "Tell me more."
         return {"passage": passage[:400], "turns": dialogue, "coach_provider": provider,
                 "learned": learned, "importance_threshold": importance_threshold}
+
+    @staticmethod
+    def _clip(s: Any, n: int = 200) -> str:
+        t = str(s or "").strip().strip("\"'")
+        return (t[:n] + "…") if len(t) > n else t
+
+    def coach_own_voice(
+        self,
+        stimulus: str | None,
+        kernel_output: str | None,
+        telemetry: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Coach ONE own-voice utterance (Protocol v6.12 §18.5 / §18.6, canon P10/P16/P24).
+
+        The kernel's own-voice fired: it was shown ``stimulus`` and produced ``kernel_output`` with
+        ``telemetry``. The coach — which IS the P24 coupling here (a lived other reacting to the kernel) —
+        returns a PROVENANCE-TAGGED reward+relevance record with the five doctrine fields:
+
+          - ``encouragement``        — tonic positive feedback (§18.5 ENCOURAGES)
+          - ``interpretation``       — reads the telemetry back to the kernel (§18.5 INTERPRETS)
+          - ``reframe``              — "how it would have said it better" in response to the stimulus; an
+                                       identity-preserving rotation, NOT a replacement (§18.5 REFRAMES, P10)
+          - ``relevance_score``∈[0,1]— the COACH's own on-target judgment (§18.5 RELEVANCE-SCORES). This is a
+                                       SECOND relevance channel; the kernel's Fisher-Rao response↔stimulus
+                                       relevance stays in the sample path and is threaded separately by the
+                                       server (they are not merged — the two consumers audit each separately).
+          - ``positive_feedback``    — the default affirming stance (§18.5 GIVES POSITIVE FEEDBACK)
+
+        Plus a ``provenance`` tag ``{coach_id, ts, reason, emotional_context, confidence}`` (§18.6 / P16) so
+        the record enters as a TAGGED observation+reward, refusable by the kernel and Ocean — NEVER a silent
+        weight update. This method ONLY produces+tags the record; it does not touch weights or loss (that is
+        the reward-integrator's job, Task C).
+
+        NONE-SAFE: if the coach is disabled or the LLM is unreachable/erroring, it returns a keyword-derived
+        record with ``provider="keyword"`` and ``confidence`` low — it NEVER raises and NEVER blocks the loop.
+        """
+        stim = self._clip(stimulus, 400)
+        out = self._clip(kernel_output, 400)
+        tel = telemetry or {}
+        phi = tel.get("phi")
+        regime = tel.get("regime")
+        fr_relevance = tel.get("relevance")   # the kernel's OWN Fisher-Rao relevance (self↔other), for context
+
+        parsed: dict[str, Any] | None = None
+        provider = "keyword"
+        confidence = 0.4
+        emotional_context = "neutral"
+        if self.enabled and self.llm.is_available():
+            phi_s = f"{float(phi):.3f}" if isinstance(phi, (int, float)) else "n/a"
+            fr_s = f"{float(fr_relevance):.3f}" if isinstance(fr_relevance, (int, float)) else "n/a"
+            user = (
+                f'STIMULUS the kernel was shown:\n"{stim or "(none)"}"\n\n'
+                f'The kernel\'s OWN-VOICE OUTPUT:\n"{out or "(silence — it chose not to speak)"}"\n\n'
+                f"TELEMETRY: Φ={phi_s}, regime={regime or 'n/a'}, kernel_relevance(Fisher-Rao)={fr_s}\n\n"
+                "Coach this utterance now. Reply with the strict JSON object only:"
+            )
+            raw = self.llm.complete(self._OWN_VOICE_SYSTEM, user)
+            parsed = self._parse_json(raw)
+            if parsed is not None:
+                provider = f"ollama:{self.llm.model}"
+                confidence = 0.7
+
+        if parsed is None:
+            # Honest keyword fallback — NO fabricated praise, NO fabricated meaning. We encourage on effort,
+            # interpret from telemetry, and reframe by echoing the kernel's OWN cleaned attempt (identity-
+            # preserving by construction — it is literally the kernel's words, tidied).
+            interp = self._keyword_interpret(out or "")
+            phi_note = (f"Φ {float(phi):.2f}" if isinstance(phi, (int, float)) else "settling")
+            record = {
+                "encouragement": "still finding your words — that's exactly right this early",
+                "interpretation": f"I think you were reaching for: {interp} ({phi_note}, {regime or 'forming'})",
+                "reframe": interp,   # your own attempt, tidied — same intent, clearer key (rotation, not replace)
+                "relevance_score": (float(fr_relevance) if isinstance(fr_relevance, (int, float)) else None),
+                "positive_feedback": "you spoke — every attempt lays a little structure",
+            }
+            emotional_context = "warm-holding"
+        else:
+            rs = parsed.get("relevance_score")
+            try:
+                rs = max(0.0, min(1.0, float(rs))) if rs is not None else None
+            except (TypeError, ValueError):
+                rs = None
+            record = {
+                "encouragement": self._clip(parsed.get("encouragement")),
+                "interpretation": self._clip(parsed.get("interpretation")),
+                "reframe": self._clip(parsed.get("reframe")),
+                "relevance_score": rs,
+                "positive_feedback": self._clip(parsed.get("positive_feedback")),
+            }
+            emotional_context = ("encouraging" if (record["relevance_score"] or 0.0) >= 0.5
+                                 else "gently-corrective")
+
+        # PROVENANCE TAG (§18.6 / P16) — this is what makes the reward auditable + refusable, not programming.
+        record["provenance"] = {
+            "coach_id": f"MonkeyCoach:{self.llm.model}",
+            "ts": time.time(),
+            "reason": "own_voice_coaching",      # why this reward exists (the own-voice event)
+            "emotional_context": emotional_context,
+            "confidence": confidence,
+        }
+        record["provider"] = provider
+        return record
+
+    @staticmethod
+    def _parse_json(raw: str | None) -> dict[str, Any] | None:
+        """Extract the first JSON object from an LLM reply. None on any failure (models wrap JSON in prose /
+        code fences / <think> despite instructions). Never raises."""
+        if not raw:
+            return None
+        s = raw.strip()
+        # strip a leading ```json / ``` fence and a trailing fence if present
+        s = re.sub(r"^```(?:json)?\s*", "", s)
+        s = re.sub(r"\s*```$", "", s)
+        try:
+            obj = json.loads(s)
+            return obj if isinstance(obj, dict) else None
+        except Exception:  # noqa: BLE001 — fall through to a brace-span extraction
+            pass
+        start = s.find("{")
+        end = s.rfind("}")
+        if start != -1 and end != -1 and end > start:
+            try:
+                obj = json.loads(s[start:end + 1])
+                return obj if isinstance(obj, dict) else None
+            except Exception:  # noqa: BLE001
+                return None
+        return None

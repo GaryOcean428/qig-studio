@@ -76,7 +76,7 @@ def step_record(*, step: int, total: int | None, ts: float, source: str,
                 ocean_action: dict[str, Any] | None = None, own_voice: str | None = None,
                 coordizer_vocab: int | None = None, drift_velocity: float | None = None,
                 faculty_phi: dict[str, Any] | None = None, stimulus: str | None = None,
-                relevance: float | None = None) -> dict[str, Any]:
+                relevance: float | None = None, coach: dict[str, Any] | None = None) -> dict[str, Any]:
     """Assemble ONE rich live record. Pulls the harm signals so the UI never has to recompute them. The
     FULL ``experience`` is carried so the UI's left inner-state panel reflects the LIVE training kernel
     (not the idle target) — LiveLog keeps it only on ``current`` to bound the SSE stream."""
@@ -110,6 +110,7 @@ def step_record(*, step: int, total: int | None, ts: float, source: str,
         "ocean_action": ocean_action or {},
         "own_voice": own_voice,                        # the kernel's OWN learned voice (carried forward)
         "relevance": _f(relevance),                    # response↔stimulus relevance (1=on-topic, 0=drift; self↔other)
+        "coach": coach,                                # provenance-tagged coach reward+relevance record (§18.6): encourage/interpret/reframe/relevance_score/positive_feedback + provenance tag
         "stimulus": stimulus,                          # the passage the own_voice RESPONDED to (relevance check)
         "faculty_phi": faculty_phi or {},              # live per-faculty Φ (before the first checkpoint)
         "experience": experience or {},                # FULL inner state → left panel reflects the LIVE kernel

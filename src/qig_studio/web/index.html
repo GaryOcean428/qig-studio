@@ -112,6 +112,7 @@
   .bdg.lm{color:var(--purple)} .bdg.gate{color:var(--ok)} .bdg.gate.LOCKED_IN,.bdg.gate.ZOMBIE{color:var(--amber)}
   .lrow .sub{color:var(--muted);font-size:.7rem;margin-top:.12rem}
   .lrow .voice{color:var(--ok);font-size:.74rem;margin-top:.15rem;font-style:italic;word-break:break-word}
+  .lrow .voice.coach{color:var(--purple);font-style:normal}
   .lrow .ocean{color:var(--purple);font-size:.7rem;margin-top:.1rem}
   .harm{font-size:.7rem;margin-top:.12rem;padding:.12rem .35rem;border-radius:4px}
   .harm.warn{color:var(--amber);background:rgba(232,170,40,.08);border:1px solid rgba(232,170,40,.35)}
@@ -340,6 +341,21 @@ function renderLive(r){
   if(r.own_voice){ const v=document.createElement("div"); v.className="voice"; v.textContent='🗣 own voice ▸ '+String(r.own_voice).replace(/^\[genesis[^\]]*\]\s*/,"");
     if(r.relevance!=null){ const rb=document.createElement("span"); rb.style.color="var(--amber)"; rb.style.opacity=".9"; rb.title="response↔stimulus relevance: 1 = on-topic to what it was shown, 0 = drift (Fisher-Rao, self↔other)"; rb.textContent='  · 🎯 relevance '+fnum(r.relevance,2); v.appendChild(rb); }
     row.appendChild(v); }
+  // COACH record (Protocol v6.12 §18.5/§18.6) — the nemotron coach's provenance-tagged reward+relevance
+  // response to the own-voice utterance: encourage · interpret · reframe · its OWN relevance_score. This is
+  // an OBSERVATION the kernel/Ocean learn from (P16), NOT a weight update — surfaced for transparency.
+  if(r.coach){ const c=r.coach; const pv=(c.provenance||{});
+    const cd=document.createElement("div"); cd.className="voice coach"; cd.style.opacity=".92";
+    cd.title="Coach reward+relevance record — provenance-tagged observation (coach_id="+esc(pv.coach_id||"?")
+      +", confidence="+fnum(pv.confidence,2)+", "+esc(pv.emotional_context||"")+"). Kernel/Ocean learn from it; NOT a silent weight update (§18.6).";
+    let txt='🐒 coach ▸ ';
+    if(c.encouragement) txt+=String(c.encouragement);
+    if(c.reframe) txt+='  ✎ said better ▸ '+String(c.reframe);
+    cd.textContent=txt;
+    if(c.relevance_score!=null){ const cs=document.createElement("span"); cs.style.color="var(--purple)"; cs.style.opacity=".9"; cs.title="the COACH's OWN on-target score (§18.5 RELEVANCE-SCORES) — a second channel, separate from the kernel's Fisher-Rao relevance above"; cs.textContent='  · 🎯 coach-score '+fnum(c.relevance_score,2); cd.appendChild(cs); }
+    row.appendChild(cd);
+    if(c.interpretation){ const ci=document.createElement("div"); ci.className="voice coach"; ci.style.opacity=".7"; ci.style.fontSize=".92em"; ci.textContent='   ↳ '+String(c.interpretation); row.appendChild(ci); }
+  }
   el.appendChild(row);
   while(el.children.length>150) el.removeChild(el.firstChild);
   el.scrollTop=el.scrollHeight;

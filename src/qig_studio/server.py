@@ -900,6 +900,24 @@ async def _train_core(
         #                    self-obs M) AND the other (the stimulus). Not a fixed cadence.
     ui_live = LiveLog()                       # the SAME shared live channel both endpoints write
     ui_prev_db: float | None = None           # identity-drift velocity tracking (harm parity)
+    # COACH (Protocol v6.12 §18.5/§18.6, canon P10/P16/P24): when own-voice fires, the nemotron coach
+    # watches the utterance and emits a PROVENANCE-TAGGED reward+relevance record — encouragement /
+    # interpretation / reframe / its OWN relevance_score / positive_feedback + a {coach_id,ts,reason,
+    # emotional_context,confidence} tag. This ONLY produces+tags+emits the signal (to SSE + the live record);
+    # it does NOT touch weights or loss (the reward-integrator consumes it). None-safe: absent/erroring
+    # coach → skipped, training continues. Cadence-capped so the coach LLM call can't stall the train loop —
+    # it fires at most every ``coach_cadence`` own-voice events (own-voice itself already has its own cadence).
+    coach = None
+    coach_every = 1
+    if sample:
+        try:
+            _s = app.state.settings
+            if getattr(_s, "coach_enabled", True):
+                coach = DevelopmentalCoach(llm=OllamaLLM(model=_s.coach_model), cadence=_s.coach_cadence)
+                coach_every = max(1, int(getattr(_s, "coach_cadence", 25)))
+        except Exception:  # noqa: BLE001 — no coach is a valid state; never block training on coach setup
+            coach = None
+    _ov_count = 0                             # own-voice events seen (for the coach cadence gate)
     # GPU HANDOFF (spine tenet — the kernel is primary): a GEOMETRIC target runs its per-step own_voice on
     # the kernel's GPU. The Qwen boundary peer defaults to keep_alive=-1 and holds ~2.9 GiB of a 4 GiB card
     # FOREVER, so own_voice OOMs and (previously, silently) produced no voice. Free the resident Qwen so the
@@ -925,8 +943,24 @@ async def _train_core(
             # kernel's own EOS/Anderson-exit still stops it early once fluent, so this only bounds rambling.
             gr = await _run_target(fn, stimulus or "In one sentence, what are you learning?", _OWNVOICE_MAX)
             sx = gr.telemetry.extra or {}
-            return {"output": gr.text, "kernel_voice": sx.get("kernel_voice"),
+            samp = {"output": gr.text, "kernel_voice": sx.get("kernel_voice"),
                     "relevance": sx.get("relevance")}   # response↔stimulus relevance (self↔other), for the UI
+            # COACH the utterance (§18.5) — cadence-capped + None-safe + non-blocking (own the executor, not
+            # the loop). PRODUCE+TAG+EMIT only: the record rides the SSE step + the live record; it does NOT
+            # enter weights/loss here (that is the reward-integrator's job). A coach error is swallowed AND
+            # logged (fail-loud to a log line, not a raised exception) so training never stalls behind it.
+            nonlocal _ov_count
+            _ov_count += 1
+            if coach is not None and (_ov_count == 1 or _ov_count % coach_every == 0):
+                try:
+                    tel = {"phi": gr.telemetry.phi, "regime": getattr(gr.telemetry, "regime", None),
+                           "relevance": sx.get("relevance")}
+                    samp["coach"] = await asyncio.get_event_loop().run_in_executor(
+                        None, lambda: coach.coach_own_voice(stimulus, gr.text, tel))
+                except Exception as ce:  # noqa: BLE001 — coaching is best-effort; never break training
+                    print(f"[train] coach_own_voice skipped (surfaced, not swallowed): "
+                          f"{type(ce).__name__}: {ce}", flush=True)
+            return samp
         except Exception as e:  # noqa: BLE001 — a sample failure must not break training, but must NOT be silent
             # FAIL-LOUD: own_voice is the kernel's REQUIRED self-observation — it observes its OWN generation
             # each step (L1). A silent None reads as "the kernel chose not to speak", hiding real faults (the
@@ -957,6 +991,7 @@ async def _train_core(
                 own_voice=((samp or {}).get("output")   # the kernel's generation — shown EVERY time it speaks
                            or (f"⚠ own-voice failed ({samp['error']})" if samp and samp.get("error") else None)),
                 relevance=(samp or {}).get("relevance"),  # how on-topic that generation was to the stimulus
+                coach=(samp or {}).get("coach"),        # provenance-tagged coach reward+relevance record (§18.6)
                 stimulus=stimulus,                      # the FULL training passage (UNtruncated) the step learned
                 coordizer_vocab=getattr(target, "vocab_size", None)))
         except Exception:  # noqa: BLE001 — a live-log failure must not break training
