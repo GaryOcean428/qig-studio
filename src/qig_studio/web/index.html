@@ -442,6 +442,15 @@ function _kernelVitals(k){
 function renderAllKernels(){
   let h="";
   for(const k of KERNELS){
+    if(k.role==="ocean"){   // Ocean is the autonomic REGULATOR — it has no own basin/Φ (it watches the
+      //                       faculties and fires sleep/dream/mushroom). Show its STATE, not a bare "—".
+      const reg=(k.regulates&&k.regulates.length)?("regulating "+esc(k.regulates.join(", "))):"watching · idle";
+      h+=`<div class="facb"><span class="fn" title="${esc(k.function||'')}">${esc(k.role)}</span>`
+        +`<span class="mb"></span>`
+        +`<span class="vv" style="color:var(--purple);font-size:.68rem">🌊 ${reg}</span></div>`
+        +`<div class="hint" style="margin:-.15rem 0 .35rem .1rem">${esc(k.function||"")} · no own basin/Φ (regulates the faculties)</div>`;
+      continue;
+    }
     const phi=k.phi==null?null:Number(k.phi);
     const w=phi==null?0:Math.max(0,Math.min(1,phi))*100;
     const gate=(k.experience&&k.experience.gate&&k.experience.gate.state)||"";
