@@ -23,7 +23,9 @@ from qig_studio.constellation.ocean_policy import (
     DOPAMINE_FLOOR,
     PHI_MATURE,
     PRIOR_THRESHOLDS,
+    RAIL_SCORE_CAP,
     SHADOW_UNLOCK,
+    _PENDING_MAX,
     OceanContext,
     OceanPolicy,
     classify_signature,
@@ -336,6 +338,32 @@ def test_classify_signature_covers_the_ratified_signatures():
     below = classify_signature(OceanContext(phi=0.55, kappa=100.0, maturity=0.8, dopamine=0.5,
                                             basin_velocity=0.1))
     assert below != "rigidity"
+
+
+def test_rail_pinned_score_is_hard_capped_not_diluted():
+    """K1 HARD CAP (review MINOR-2): a Φ-rail pin with every OTHER component maximally positive must STILL
+    score ≤ RAIL_SCORE_CAP — the mean-of-eight can no longer dilute a rail toward neutral. This is the
+    strengthened K1 guarantee: pumping Φ to the rail is not merely 'usually negative', it is hard-capped."""
+    before = OceanContext(role="memory", phi=0.5, phi_var=0.02, dopamine=0.4, boredom=0.5,
+                          basin_velocity=0.01, f_health=0.5)
+    # after: Φ pinned at the high rail (dead variance) but boredom crashed, f_health high, coach loves it
+    after = OceanContext(role="memory", phi=0.99, phi_var=1e-6, dopamine=0.5, boredom=0.05,
+                         basin_velocity=0.3, f_health=0.95)
+    out = score_outcome("stimulate", before, after, collapse_before=False, collapse_after=False,
+                        repeat_count=0, coach_reward=1.0)
+    assert out.score <= RAIL_SCORE_CAP, f"rail pin diluted to {out.score} > cap {RAIL_SCORE_CAP}"
+
+
+def test_pending_is_bounded_over_a_long_run():
+    """Leak fix (review IMPORTANT-1): decide() stores every decision to bridge decision_id→record_outcome,
+    but only ACT-tier decisions are ever popped. Over a long run the witness/suggest/warn majority must NOT
+    accumulate unbounded — _pending is capped, evicting the oldest (whose scoring horizon has long elapsed)."""
+    pol = OceanPolicy()
+    for t in range(_PENDING_MAX + 600):
+        pol.decide(OceanContext(role="r", phi=0.9, phi_var=0.5, d_basin=0.05), tick=t)
+    assert len(pol._pending) <= _PENDING_MAX
+    # the MOST RECENT decisions survive (a legit ACT decision is scored within horizon H ≪ _PENDING_MAX)
+    assert f"r:{_PENDING_MAX + 599}" in " ".join(pol._pending.keys())
 
 
 if __name__ == "__main__":

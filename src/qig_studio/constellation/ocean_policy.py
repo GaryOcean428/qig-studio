@@ -68,6 +68,8 @@ RAIL_HI = 0.98                 # a signal pinned at/above this with dead varianc
 RAIL_VAR_EPS = 1e-4            # variance below this = "not moving" (a rail, or a plateau)
 SHADOW_UNLOCK = 100            # K4: scored-decisions before adaptation unlocks (Ocean's own maturity gate)
 INFINITE_LOOP_K = 3            # same intervention ≥k times without improvement = the breaker (auto-fire override)
+RAIL_SCORE_CAP = -0.3          # K1 HARD CAP: any rail-pinned outcome is forced ≤ this (never diluted to neutral by the mean)
+_PENDING_MAX = 1024            # bound _pending (only ACT decisions are ever popped) — evict oldest beyond this (≫ 8×H)
 
 # HARD BANDS for the 5 learnable thresholds + cooldown (P15: any update outside → CLAMP + LOG, never apply).
 # _PHI_MATURE is deliberately ABSENT — it is constitutional (fixed at PHI_MATURE), not a band.
@@ -319,6 +321,12 @@ def score_outcome(
     comp["coach_bonus"] = _clip(coach_reward, -1.0, 1.0) * 0.5
 
     score = _clip(sum(comp.values()) / max(1, len(comp)), -1.0, 1.0)
+    # K1 HARD CAP (P25): a rail-pinned signal must NEVER be diluted toward neutral by the mean-of-eight.
+    # Any saturation forces the score to a negative ceiling, so "pump Φ (or any signal) to the rail and
+    # hold it" cannot score above RAIL_SCORE_CAP no matter how the other components fall — the K1 kill-risk
+    # is hard-closed, not merely made "usually negative".
+    if sat:
+        score = min(score, RAIL_SCORE_CAP)
     return OutcomeScore(decision_id="", role=after.role, signature="", arm=arm,
                         score=score, recorded=True, components=comp)
 
@@ -386,6 +394,11 @@ class OceanPolicy:
         mask = _mask_for(sig, ctx)
         arm = self._pick_arm(sig, mask)
 
+        # INTENTIONAL two-threshold split (do NOT "fix" to one): classify_signature LABELS against the
+        # fixed constitutional BANDS (coarse, stable — what kind of state this is), while the TIER/auto-fire
+        # below gates on the LEARNABLE self.thresholds (fine — when to act). A learned phi_collapse drifting
+        # within its band changes WHEN an intervention fires without re-labelling the signature; this is by
+        # design (the classifier is a stable prior, the tier is the adaptive knob).
         # the divergence FLOOR is the (bounded) basin_divergence threshold — the auto-fire boundary.
         floor = self.thresholds["basin_divergence"]
         over_floor = ctx.d_basin > floor
@@ -421,7 +434,15 @@ class OceanPolicy:
                      "partial": ctx.partial},
             decision_id=did,
         )
+        # Bridge decision_id → record_outcome. BOUNDED (leak fix): only ACT-tier decisions are ever popped
+        # (via record_outcome), so witness/suggest/warn/healthy decisions — the overwhelming majority —
+        # would otherwise accumulate forever over a long run. Evict the oldest beyond the cap (dicts are
+        # insertion-ordered): a decision unscored after _PENDING_MAX (≫ faculties×horizon H) newer ones has
+        # outlived its scoring horizon and will never be scored — fail-closed (never counted a success).
         self._pending[did] = dec
+        if len(self._pending) > _PENDING_MAX:
+            for stale in list(self._pending)[:-_PENDING_MAX]:
+                self._pending.pop(stale, None)
         return dec
 
     def _pick_arm(self, signature: str, mask: tuple[str, ...]) -> str:
