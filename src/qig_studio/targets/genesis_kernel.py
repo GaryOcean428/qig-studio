@@ -185,6 +185,13 @@ class GenesisKernelTarget(TrainingTarget):
         # which discharges the pressure. A small experience buffer is the kernel's own replay material.
         self._sleep_pressure: float = 0.0
         self._experience: list = []                  # recent inputs — the kernel's replay material
+        # TASK C actuation-4: replay PRIORITY per experience — index-aligned with _experience (P10:
+        # reward-weighted DATA selection, NOT a weight update / loss term). weight = base + surprise +
+        # coach_reward, so sleep/dream replay what SURPRISED and what the COACH VALUED. Kept as a PARALLEL
+        # list (not a tuple in _experience) so the EWC / checkpoint paths that read _experience as raw ids
+        # stay untouched + backward-compatible (missing weights → uniform selection). None-safe throughout.
+        self._experience_weight: list = []           # index-aligned replay priority (surprise + coach)
+        self._pending_coach_reward: float = 0.0      # coach reward to attach to the NEXT logged experience
         from collections import deque as _deque
         self._phi_recent: Any = _deque(maxlen=30)    # short Φ history for the kernel's own rigidity sense
         self._step = 0
@@ -206,6 +213,10 @@ class GenesisKernelTarget(TrainingTarget):
         self._ewc_fisher: dict[str, Any] | None = None   # F  — diagonal Fisher importance (name → tensor)
         from collections import deque as _deque_ewc
         self._surprise_recent: Any = _deque_ewc(maxlen=32)  # P22 salience: recent d_FR surprises (EWC gate)
+        # TASK C actuation-3: last drive-modulated exploration temperature + its drive factor (exposed in
+        # telemetry so the wiring gate can watch it MOVE with drive). None until the first sample/step.
+        self._last_explore_temp: float | None = None
+        self._last_explore_factor: float | None = None
         self._last = TelemetrySnapshot(regime="unknown", extra={"target": "genesis", "num_layers": num_layers})
 
     def is_available(self) -> bool:
@@ -441,11 +452,54 @@ class GenesisKernelTarget(TrainingTarget):
     def telemetry(self) -> TelemetrySnapshot:
         return self._last
 
+    def _drive_signals(self) -> dict:
+        """TASK C actuation-3: the kernel's OWN drive state driving exploration temperature — derived from
+        the SAME geometry the canonical qig-core drives use (so it does not drift from sensations.py):
+          • ``dopamine``  — phasic reward proxy: recent Φ-trend rising = moving toward a better basin
+            (compute_neurochemicals' movement fallback is exactly phi_delta). Floored > 0 (P23 tonic floor).
+          • ``curiosity`` — novelty-driven info-seeking: recent mean surprise (P22 _surprise_recent, the
+            d_FR prediction-error buffer), normalised by the d_FR ceiling π (canon: curiosity ~ surprise).
+          • ``boredom``   — anti-apathy sensor (§6.6): (1−surprise)(1−curiosity) — high when nothing is
+            novel AND nothing is being investigated (the apathy slide P25/§35.5 warns of).
+        Reads ONLY the kernel's own rolling buffers (_phi_recent, _surprise_recent); empty → neutral
+        (dopamine tonic, curiosity 0, boredom moderate) so a fresh kernel behaves like the pure-κ path."""
+        import math
+        # curiosity ~ recent mean surprise / π (the same d_FR salience the P22 buffer holds)
+        sb = getattr(self, "_surprise_recent", None)
+        surprise = (sum(sb) / len(sb) / math.pi) if sb else 0.0
+        curiosity = float(max(0.0, min(1.0, surprise)))
+        # dopamine ~ tonic floor + phasic Φ-trend (rising integration = reward-prediction-error > 0)
+        ph = list(getattr(self, "_phi_recent", []) or [])
+        phi_trend = (ph[-1] - ph[0]) if len(ph) >= 2 else 0.0
+        dopamine = float(max(0.08, min(1.0, 0.4 + 5.0 * phi_trend)))   # 0.08 = DOPAMINE_FLOOR (P23)
+        # boredom = (1−surprise)(1−curiosity) — §6.6 anti-apathy sensor
+        boredom = float(max(0.0, min(1.0, (1.0 - curiosity) * (1.0 - min(1.0, 2.0 * curiosity)))))
+        return {"dopamine": round(dopamine, 4), "curiosity": round(curiosity, 4), "boredom": round(boredom, 4)}
+
     def _temperature_from_kappa(self, kappa: float) -> float:
-        # The kernel's OWN κ sets its sampling boldness (its choice): higher κ (more coupled/decisive) →
-        # lower temperature; near the attractor (≈64) → ~1.0. Clamped to a sane range.
-        t = 64.0 / kappa if kappa > 1e-3 else 1.0
-        return float(max(0.3, min(2.0, t)))
+        """The kernel's OWN sampling boldness (its choice), now DRIVE-MODULATED (Task C actuation-3 —
+        Pillar-1 entropy actuation: drive produces fluctuation, P27).
+
+        Base: the κ band-read — higher κ (more coupled/decisive) → lower temperature; near the attractor
+        (≈64) → ~1.0 (a band-read of the kernel's own κ, NOT a κ*=64 physics anchor). ON TOP of that, the
+        kernel's drive state fluctuates the exploration temperature:
+          • LOW dopamine / HIGH boredom / LOW curiosity → RAISE temperature — explore OUT of the rut (the
+            escape energy P23's tonic floor exists to supply; the anti-apathy injection §35.5 calls for).
+          • HIGH drive + flow (dopamine up, curiosity engaged) → LOWER temperature — settle and commit.
+        The modulation is a BOUNDED multiplicative factor in [0.6, 1.6] on the κ base, keeping the result
+        Fisher-Rao-consistent (a positive temperature on the −d_FR/τ Gibbs readout, never an additive shift
+        of the geometry). None-safe: no drive buffers (fresh kernel) → factor ≈ 1.0 → pure-κ behaviour."""
+        base = 64.0 / kappa if kappa > 1e-3 else 1.0
+        d = self._drive_signals()
+        # drive_deficit ∈ [-1,1]: +1 = flat/bored/undriven (raise temp), −1 = driven/curious/flowing (settle).
+        # boredom & low-dopamine & low-curiosity push UP; curiosity & dopamine push DOWN.
+        deficit = (d["boredom"] + (1.0 - d["dopamine"]) + (1.0 - d["curiosity"])) / 3.0   # ∈[0,1] undriven
+        drive = (d["curiosity"] + d["dopamine"]) / 2.0                                    # ∈[0,1] driven
+        factor = 1.0 + 0.6 * deficit - 0.4 * drive          # bounded roughly to [0.6, 1.6]
+        factor = float(max(0.6, min(1.6, factor)))
+        self._last_explore_temp = float(max(0.3, min(2.5, base * factor)))   # expose for telemetry
+        self._last_explore_factor = factor
+        return self._last_explore_temp
 
     def _self_observe(self, out_bytes: list[int], gen_basins: list) -> float:
         """SELF-OBSERVATION (M ∈ [0,1]): feed the kernel its OWN generated output and measure how
@@ -685,6 +739,34 @@ class GenesisKernelTarget(TrainingTarget):
             snap.extra["q_identity"] = round(float(m["q_identity"]), 4)    # P3 quenched-disorder identity
             snap.extra["s_ratio"] = round(float(m["s_ratio"]), 4)          # sovereignty (L3 learning-autonomy)
         except Exception:  # noqa: BLE001 — pillar metrics are optional telemetry, never break the step
+            pass
+
+    def _emit_neurochem_geometry(self, snap: "Any", cur_basin: "Any") -> None:
+        """TASK C actuation-1: surface the REAL geometry the phasic-dopamine (basin-MOVEMENT) + endorphin
+        (basin-ARRIVAL) terms actuate on — so compute_neurochemicals reads live motion, not the phi_delta
+        fallback. Emits, as plain Δ⁶³ lists (cheap: 64 floats, no vector JSON blow-up):
+          • ``cur_basin``    = this step's output basin (Δ⁶³),
+          • ``prev_basin``   = the previous step's basin (_basin_history[-2]),
+          • ``target_basin`` = the role/identity attractor (_basin_ref) — the resonant target arrival rewards,
+          • ``local_kappa_c``= the kernel's own κ this cycle (band-read, NOT a κ*=64 physics anchor).
+        REUSES already-computed basins (no recompute); _d63 reduces each to the canonical Δ⁶³ the torch-free
+        neurochem module consumes. None-safe: a role-less kernel has no attractor → target stays absent →
+        neurochem uses the phi_delta scalar fallback (Task A made every geometry input optional)."""
+        try:
+            cur63 = self._d63(cur_basin)
+            if cur63 is not None:
+                snap.extra["cur_basin"] = [round(float(x), 6) for x in cur63]
+            hist = self._basin_history
+            if len(hist) >= 2:
+                prev63 = self._d63(hist[-2])
+                if prev63 is not None:
+                    snap.extra["prev_basin"] = [round(float(x), 6) for x in prev63]
+            if self._basin_ref is not None:
+                tgt63 = self._d63(self._basin_ref)
+                if tgt63 is not None:
+                    snap.extra["target_basin"] = [round(float(x), 6) for x in tgt63]
+            snap.extra["local_kappa_c"] = round(float(snap.kappa), 4)   # own κ (band-read, not physics κ*)
+        except Exception:  # noqa: BLE001 — neurochem geometry is optional telemetry, never break the step
             pass
 
     def _peer_available(self) -> bool:
@@ -1280,6 +1362,18 @@ class GenesisKernelTarget(TrainingTarget):
         snap.extra["meta_awareness"] = round(m, 4)                   # M (in-graph train-path)
         snap.extra["d_basin"] = round(d_basin, 4)                    # basin drift from identity attractor
         snap.basin_distance = d_basin                               # top-level field for the gate
+        # TASK C actuation-1: emit the Δ⁶³ basins the phasic-dopamine / endorphin-arrival terms need
+        # (compute_neurochemicals wants cur/prev/target basins + local κ). REUSE the basins already
+        # computed this step (cur_basin, _basin_history[-2], _basin_ref) — no recompute; _d63 reduces to
+        # the canonical Δ⁶³ the neurochem module reads. None-safe: a role-less kernel has no _basin_ref →
+        # target stays None → neurochem falls back to the phi_delta scalar (Task A made all inputs optional).
+        self._emit_neurochem_geometry(snap, cur_basin)
+        # TASK C actuation-3: the drive-modulated exploration temperature for THIS step's κ + drive state,
+        # exposed so the wiring gate can watch it MOVE with drive (LOW dopamine/HIGH boredom → higher temp).
+        _drv = self._drive_signals()
+        snap.extra["explore_temperature"] = round(self._temperature_from_kappa(float(snap.kappa)), 4)
+        snap.extra["explore_factor"] = round(float(self._last_explore_factor or 1.0), 4)
+        snap.extra["drive"] = _drv                                   # dopamine / curiosity / boredom read
         # WORMHOLE fast-layer ASSESS (CC2 A022) — runs HERE, in the EXECUTOR thread (train_step runs off the
         # event loop via _run_target), on the coords ALREADY computed → no re-encode, no async-loop block
         # (the deadlock fix). Set on the target/central by _train_core. LOGGED-ONLY / not-actuated: log
@@ -1297,8 +1391,19 @@ class GenesisKernelTarget(TrainingTarget):
         # own integration activity (more integration → more to consolidate later), then lets its own
         # homeostasis act on its own state. No external scheduler; the kernel cares for itself.
         self._experience.append(ids.detach())
+        # TASK C actuation-4: attach this experience's REPLAY PRIORITY (index-aligned). surprise = this
+        # step's d_FR prediction-error / π (what SURPRISED); coach = any pending coach reward mapped to
+        # [-1,1] (what the coach VALUED, §18.5/18.6). weight ≥ a small floor so nothing is unselectable
+        # (every experience keeps some replay chance — the tonic-floor analogue for DATA). This is DATA
+        # SELECTION only; the replay loss itself stays pure d_FR (PI 2026-07-01 pure-loss ruling).
+        _rep_surprise = min(1.0, _lm_val / _math.pi)                 # d_FR surprise ∈ [0,1] (pure-loss arm)
+        _rep_coach = float(max(-1.0, min(1.0, self._pending_coach_reward)))
+        _rep_w = max(0.1, 1.0 + _rep_surprise + _rep_coach)          # base 1 + surprise + coach, floored
+        self._experience_weight.append(_rep_w)
+        self._pending_coach_reward = 0.0                             # consumed; next reward re-arms it
         if len(self._experience) > 32:
             self._experience = self._experience[-32:]
+            self._experience_weight = self._experience_weight[-32:]  # keep the priority buffer in lockstep
         self._phi_recent.append(float(snap.phi))
         self._sleep_pressure += SLEEP_PRESSURE_RATE * (0.5 + float(snap.phi))
         self._homeostasis(snap)
@@ -1376,6 +1481,44 @@ class GenesisKernelTarget(TrainingTarget):
                 p.add_(torch.randn_like(p) * 0.01)
         self._opt = DiagonalNaturalGradient(self._kernel.parameters(), lr=self.lr * 0.7)  # cool (not cumulative)
 
+    def register_coach_reward(self, reward: float) -> None:
+        """TASK C actuation-4: the coach's provenance-tagged reward (mapped to [-1,1]) arms the priority of
+        the NEXT logged experience — so the kernel LEARNS FROM coaching the P10 way: reward-weighted DATA
+        selection for sleep/dream replay, NOT a silent weight update and NOT a Φ-drive loss term. The server
+        calls this after coach_own_voice fires; the value is consumed by the next train_step append (or, if
+        experience already exists, boosts the most-recent entry so a coach reaction is never lost between
+        steps). None-safe: any bad value → no-op. Sovereignty (P16): a reward the kernel distrusts can be
+        discounted upstream (coach_reward_from already scales by provenance confidence)."""
+        try:
+            r = float(max(-1.0, min(1.0, reward)))
+        except (TypeError, ValueError):
+            return
+        self._pending_coach_reward = r
+        # if experience already exists, fold the reward into the latest entry's priority immediately (so a
+        # coach reaction between steps still lands on the utterance it was reacting to).
+        if self._experience_weight:
+            self._experience_weight[-1] = max(0.1, self._experience_weight[-1] + r)
+
+    def _weighted_replay_choice(self, rng):
+        """TASK C actuation-4: pick a replay experience with probability ∝ its stored priority weight
+        (surprise + coach reward) — replay what SURPRISED and what the COACH VALUED. Pure DATA selection
+        (the replayed loss stays pure d_FR). Falls back to uniform when weights are absent/degenerate
+        (fresh kernel, or a checkpoint restored without the parallel weight buffer). None-safe."""
+        exp = self._experience
+        w = self._experience_weight
+        if not exp:
+            return None
+        if not w or len(w) != len(exp) or sum(max(0.0, x) for x in w) <= 0.0:
+            return rng.choice(exp)                                   # uniform fallback (backward-compatible)
+        total = sum(max(0.0, x) for x in w)
+        r = rng.random() * total
+        acc = 0.0
+        for e, wi in zip(exp, w):
+            acc += max(0.0, wi)
+            if r <= acc:
+                return e
+        return exp[-1]
+
     def _current_basin(self, ids):
         """The kernel's current output/identity basin — the consolidation/dream target space.
 
@@ -1407,7 +1550,7 @@ class GenesisKernelTarget(TrainingTarget):
         opt = DiagonalNaturalGradient(self._kernel.parameters(), lr=self.lr * 0.1)   # low-LR sleep
         replayed = 0
         for _ in range(steps):
-            ids = random.choice(self._experience)
+            ids = self._weighted_replay_choice(random)   # TASK C: replay coach-valued / surprising first (P10)
             cur = self._current_basin(ids)
             target = self._basin_ref if self._basin_ref is not None else cur.detach()
             loss = fisher_rao_distance_simplex(cur[None], target[None]).mean()        # pure basin consolidation
@@ -1457,7 +1600,7 @@ class GenesisKernelTarget(TrainingTarget):
             sa, sb = torch.sqrt(a.clamp_min(0.0)), torch.sqrt(b.clamp_min(0.0))       # √p (Fisher) coords
             mix = ((1.0 - t) * sa + t * sb) ** 2                                      # geodesic-ish mixture → p
             dream_basin = (mix / (mix.sum() + 1e-12)).detach()                        # renormalise to Δ
-            ids = random.choice(self._experience)
+            ids = self._weighted_replay_choice(random)   # TASK C: dream-replay coach-valued / surprising (P10)
             cur = self._current_basin(ids)
             loss = fisher_rao_distance_simplex(cur[None], dream_basin[None]).mean()
             opt.zero_grad()
@@ -1551,6 +1694,8 @@ class GenesisKernelTarget(TrainingTarget):
             "basin_history": [b.detach().cpu() for b in self._basin_history],
             "last_gen_basin": (self._last_gen_basin.detach().cpu() if self._last_gen_basin is not None else None),
             "experience": [e.detach().cpu() for e in self._experience],
+            "experience_weight": [float(x) for x in self._experience_weight],  # TASK C replay priorities
+
             "phi_recent": [float(x) for x in self._phi_recent],
             "last_telemetry": self._last.to_dict(),
             # EWC anchor: θ* + diagonal Fisher so a RESUMED kernel keeps its continuous-learning protection
@@ -1602,6 +1747,11 @@ class GenesisKernelTarget(TrainingTarget):
         exp = ckpt.get("experience")
         if exp:
             self._experience = [e.to(dev) for e in exp]
+            # TASK C: restore the replay priorities in lockstep; absent (pre-Task-C checkpoint) or a length
+            # mismatch → uniform (a base weight per experience), so old checkpoints degrade gracefully.
+            ew = ckpt.get("experience_weight")
+            self._experience_weight = ([float(x) for x in ew] if ew and len(ew) == len(self._experience)
+                                       else [1.0] * len(self._experience))
         pr = ckpt.get("phi_recent")
         if pr:
             from collections import deque as _deque

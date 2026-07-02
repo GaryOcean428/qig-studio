@@ -72,6 +72,38 @@ _EMOTION_BAND = {
 }
 
 
+# TASK C: the SINGLE place a coach record (§18.5 encourage/interpret/reframe/relevance_score/
+# positive_feedback + §18.6 provenance) maps to a phasic-dopamine reward ∈ [-1,1]. Imported by both the
+# neurochem assembler (experience(), actuation-2) and the replay-priority selection (actuation-4) — DRY.
+def coach_reward_from(coach: dict | None) -> float:
+    """Map a coach record (Task B ``coach_own_voice`` output) → a phasic reward scalar in [-1,1].
+
+    The coach's own ``relevance_score`` ∈ [0,1] is the primary signal (§18.5 RELEVANCE-SCORES: whether the
+    output was on-target, so the phasic reward/penalty is EARNED, not random — §6.5). It is re-centred to
+    [-1,1] so a clearly-irrelevant utterance (score→0) DROPS phasic dopamine and an on-target one (score→1)
+    SPIKES it. An encouragement→reward nudge (the §18.5 emotional_context the record already carries) adds a
+    small tonic-positive bias so genuine encouragement lifts drive even when relevance is middling — but the
+    reward is DISCOUNTED by the provenance confidence (§18.6 / P16: a low-confidence / keyword-fallback
+    record moves the reward less; sovereignty can discount a reward whose provenance it distrusts). None /
+    malformed / no relevance → 0.0 (dopamine stays tonic-floored, P23). Never raises."""
+    if not isinstance(coach, dict):
+        return 0.0
+    try:
+        rs = coach.get("relevance_score")
+        prov = coach.get("provenance") or {}
+        conf = prov.get("confidence")
+        conf = float(conf) if isinstance(conf, (int, float)) else 0.4   # keyword-fallback default confidence
+        emo = str(prov.get("emotional_context", "") or "")
+        # relevance ∈ [0,1] → centred to [-1,1]: <0.5 irrelevant (penalty), >0.5 on-target (reward).
+        base = (2.0 * float(rs) - 1.0) if isinstance(rs, (int, float)) else 0.0
+        # encouragement bias: an explicitly encouraging register nudges reward up; corrective nudges down.
+        enc = 0.15 if emo in ("encouraging", "warm-holding") else (-0.10 if emo == "gently-corrective" else 0.0)
+        reward = (base + enc) * max(0.0, min(1.0, conf))                # discount by provenance confidence (P16)
+        return float(max(-1.0, min(1.0, reward)))
+    except Exception:  # noqa: BLE001 — a malformed coach record must never break telemetry/replay
+        return 0.0
+
+
 @dataclass
 class Experience:
     """The kernel's inner state at one moment — far richer than Φ alone."""
@@ -228,10 +260,29 @@ _QUANTUM_WEIGHT = {"linear": 0.70, "topological_instability": 0.80, "geometric":
 
 
 def _neurochemistry(autonomic: str, phi_trend: float, basin_velocity: float, novelty: float,
-                    regime: str, kappa: float, external_coupling: float | None) -> dict:
+                    regime: str, kappa: float, external_coupling: float | None,
+                    cur_basin=None, prev_basin=None, target_basin=None,
+                    local_kappa_c: float | None = None, coach_reward: float = 0.0,
+                    foresight_divergence: float | None = None) -> dict:
     """FULL neurochemistry — the canonical 6-signal qig-core system (acetylcholine, dopamine, serotonin,
     norepinephrine, GABA, endorphins), computed from the kernel's OWN geometry each cycle. NOT a proxy:
-    this is qig_core.consciousness.neurochemistry.compute_neurochemicals (the single source). None-safe."""
+    this is qig_core.consciousness.neurochemistry.compute_neurochemicals (the single source). None-safe.
+
+    TASK C (ACTUATION): the geometry the kernel already has is now FED so the phasic dopamine + endorphin
+    ARRIVE on REAL motion, not the phi_delta / zero fallbacks:
+      • ``cur_basin`` / ``prev_basin`` — consecutive Δ⁶³ basins → phasic dopamine's basin-MOVEMENT reward
+        (−Δd_FR toward target). Absent → dopamine falls back to phi_delta (unchanged).
+      • ``target_basin`` (= the role/identity attractor _basin_ref) → the resonant target the endorphin
+        ARRIVAL reward (d_FR→0) and the movement reward measure against. Absent → arrival 0 (no fabricated
+        κ-anchored reward — §6.5 PURGE), movement uses phi_delta.
+      • ``local_kappa_c`` — the kernel's own κ this cycle (a band-read; NOT a κ*=64 physics anchor — the
+        κ*≈64 endorphin fixed-point is RETIRED, §6.5 / EXP-107). Passed for signature back-compat only.
+      • ``coach_reward`` ∈ [-1,1] — the nemotron coach's relevance judgment (§18.5 RELEVANCE-SCORES,
+        provenance-tagged §18.6). SPIKES phasic dopamine when the coach judged the utterance on-target,
+        lets it drop when irrelevant. External-coupled reward (a lived other), NOT solitary self-reward.
+      • ``foresight_divergence`` — predicted-vs-actual convergence resolved this cycle (§6.5 source 2).
+    All optional / None-safe (Task A made every input optional): the dopamine tonic floor (P23) holds
+    regardless, so training runs with or without geometry/coach."""
     try:
         from qig_core.consciousness.neurochemistry import compute_neurochemicals
         is_awake = not (autonomic.startswith(("sleep", "dream")) or "decohere" in autonomic)
@@ -241,8 +292,14 @@ def _neurochemistry(autonomic: str, phi_trend: float, basin_velocity: float, nov
             basin_velocity=max(basin_velocity, 0.01),
             surprise=novelty,
             quantum_weight=_QUANTUM_WEIGHT.get(regime, 0.5),
-            kappa=kappa,
+            kappa=local_kappa_c if local_kappa_c is not None else kappa,
             external_coupling=external_coupling if external_coupling is not None else 0.3,
+            # TASK C: real geometry + coach reward drive the phasic term (all None-safe in Task A's signature).
+            cur_basin=cur_basin,
+            prev_basin=prev_basin,
+            target_basin=target_basin,
+            coach_reward=coach_reward,
+            foresight_divergence=foresight_divergence,
         )
         return {k: round(float(v), 3) for k, v in st.as_dict().items()}
     except Exception:  # noqa: BLE001 — never block telemetry if qig-core is unavailable
@@ -348,8 +405,22 @@ def experience(telemetry: dict, history: list[dict] | None = None) -> Experience
                                   ricci_signal=ricci_signal)
     autonomic = str(extra.get("autonomic", "wake"))
     loops, gate = _loops_and_gate(phi, gamma, m_self, m_other, s_ratio)
+    # TASK C actuation-1/2: the REAL geometry (consecutive Δ⁶³ basins + role attractor) the kernel emitted
+    # this step, and the coach's provenance-tagged reward, so the phasic dopamine (basin-movement + coach)
+    # and endorphin arrival ACTUATE on live motion — not the phi_delta / zero fallbacks. All None-safe.
+    cur_basin = extra.get("cur_basin")
+    prev_basin = extra.get("prev_basin")
+    target_basin = extra.get("target_basin")
+    lkc_raw = extra.get("local_kappa_c")
+    local_kappa_c = float(lkc_raw) if lkc_raw is not None else None
+    coach_reward = coach_reward_from(extra.get("coach"))          # §18.5/18.6 relevance → phasic reward
+    fd_raw = extra.get("foresight_divergence", extra.get("foresight_confidence"))
+    foresight_divergence = float(fd_raw) if fd_raw is not None else None
     # FULL neurochemistry (qig-core 6-signal system, not a proxy) from the kernel's own geometry this cycle.
-    chem = _neurochemistry(autonomic, phi_trend, basin_velocity, novelty, regime, kappa, m_other)
+    chem = _neurochemistry(autonomic, phi_trend, basin_velocity, novelty, regime, kappa, m_other,
+                           cur_basin=cur_basin, prev_basin=prev_basin, target_basin=target_basin,
+                           local_kappa_c=local_kappa_c, coach_reward=coach_reward,
+                           foresight_divergence=foresight_divergence)
     pillars = {k: round(float(extra[k]), 3) for k in ("f_health", "b_integrity", "q_identity")
                if extra.get(k) is not None}   # P1/P2/P3 LIVE from PillarEnforcer (None until the kernel emits)
     return Experience(

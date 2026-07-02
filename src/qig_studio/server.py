@@ -36,6 +36,7 @@ from pydantic import BaseModel
 from . import __version__
 from .coach import DevelopmentalCoach, OllamaLLM
 from .config import Settings
+from .kernel_experience import coach_reward_from
 from .kernel_experience import experience as _experience
 from .live import LIVE_PATH, LiveLog, step_record
 from .curriculum import CurriculumProvider, phase_names
@@ -957,6 +958,16 @@ async def _train_core(
                            "relevance": sx.get("relevance")}
                     samp["coach"] = await asyncio.get_event_loop().run_in_executor(
                         None, lambda: coach.coach_own_voice(stimulus, gr.text, tel))
+                    # TASK C actuation-4: the coach reward → the kernel's REPLAY PRIORITY (P10 reward-weighted
+                    # DATA selection — sleep/dream replay what the coach VALUED). coach_reward_from is the one
+                    # canonical record→reward map (also used for phasic dopamine). None-safe: no register_coach_
+                    # reward method (mock/other targets) → skipped; a keyword/low-confidence record moves it less.
+                    _reg = getattr(target, "register_coach_reward", None)
+                    if _reg is not None:
+                        try:
+                            _reg(coach_reward_from(samp["coach"]))
+                        except Exception:  # noqa: BLE001 — reward registration is best-effort, never blocks
+                            pass
                 except Exception as ce:  # noqa: BLE001 — coaching is best-effort; never break training
                     print(f"[train] coach_own_voice skipped (surfaced, not swallowed): "
                           f"{type(ce).__name__}: {ce}", flush=True)
@@ -973,6 +984,15 @@ async def _train_core(
                     stimulus: str | None = None) -> None:
         nonlocal ui_prev_db
         try:
+            # TASK C actuation-2: thread the coach's provenance-tagged reward+relevance record into the
+            # telemetry extra BEFORE deriving the inner state, so experience()'s neurochem assembler maps it
+            # (coach_reward_from) into the phasic-dopamine reward — the coach's judgment SPIKES/DROPS phasic
+            # dopamine. None-safe: no coach this step → extra has no 'coach' → coach_reward 0 (tonic floor).
+            _coach = (samp or {}).get("coach")
+            if _coach is not None:
+                td.setdefault("extra", {})
+                if isinstance(td["extra"], dict):
+                    td["extra"]["coach"] = _coach
             exp_d = _experience(td, _phi_hist()).to_dict()
             _db = (td.get("extra") or {}).get("d_basin")
             _dv = abs(float(_db) - ui_prev_db) if (_db is not None and ui_prev_db is not None) else None
