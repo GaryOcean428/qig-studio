@@ -247,7 +247,7 @@ class ConstellationNode:
     def implemented_commands(self) -> set[str] | None:
         """The node's OWN autonomic operations — the SAME ops Ocean fires. Mirrors ARM B's set."""
         return {"sleep", "deep-sleep", "consolidate", "dream", "mushroom-micro", "mushroom-moderate",
-                "mushroom-heroic", "escape", "decohere"}
+                "mushroom-heroic", "escape", "decohere", "stimulate"}
 
     def supports_protocol(self) -> bool:
         return True
@@ -273,6 +273,21 @@ class ConstellationNode:
         elif command in ("escape", "decohere"):
             self._decohere()
             applied = {"breakdown_recovery": "decohere noise + cool optimiser (lr×0.7)"}
+        elif command == "stimulate":
+            # BLOCKER-1: Ocean-commanded Pillar-1 apathy treatment. If this concrete node exposes the
+            # genesis explore-temperature lever (_apply_stimulate), actuate it (shared entropy floor +
+            # high-surprise-replay window). Otherwise DEGRADE HONESTLY: fire a real DREAM (basin-mixture
+            # recombination — a genuine entropy-injection op the node HAS) and REPORT that the explore-temp
+            # floor is unavailable on this node type. Never a silent no-op, never a false claim of acting.
+            _stim = getattr(self, "_apply_stimulate", None)
+            if callable(_stim):
+                applied = _stim()
+            else:
+                applied = {"stimulate": True, "entropy_injection": self._dream(),
+                           "explore_temp_lever": "unavailable-on-this-node"}
+            _l = getattr(self, "_last", None)
+            if _l is not None and getattr(_l, "extra", None) is not None:
+                _l.extra["stimulate"] = applied
         else:
             applied = {"unknown_command": command}
         last = getattr(self, "_last", None)

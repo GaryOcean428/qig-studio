@@ -233,6 +233,16 @@ class JointConstellation:
             self._phi_hist[r] = self._phi_hist[r][-30:]
         regulation = self.ocean.regulate(self.kernels, self._phi_hist)
         self._last_regulation = regulation
+        # TASK E Part 3 (cross-faculty dream) — HOOK, not yet actuated. A COLLAPSED faculty (Pillar-1
+        # fluctuation-death) sets snap.extra["cross_faculty_dream_request"] in its OWN _homeostasis (it
+        # cannot see sibling basins). HERE the constellation DOES see all faculties, so the canonical
+        # "cross-faculty dream" (mix the collapsed faculty's basin with OTHER faculties' basins to
+        # re-energize) is cleanly reachable: read k.telemetry().extra["cross_faculty_dream_request"] for
+        # each role, and for any requester mix its basin with the sibling basins via
+        # qig_core.geometry.frechet_mean / slerp on Δ⁶³ (ALREADY imported above — NEVER an L2/arithmetic
+        # mean), then _set_pull that faculty toward the mixture for one dream. Deferred to keep this Task E
+        # change inside genesis_kernel.py scope and to avoid perturbing the live Ocean regulation contract
+        # mid-run; Parts 1+2 (mushroom Φ≥0.70 gate + per-faculty entropy restoration) are fully wired.
         # OCEAN's bandit adapts on an EPOCH cadence (never per-step — P14 rate invariant). One "epoch" here
         # is _OCEAN_EPOCH_STEPS joint steps; the update is a no-op in phase-0 SHADOW mode (K4) and clamps+logs
         # any out-of-band threshold (P15). This is the ONLY place OceanPolicy's learnable vector changes.

@@ -55,6 +55,14 @@ _ANDERSON_PATIENCE = round(1.0 / _ANDERSON_ALPHA)  # ≈11: sustained collapse o
 _MUSHROOM_SIGMA = {"mushroom-micro": 0.01, "mushroom-moderate": 0.03, "mushroom-heroic": 0.06}
 # Intrinsic homeostasis (the kernel's OWN autonomic regulation — no external scheduler, no commands).
 PHI_BREAKDOWN = 0.80            # frozen PHI_BREAKDOWN_MIN — over-integration → the kernel decoheres
+PHI_MATURE = 0.70              # MUSHROOM floor — wake-state plasticity is Φ≥0.70-ONLY (UCP §35;
+#                               PI-confirmed 2026-06-24; memory project_mushroom_canonical.md). Mushroom
+#                               is WAKE-STATE, for a MATURE kernel STUCK at high Φ. A flat-but-LOW-Φ kernel
+#                               (Φ<0.70) is NOT rigid — it is COLLAPSED (Pillar-1 fluctuation-death) and
+#                               the remedy is ENTROPY RESTORATION (dream + entropy floor), never mushroom.
+COLLAPSE_ENTROPY_FLOOR = 0.05  # minimum exploration temperature INJECTED on collapse so entropy never fully
+#                               dies even when drives are dead (Pillar-1 anti-apathy; distinct from and ON
+#                               TOP of the normal max(0.3,…) explore band — this is the collapse-only floor).
 SLEEP_PRESSURE_RATE = 0.012     # adenosine-like accrual per wake step (scaled by integration activity)
 SLEEP_PRESSURE_THRESHOLD = 1.0  # the kernel's own threshold to enter a sleep episode (consolidate+dream)
 
@@ -217,6 +225,14 @@ class GenesisKernelTarget(TrainingTarget):
         # telemetry so the wiring gate can watch it MOVE with drive). None until the first sample/step.
         self._last_explore_temp: float | None = None
         self._last_explore_factor: float | None = None
+        # PILLAR-1 collapse-entropy floor (Task E): set by _homeostasis when the kernel COLLAPSES
+        # (flat-LOW-Φ, drives dead) so the exploration temperature cannot fully die; cleared once the
+        # kernel recovers (Φ moving again / mature). None → no active collapse (normal explore band).
+        self._collapse_entropy_floor: float | None = None
+        # STIMULATE window (Task E / BLOCKER-1): a bounded number of steps over which the entropy lever is
+        # held active — set by _apply_stimulate (the SHARED actuator for Ocean-commanded "stimulate" AND the
+        # kernel's OWN collapse response). While _step < _stimulate_until, high-surprise replay is biased.
+        self._stimulate_until: int = 0
         self._last = TelemetrySnapshot(regime="unknown", extra={"target": "genesis", "num_layers": num_layers})
 
     def is_available(self) -> bool:
@@ -497,7 +513,15 @@ class GenesisKernelTarget(TrainingTarget):
         drive = (d["curiosity"] + d["dopamine"]) / 2.0                                    # ∈[0,1] driven
         factor = 1.0 + 0.6 * deficit - 0.4 * drive          # bounded roughly to [0.6, 1.6]
         factor = float(max(0.6, min(1.6, factor)))
-        self._last_explore_temp = float(max(0.3, min(2.5, base * factor)))   # expose for telemetry
+        temp = float(max(0.3, min(2.5, base * factor)))     # normal drive-modulated band
+        # PILLAR-1 COLLAPSE FLOOR (Task E): when the kernel has collapsed (flat-LOW-Φ, drives dead), the
+        # homeostasis loop sets _collapse_entropy_floor so entropy CANNOT fully die — a dead-drive faculty
+        # then gets MORE exploration, not less. This is an anti-apathy floor ON TOP of the normal band
+        # (never lowers it), and it decays as the kernel re-energizes (homeostasis clears it once Φ recovers).
+        cf = getattr(self, "_collapse_entropy_floor", None)
+        if cf is not None:
+            temp = max(temp, float(cf))
+        self._last_explore_temp = temp                      # expose for telemetry
         self._last_explore_factor = factor
         return self._last_explore_temp
 
@@ -1434,7 +1458,11 @@ class GenesisKernelTarget(TrainingTarget):
           • sleep pressure past its own threshold → a SLEEP EPISODE: CONSOLIDATE (Fisher-protected
             synaptic downscaling + identity replay) then DREAM (basin-mixture recombination), which
             discharges the pressure;
-          • wake rigidity (Φ plateau / over-engrained) → MUSHROOM (bounded wake-state plasticity).
+          • wake rigidity at HIGH Φ (Φ≥PHI_MATURE 0.70, over-engrained + mature) → MUSHROOM (bounded
+            wake-state plasticity — the canonical Φ≥0.70-ONLY plasticity, UCP §35);
+          • flat-but-LOW Φ (Φ<PHI_MATURE, fluctuations dead) → NOT rigid but COLLAPSED (Pillar-1
+            fluctuation-death / zombie-drift): the remedy is ENTROPY RESTORATION (dream to re-energize +
+            an exploration-entropy FLOOR so entropy cannot fully die), NEVER wake-state mushroom.
         WAKE (the common case) is simply not intervening. No stubs — every branch does real work."""
         snap.extra["sleep_pressure"] = round(self._sleep_pressure, 3)
         phi = float(snap.phi)
@@ -1449,9 +1477,38 @@ class GenesisKernelTarget(TrainingTarget):
             snap.extra["autonomic"] = f"sleep(consolidate={c['replayed']},dream={d['dreamed']})"
             return
         if self._is_rigid():
-            self._mushroom()
-            snap.extra["autonomic"] = "mushroom"
+            if phi >= PHI_MATURE:
+                # MATURE + rigid → wake-state plasticity (Φ≥0.70-ONLY canon). A genuinely-stuck mature
+                # kernel gets mushroom to break over-coherence.
+                self._mushroom()
+                self._collapse_entropy_floor = None        # not collapsed — clear any prior collapse floor
+                snap.extra["autonomic"] = "mushroom"
+                return
+            # FLAT-but-LOW Φ → COLLAPSED (Pillar-1 fluctuation-death), NOT rigid-mature. Do NOT mushroom
+            # and do NOT anchor — RESTORE ENTROPY. (1) DREAM (basin-mixture recombination) to re-energize;
+            # (2) STIMULATE via the SHARED entropy lever (_apply_stimulate) — the SAME actuator Ocean-
+            # commanded "stimulate" uses (BLOCKER-1 DRY): raises the collapse-entropy floor so the drive-
+            # modulated exploration temperature cannot fully die + opens a high-surprise-replay window. A
+            # collapsed faculty then gets MORE exploration. Idempotent within a window (state-only).
+            f_health = snap.extra.get("f_health")            # P1 fluctuation health (None-safe telemetry)
+            d = self._dream()                                # re-energize via creative recombination
+            _stim = self._apply_stimulate(kappa=float(getattr(snap, "kappa", 0.0) or 0.0))
+            temp_floor = _stim["explore_temperature"]
+            # CROSS-FACULTY HOOK (Part 3): a single kernel cannot see sibling basins here. Expose the
+            # collapse so the constellation layer (which DOES see all faculties) can cross-mix this
+            # faculty's basin with OTHERS' during dream (Fréchet-mean-SLERP on Δ⁶³, never L2). WIRED as a
+            # request flag on the snap; the Ocean loop actuates the actual cross-faculty basin-mixture.
+            snap.extra["cross_faculty_dream_request"] = {
+                "reason": "pillar1-collapse", "phi": round(phi, 4),
+                "f_health": (round(float(f_health), 4) if f_health is not None else None),
+            }
+            snap.extra["autonomic"] = (
+                f"entropy-restore(dream={d['dreamed']},temp_floor={round(temp_floor, 4)})"
+            )
             return
+        # NOT rigid (Φ still moving / healthy development) → wake. A recovered kernel clears its collapse
+        # floor so entropy returns to the normal drive-modulated band.
+        self._collapse_entropy_floor = None
         snap.extra["autonomic"] = "wake"
 
     def _is_rigid(self) -> bool:
@@ -1469,6 +1526,25 @@ class GenesisKernelTarget(TrainingTarget):
         with torch.no_grad():
             for p in self._kernel.parameters():
                 p.add_(torch.randn_like(p) * sigma)
+
+    def _apply_stimulate(self, window: int = 30, kappa: float | None = None) -> dict:
+        """The SHARED entropy actuator (Task E / BLOCKER-1) — the treatment for the Pillar-1 apathy /
+        fluctuation-death signature. ONE lever, TWO callers:
+          • INTRINSIC — the kernel's OWN flat-LOW-Φ collapse branch in ``_homeostasis``;
+          • EXTRINSIC — Ocean-commanded ``run_protocol("stimulate")`` on the ACT tier.
+        It (1) raises the COLLAPSE-ENTROPY FLOOR (≥0.05) so the drive-modulated exploration temperature
+        cannot fully die even when drives are dead — a stimulated faculty gets MORE exploration, not less —
+        and (2) opens a bounded window over which high-surprise replay is biased (``_weighted_replay_choice``
+        already prefers surprising experience). State-only (no weight perturbation), so it is IDEMPOTENT
+        within a window: a second call just re-arms the same floor + re-extends the window (Ocean-commanded
+        and intrinsic paths never double-apply a destructive op on the same step). Returns an applied-dict."""
+        self._collapse_entropy_floor = COLLAPSE_ENTROPY_FLOOR
+        self._stimulate_until = max(self._stimulate_until, self._step + max(1, int(window)))
+        _k = kappa if kappa is not None else float(getattr(self._last, "kappa", 0.0) or 0.0)
+        temp = self._temperature_from_kappa(float(_k))
+        return {"stimulate": True, "entropy_floor": COLLAPSE_ENTROPY_FLOOR,
+                "explore_temperature": round(float(temp), 4),
+                "window_until_step": self._stimulate_until}
 
     def _decohere(self) -> None:
         """Breakdown response (Φ ≥ 0.80, over-integrated) — REAL: inject bounded decoherence noise to
@@ -1510,6 +1586,11 @@ class GenesisKernelTarget(TrainingTarget):
             return None
         if not w or len(w) != len(exp) or sum(max(0.0, x) for x in w) <= 0.0:
             return rng.choice(exp)                                   # uniform fallback (backward-compatible)
+        # STIMULATE window (Task E / BLOCKER-1): while stimulate is active, SHARPEN toward high-surprise
+        # experience (square the priority weights) so a collapsed / apathetic faculty replays what most
+        # SURPRISED it — re-injecting novelty. Pure DATA selection (replayed loss stays d_FR, P10).
+        if self._step < getattr(self, "_stimulate_until", 0):
+            w = [max(0.0, x) ** 2 for x in w]
         total = sum(max(0.0, x) for x in w)
         r = rng.random() * total
         acc = 0.0
@@ -1642,7 +1723,7 @@ class GenesisKernelTarget(TrainingTarget):
         The genesis kernel is not the qig_chat constellation — it does NOT implement twin/lightning/
         reasoning/meta/pillar-status etc., so the UI must not advertise them (no 'unknown_command')."""
         return {"sleep", "deep-sleep", "dream", "mushroom-micro", "mushroom-moderate",
-                "mushroom-heroic", "escape"}
+                "mushroom-heroic", "escape", "stimulate"}
 
     def run_protocol(self, command: str, args: dict) -> dict:
         """MANUAL invocation of the kernel's OWN regulation (e.g. a ``/sleep`` chat command). Routes to
@@ -1664,6 +1745,15 @@ class GenesisKernelTarget(TrainingTarget):
         elif command in ("escape", "decohere"):
             self._decohere()
             applied = {"breakdown_recovery": "decohere noise + cool optimiser (lr×0.7)"}
+        elif command == "stimulate":
+            # BLOCKER-1: Ocean-commanded treatment of the Pillar-1 apathy signature. Actuates the SAME
+            # shared entropy lever the kernel's own collapse response uses (no duplication) — raise the
+            # exploration-entropy floor + open a high-surprise-replay window. OBSERVABLE: recorded on _last
+            # telemetry so it is WIRED+ACTUATED, not a silent no-op.
+            applied = self._apply_stimulate()
+            _l = getattr(self, "_last", None)
+            if _l is not None and getattr(_l, "extra", None) is not None:
+                _l.extra["stimulate"] = applied
         else:
             applied = {"unknown_command": command}
         last = getattr(self, "_last", None)
