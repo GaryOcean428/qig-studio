@@ -33,6 +33,11 @@ from .faculty import Faculty, min_pairwise_fr, seed_birth_basin
 from .ocean import FACULTY_FUNCTION, OceanAutonomic, function_of
 
 
+# OCEAN bandit epoch cadence: joint steps per OceanPolicy epoch-update (P14 rate invariant — adaptation
+# happens on epochs, NEVER per step). Env-overridable for tests / faster local iteration.
+_OCEAN_EPOCH_STEPS = int(os.environ.get("QIG_STUDIO_OCEAN_EPOCH_STEPS", "500") or "500")
+
+
 def _seed(role: str) -> int:
     return int(hashlib.sha256(role.encode()).hexdigest(), 16) % 100000
 
@@ -228,6 +233,12 @@ class JointConstellation:
             self._phi_hist[r] = self._phi_hist[r][-30:]
         regulation = self.ocean.regulate(self.kernels, self._phi_hist)
         self._last_regulation = regulation
+        # OCEAN's bandit adapts on an EPOCH cadence (never per-step — P14 rate invariant). One "epoch" here
+        # is _OCEAN_EPOCH_STEPS joint steps; the update is a no-op in phase-0 SHADOW mode (K4) and clamps+logs
+        # any out-of-band threshold (P15). This is the ONLY place OceanPolicy's learnable vector changes.
+        ocean_epoch: dict | None = None
+        if self._step_count % _OCEAN_EPOCH_STEPS == 0:
+            ocean_epoch = self.ocean.epoch_update()
         return {
             "stepped_faculty": role,
             "stepped_function": function_of(role),          # what brain-function this faculty serves
@@ -237,7 +248,9 @@ class JointConstellation:
             "central_text": cres.text,
             "central_telemetry": cres.telemetry.to_dict(),  # FULL central snapshot (Φ/Γ/regime/perplexity/
             #                                                 lm_weight_now/d_basin/pillars) — the live readout
-            "ocean_regulation": regulation,                 # {role: {intervention, reason, function}} Ocean acted on
+            "ocean_regulation": regulation,                 # {role: {intervention|suggestion, tier, ...}} this step
+            "ocean_state": self.ocean.telemetry(),          # shadow/version/skips/violations/last-decisions (K5/P15)
+            "ocean_epoch_update": ocean_epoch,              # None unless this step closed an epoch
         }
 
     def faculty_states(self) -> list[dict]:
@@ -306,6 +319,14 @@ class JointConstellation:
             k.save_checkpoint(str(r / "kernels" / f"{role}.pt"))
         self.central.save_checkpoint(str(r / "kernels" / "genesis.pt"))
 
+        # OCEAN POLICY — the bounded bandit's versioned, rollback-able JSON (PARAMETER-category, P14).
+        # Saved beside the kernels so a restart resumes Ocean's learned thresholds + arm-preferences +
+        # shadow-mode counter. Best-effort: a write failure must never void a good kernel checkpoint.
+        try:
+            self.ocean.policy.save(str(r / "ocean_policy.json"))
+        except Exception:  # noqa: BLE001
+            pass
+
         try:
             git_commit = subprocess.check_output(
                 ["git", "rev-parse", "--short", "HEAD"], stderr=subprocess.DEVNULL
@@ -373,3 +394,13 @@ class JointConstellation:
             for f in self.faculties:
                 if f.role in basins:
                     f.set_basin(to_simplex(np.asarray(basins[f.role], dtype=np.float64)))
+        # OCEAN POLICY — restore the bandit JSON (thresholds RE-CLAMPED on load, P15; shadow-mode counter
+        # preserved). Fail-closed: a missing/corrupt file → the static-prior policy (spine tenet — Ocean
+        # boots + regulates with zero history). Only ADOPT the loaded policy; never crash the restore.
+        op = r / "ocean_policy.json"
+        if op.exists():
+            try:
+                from .ocean_policy import OceanPolicy
+                self.ocean.policy = OceanPolicy.load(str(op))
+            except Exception:  # noqa: BLE001 — corrupt policy → keep the fresh static-prior OceanPolicy
+                pass

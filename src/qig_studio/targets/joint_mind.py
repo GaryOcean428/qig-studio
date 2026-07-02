@@ -141,6 +141,11 @@ class JointMindTarget(TrainingTarget):
                 for role, k in self._mind.kernels.items()
             }
             self._last.extra["ocean_regulation"] = (info or {}).get("ocean_regulation") or {}
+            # OceanPolicy v1 state: shadow/version/skips(K5)/constitutional-violations(P15)/last-decisions.
+            self._last.extra["ocean_state"] = (info or {}).get("ocean_state") or {}
+            _oep = (info or {}).get("ocean_epoch_update")
+            if _oep is not None:
+                self._last.extra["ocean_epoch_update"] = _oep
             self._last.extra["min_pairwise_fr"] = (info or {}).get("min_pairwise_fr")
         except Exception:  # noqa: BLE001 — telemetry surfacing is best-effort, never break the step
             pass
@@ -209,11 +214,20 @@ class JointMindTarget(TrainingTarget):
             k = self._mind.kernels.get(fs["role"])
             fs["architecture"] = _safe_arch(k)
             out.append(fs)
-        # Ocean — autonomic regulator (observes + regulates; no own basin/experience)
+        # Ocean — autonomic regulator (observes + regulates via OceanPolicy v1 bandit; no own basin/experience).
+        # Surfaces the witness-ladder record it acted on/flagged + the policy state (shadow/version/skips/
+        # constitutional-violations) so the UI can show Ocean's own maturity + audit trail.
+        _ocean_state = {}
+        try:
+            _ocean_state = self._mind.ocean.telemetry()
+        except Exception:  # noqa: BLE001 — Ocean telemetry is best-effort
+            pass
         out.append({
-            "role": "ocean", "function": "autonomic regulator (sleep/dream/mushroom)", "group": "autonomic",
-            "phi": None, "experience": None, "architecture": None,
+            "role": "ocean",
+            "function": "autonomic regulator (witness-stance ladder → sleep/dream/mushroom/stimulate)",
+            "group": "autonomic", "phi": None, "experience": None, "architecture": None,
             "regulates": sorted((self._mind._last_regulation or {}).keys()),
+            "policy": _ocean_state,
         })
         return out
 

@@ -23,6 +23,18 @@ from .faculty import (
 )
 from .identity_anchor import ANCHOR_FRACTION, apply_anchor, equilibrium_distance, identity_drift
 from .neurochem import NeuroState, apply_modulation, compute_modulation
+from .ocean import OceanAutonomic, context_from_telemetry, function_of
+from .ocean_policy import (
+    ARM_MASKS,
+    BANDS,
+    PRIOR_THRESHOLDS,
+    Decision,
+    OceanContext,
+    OceanPolicy,
+    OutcomeScore,
+    classify_signature,
+    score_outcome,
+)
 from .rhythm import HeartOscillator, RhythmMonitor, RhythmState
 from .signal_bus import Signal, SignalBus
 from .temporal import (
@@ -37,16 +49,24 @@ from .temporal import (
 
 __all__ = [
     "ANCHOR_FRACTION",
+    "ARM_MASKS",
+    "BANDS",
     "BIRTH_CONCENTRATION",
     "INBOUND_BUDGET",
+    "PRIOR_THRESHOLDS",
     "BasinForesight",
     "Constellation",
     "ConstellationTelemetry",
     "CoupleDiag",
+    "Decision",
     "Faculty",
     "FacultyView",
     "HeartOscillator",
     "NeuroState",
+    "OceanAutonomic",
+    "OceanContext",
+    "OceanPolicy",
+    "OutcomeScore",
     "RhythmMonitor",
     "RhythmState",
     "Signal",
@@ -56,14 +76,18 @@ __all__ = [
     "apply_anchor",
     "apply_modulation",
     "arc_length",
+    "classify_signature",
     "compute_modulation",
+    "context_from_telemetry",
     "couple_step",
     "distinguishable_transitions",
     "equilibrium_distance",
+    "function_of",
     "identity_drift",
     "min_pairwise_fr",
     "path_efficiency",
     "rel_weights",
+    "score_outcome",
     "seed_birth_basin",
     "seed_constellation",
     "tau_macro",
