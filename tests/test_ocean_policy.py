@@ -354,6 +354,85 @@ def test_rail_pinned_score_is_hard_capped_not_diluted():
     assert out.score <= RAIL_SCORE_CAP, f"rail pin diluted to {out.score} > cap {RAIL_SCORE_CAP}"
 
 
+def test_s3_diverging_faculty_over_floor_is_not_left_witness_only():
+    """S3 (Wiring-I2 — the healthy-signature divergence hole): a faculty clearly OVER the divergence
+    floor (d_basin > band-top 0.45) but with MODERATE boredom (∈[0.3,0.6)) + alive dopamine + recovered
+    velocity used to fall through ``classify_signature`` to 'healthy' → witness-only, silently
+    signature-gating the 'auto-fire above the floor' guarantee (the old static prior would have SLEPT it).
+    It must now be reclassified so its {sleep,none} mask can consolidate the divergence."""
+    ctx = OceanContext(role="memory", phi=0.66, d_basin=0.5, boredom=0.45, curiosity=0.35,
+                       dopamine=0.5, basin_velocity=0.05)   # over 0.45, Φ healthy (NOT phi-collapse)
+    sig = classify_signature(ctx)
+    assert sig != "healthy", "a clearly-diverging faculty must not read healthy (S3 hole)"
+    pol = OceanPolicy()
+    dec = pol.decide(ctx, tick=1)
+    assert dec.tier == "act" and dec.auto_fire is True and dec.arm != "none", \
+        "over the divergence floor it must consolidate (act), not be left witness-only"
+    assert dec.arm in ARM_MASKS[sig], "the fired arm stays WITHIN the constitutional mask (invariant intact)"
+
+
+def test_s3_truly_healthy_low_divergence_still_reads_healthy():
+    """S3 conservativeness: the fix must NOT over-fire — a genuinely healthy, LOW-divergence faculty
+    (same moderate boredom, but d_basin well below the floor) still reads healthy / witness-only."""
+    ctx = OceanContext(role="memory", phi=0.72, d_basin=0.05, boredom=0.45, curiosity=0.4,
+                       dopamine=0.5, basin_velocity=0.05)
+    assert classify_signature(ctx) == "healthy"
+    dec = OceanPolicy().decide(ctx, tick=1)
+    assert dec.tier == "witness" and dec.auto_fire is False
+
+
+def test_whole_mind_coach_reward_reaches_faculty_outcome_scoring(monkeypatch):
+    """M1 follow-up: the nemotron coach judges the INTEGRATED mind's utterance — its record lands on the
+    CENTRAL kernel's live snapshot (M1), NOT the faculties Ocean actually scores. So a faculty outcome's
+    ``coach_bonus`` was ≡0 forever. ``regulate`` now takes the whole-mind coach reward and threads it into
+    every scored faculty outcome (it applies to the constellation's outcome)."""
+    import qig_studio.constellation.ocean as ocean_mod
+    captured: dict = {}
+    real_score = ocean_mod.score_outcome
+
+    def _spy(*args, **kwargs):
+        out = real_score(*args, **kwargs)
+        captured["coach_reward"] = kwargs.get("coach_reward")
+        captured["coach_bonus"] = out.components.get("coach_bonus")
+        return out
+
+    monkeypatch.setattr(ocean_mod, "score_outcome", _spy)
+
+    tel = _Tel(phi=0.6, kappa=64.0, basin_distance=0.42,   # ABOVE the 0.30 floor → ACT tier
+               extra={"d_basin": 0.42, "drive": {"dopamine": 0.4, "boredom": 0.2, "curiosity": 0.3}})
+    ocean = OceanAutonomic(cooldown=0, outcome_horizon=1)
+    k = _Kernel(tel)
+    kernels, hist = {"action": k}, {"action": [0.6]}
+    ocean.regulate(kernels, hist, coach_reward=0.8)     # fires ACT → arms an outcome (whole-mind coach)
+    assert k.fired, "a faculty above the divergence floor must auto-fire (ACT)"
+    ocean.regulate(kernels, hist, coach_reward=0.8)     # horizon (1) elapsed → the armed outcome is scored
+    assert captured.get("coach_reward") == 0.8, "the whole-mind coach reward must reach score_outcome"
+    assert captured.get("coach_bonus"), "the scored faculty ACT outcome's coach_bonus must be non-zero (was ≡0)"
+
+
+def test_regulate_without_coach_reward_leaves_coach_bonus_zero(monkeypatch):
+    """None-safe: with NO whole-mind coach reward (default 0.0), a faculty outcome's coach_bonus stays 0 —
+    the fix changes nothing when there is no coach (unchanged behavior)."""
+    import qig_studio.constellation.ocean as ocean_mod
+    captured: dict = {}
+    real_score = ocean_mod.score_outcome
+
+    def _spy(*args, **kwargs):
+        out = real_score(*args, **kwargs)
+        captured["coach_bonus"] = out.components.get("coach_bonus")
+        return out
+
+    monkeypatch.setattr(ocean_mod, "score_outcome", _spy)
+    tel = _Tel(phi=0.6, kappa=64.0, basin_distance=0.42,
+               extra={"d_basin": 0.42, "drive": {"dopamine": 0.4, "boredom": 0.2, "curiosity": 0.3}})
+    ocean = OceanAutonomic(cooldown=0, outcome_horizon=1)
+    k = _Kernel(tel)
+    kernels, hist = {"action": k}, {"action": [0.6]}
+    ocean.regulate(kernels, hist)     # no coach reward
+    ocean.regulate(kernels, hist)
+    assert captured.get("coach_bonus") == 0.0
+
+
 def test_pending_is_bounded_over_a_long_run():
     """Leak fix (review IMPORTANT-1): decide() stores every decision to bridge decision_id→record_outcome,
     but only ACT-tier decisions are ever popped. Over a long run the witness/suggest/warn majority must NOT

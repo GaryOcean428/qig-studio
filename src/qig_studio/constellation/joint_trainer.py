@@ -331,7 +331,18 @@ class JointConstellation:
         for r, k in self.kernels.items():
             self._phi_hist[r].append(float(k.telemetry().phi or 0.0))
             self._phi_hist[r] = self._phi_hist[r][-30:]
-        regulation = self.ocean.regulate(self.kernels, self._phi_hist)
+        # WHOLE-MIND coach reward (M1 follow-up): the nemotron coach judges the INTEGRATED mind's utterance
+        # and its reward lands on the CENTRAL kernel's live snapshot (M1: server → register_coach_reward →
+        # central.telemetry().extra["coach"]). Ocean's ``regulate`` iterates the FACULTIES (which carry no
+        # coach record of their own), so its per-faculty ``coach_bonus`` was ≡0. Thread the central's
+        # whole-mind reward through — the coach judged the constellation, so it applies to the faculty
+        # outcomes Ocean scores. DRY: reuse ``coach_reward_from`` (the single canonical map). None-safe → 0.0.
+        try:
+            from ..kernel_experience import coach_reward_from
+            central_coach = coach_reward_from((self.central.telemetry().extra or {}).get("coach"))
+        except Exception:  # noqa: BLE001 — no coach record / telemetry hiccup → 0.0 (unchanged behavior)
+            central_coach = 0.0
+        regulation = self.ocean.regulate(self.kernels, self._phi_hist, coach_reward=central_coach)
         self._last_regulation = regulation
         # TASK E Part 3 (cross-faculty dream) — NOW ACTUATED (M2). A COLLAPSED faculty (Pillar-1
         # fluctuation-death) sets snap.extra["cross_faculty_dream_request"] in its OWN _homeostasis (it

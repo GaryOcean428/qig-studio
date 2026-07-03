@@ -198,6 +198,16 @@ def classify_signature(ctx: OceanContext) -> str:
             return "rigidity"
     if ctx.d_basin > BANDS["basin_divergence"][0] and ctx.boredom < 0.3:
         return "intake-fatigue"
+    # S3 (Wiring-I2 — the healthy-signature divergence hole): a faculty CLEARLY over the divergence floor
+    # (d_basin > the band TOP 0.45 — above ANY learnable floor) that reaches here (Φ healthy, so NOT
+    # phi-collapse; boredom moderate, so NOT apathy; velocity up, so NOT earned-rest) is DIVERGING yet
+    # would read "healthy" → witness-only, silently signature-gating the "auto-fire above the floor"
+    # guarantee (the pre-bandit static prior would have SLEPT it). Reclassify as intake-fatigue so its
+    # constitutional {sleep,none} mask CONSOLIDATES the divergence — we drop the boredom<0.3 restriction
+    # ONLY for the clearly-over-floor case, so a genuinely healthy low-divergence faculty still reads
+    # healthy (conservative — the floor top is above the max learnable basin_divergence threshold).
+    if ctx.d_basin > BANDS["basin_divergence"][1]:
+        return "intake-fatigue"
     return "healthy"
 
 

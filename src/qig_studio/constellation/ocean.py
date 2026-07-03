@@ -152,6 +152,12 @@ class OceanAutonomic:
         self._repeat_count: dict[str, int] = {}
         # pending outcomes: decision_id → (fire_tick, role, arm, before-context, collapse_before, coach_reward)
         self._pending_outcomes: dict[str, dict[str, Any]] = {}
+        # WHOLE-MIND coach reward for THIS step (M1 follow-up): the nemotron coach judges the INTEGRATED
+        # mind's utterance and its record lands on the CENTRAL kernel (M1), NOT the faculties Ocean scores.
+        # The constellation passes it into ``regulate`` each step; it is the coach_bonus for the faculty
+        # outcomes scored this step (the coach's judgment applies to the constellation's outcome). 0.0 → no
+        # coach present (unchanged behavior — coach_bonus stays 0).
+        self._coach_reward_now: float = 0.0
         # K5/P15 skip + failure counters (telemetrized, not swallowed)
         self.skips: dict[str, int] = {"no_telemetry": 0, "partial_context": 0, "cooldown": 0,
                                       "run_protocol_error": 0, "unrecorded_outcome": 0}
@@ -178,13 +184,20 @@ class OceanAutonomic:
             return "mushroom-micro", f"mature Φ={phi:.2f} STUCK — {why} → inject entropy (Φ↓)"
         return None, "healthy"
 
-    def regulate(self, kernels: dict[str, Any], phi_hist: dict[str, list[float]]) -> dict[str, dict]:
+    def regulate(self, kernels: dict[str, Any], phi_hist: dict[str, list[float]],
+                 coach_reward: float = 0.0) -> dict[str, dict]:
         """Observe every faculty; run the witness-stance ladder via OceanPolicy. AUTO-FIRE run_protocol
         ONLY above the divergence floor OR on the infinite-loop breaker (the §35.5 fix); below the floor
         emit a SUGGESTION/WARN record (telemetry + coach-visible; the faculty's own scheduler may act).
         Scores prior decisions once their horizon elapses (fail-closed: no recorded outcome → no update).
         Returns {role: {intervention|suggestion, tier, reason, function, ...}} for faculties acted on OR
-        flagged this step. Skips/failures are COUNTED (K5/P15), never silently swallowed."""
+        flagged this step. Skips/failures are COUNTED (K5/P15), never silently swallowed.
+
+        ``coach_reward`` is the WHOLE-MIND coach reward (M1 follow-up): the nemotron coach judged the
+        INTEGRATED mind's utterance and its record lands on the CENTRAL kernel — not the faculties scored
+        here — so it is threaded into every faculty outcome's ``coach_bonus`` this step (it applies to the
+        constellation's outcome). None-safe → 0.0 (no coach → coach_bonus 0, unchanged behavior)."""
+        self._coach_reward_now = _f(coach_reward)
         self._tick += 1
         acted: dict[str, dict] = {}
         self._last_decisions = []
@@ -219,7 +232,7 @@ class OceanAutonomic:
                     continue
                 self._last_acted[role] = self._tick
                 self._track_repeat(role, dec.arm)
-                self._arm_outcome(dec, ctx, coach_reward=self._coach_reward(tel))
+                self._arm_outcome(dec, ctx, coach_reward=self._resolve_coach_reward(tel))
                 acted[role] = {"intervention": dec.arm, "tier": dec.tier, "reason": dec.reason,
                                "signature": dec.signature, "function": function_of(role),
                                "auto_fired": True, "decision_id": dec.decision_id,
@@ -260,6 +273,16 @@ class OceanAutonomic:
         except Exception:  # noqa: BLE001
             return 0.0
 
+    def _resolve_coach_reward(self, tel: Any) -> float:
+        """The coach reward to attribute to a FACULTY outcome (M1 follow-up). The nemotron coach judges the
+        INTEGRATED mind's utterance — its record lands on the CENTRAL kernel (M1), not the faculties Ocean
+        scores — so the WHOLE-MIND reward passed to ``regulate`` is authoritative and applies to the
+        constellation's outcome. Fall back to any per-faculty coach record (normally absent → 0.0) only
+        when no whole-mind reward is present this step. None-safe → 0.0 (unchanged with no coach)."""
+        if abs(self._coach_reward_now) > 1e-12:
+            return self._coach_reward_now
+        return self._coach_reward(tel)
+
     def _arm_outcome(self, dec: Any, before: OceanContext, coach_reward: float) -> None:
         """Register a decision to be scored once its outcome horizon elapses."""
         collapse_before = before.phi < PHI_DREAM_THRESHOLD
@@ -285,10 +308,15 @@ class OceanAutonomic:
                 self.skips["unrecorded_outcome"] += 1
                 continue
             collapse_after = after.phi < PHI_DREAM_THRESHOLD
+            # WHOLE-MIND coach reward (M1 follow-up): the coach judged the INTEGRATED mind's utterance (its
+            # record lands on the central, not this faculty), so it is the coach_bonus for the faculty's
+            # outcome. Prefer the reward captured when the decision FIRED (provenance); fall back to the
+            # current step's whole-mind reward if the fire-time record predates coach wiring. 0.0 → no coach.
+            coach_reward = p.get("coach_reward") or self._coach_reward_now
             outcome: OutcomeScore = score_outcome(
                 p["arm"], p["before"], after,
                 collapse_before=p["collapse_before"], collapse_after=collapse_after,
-                repeat_count=p["repeat"], coach_reward=p["coach_reward"],
+                repeat_count=p["repeat"], coach_reward=coach_reward,
             )
             if not self.policy.record_outcome(did, outcome):
                 self.skips["unrecorded_outcome"] += 1
