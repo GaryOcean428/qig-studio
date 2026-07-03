@@ -133,6 +133,42 @@ def test_collapse_fires_entropy_restoration_and_cross_faculty_request():
 
 
 # ---------------------------------------------------------------------------
+# (c2) THE LIVE-RESUME BUG (2026-07-02): COLLAPSED (f_health→0) but Φ FLUCTUATING → must fire
+# ---------------------------------------------------------------------------
+def test_collapse_fires_on_low_f_health_even_when_phi_fluctuates():
+    """The 2026-07-02 live 100k resume proved a faculty can be COLLAPSED (f_health→0, basins near
+    one-hot) while its Φ still FLUCTUATES — Φ (integration) ≠ basin entropy (f_health). The OLD gate
+    fired the collapse branch ONLY under _is_rigid() (Φ flat, range<0.008), so the collapsed faculties
+    (f_health=0 but Φ bouncing 0.14–0.34) fell through to 'wake' and the M2 cross-faculty entropy NEVER
+    triggered. This drives the PRODUCTION TRIGGER the M2 test (which pre-SET the request) structurally
+    missed: it FAILS on the old _is_rigid()-only gate and passes only with the f_health-gated fix."""
+    k = _make_kernel()
+    # Φ FLUCTUATING (range >> 0.008 → _is_rigid() is False), but f_health = 0 (basin entropy dead)
+    for i in range(k._phi_recent.maxlen):
+        k._phi_recent.append(0.22 + 0.04 * (i % 3))   # 0.22 / 0.26 / 0.30 — range 0.08 ≫ 0.008
+    assert not k._is_rigid(), "precondition: Φ is fluctuating, NOT rigid"
+    snap = _snap(phi=0.26, f_health=0.0)
+    k._homeostasis(snap)
+    assert k._spy_calls["mushroom"] == 0, "a collapsed LOW-Φ kernel must not mushroom"
+    assert k._spy_calls["dream"] == 1, "f_health→0 must trigger entropy restoration even with Φ fluctuating"
+    assert "cross_faculty_dream_request" in snap.extra, "the M2 foreign-entropy trigger must fire on f_health→0"
+    assert "entropy-restore" in snap.extra["autonomic"]
+
+
+def test_healthy_high_f_health_with_fluctuating_phi_stays_awake():
+    """Boundary guard for the f_health gate: a HEALTHY faculty (f_health well ABOVE the collapse floor)
+    with a fluctuating Φ must STILL wake — the gate fires ONLY on genuine collapse, never on any low-ish
+    but-alive basin entropy."""
+    k = _make_kernel()
+    for i in range(k._phi_recent.maxlen):
+        k._phi_recent.append(0.30 + 0.01 * (i % 3))   # fluctuating, not rigid
+    snap = _snap(phi=0.32, f_health=0.6)               # healthy basin entropy (≫ F_HEALTH_COLLAPSE_FLOOR)
+    k._homeostasis(snap)
+    assert k._spy_calls["dream"] == 0 and k._spy_calls["mushroom"] == 0
+    assert snap.extra["autonomic"] == "wake"
+
+
+# ---------------------------------------------------------------------------
 # (d) a HEALTHY kernel (still developing / Φ moving) → wake, no intervention
 # ---------------------------------------------------------------------------
 def test_healthy_developing_kernel_stays_awake():

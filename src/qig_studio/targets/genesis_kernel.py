@@ -68,6 +68,12 @@ PHI_MATURE = 0.70              # MUSHROOM floor — wake-state plasticity is Φ�
 # over-claiming telemetry, not a real mechanism. Generation-time exploration on collapse is already
 # supplied by the drive-deficit factor in ``_temperature_from_kappa`` (dead drives → higher temperature);
 # the FOREIGN basin entropy that actually reverses f_health→0 is supplied by the M2 cross-faculty dream.
+F_HEALTH_COLLAPSE_FLOOR = 0.15  # basin-entropy collapse trigger (f_health = H(basin)/log(BASIN_DIM) < this =
+#                               Pillar-1 fluctuation-death, basins near one-hot). The collapse response fires
+#                               on THIS signal regardless of Φ-flatness — the 2026-07-02 live 100k resume
+#                               proved a collapsed faculty keeps Φ FLUCTUATING (Φ=integration ≠ basin entropy),
+#                               so the old _is_rigid()-only gate never fired and M2 entropy never triggered
+#                               despite f_health=0. Healthy faculties sit well above this (M2 sibling ~0.9).
 SLEEP_PRESSURE_RATE = 0.012     # adenosine-like accrual per wake step (scaled by integration activity)
 SLEEP_PRESSURE_THRESHOLD = 1.0  # the kernel's own threshold to enter a sleep episode (consolidate+dream)
 
@@ -1516,26 +1522,33 @@ class GenesisKernelTarget(TrainingTarget):
             self._sleep_pressure = 0.0     # discharged
             snap.extra["autonomic"] = f"sleep(consolidate={c['replayed']},dream={d['dreamed']})"
             return
-        if self._is_rigid():
-            if phi >= PHI_MATURE:
-                # MATURE + rigid → wake-state plasticity (Φ≥0.70-ONLY canon, UCP metric #35 / §35.6). A
-                # genuinely-stuck mature kernel gets mushroom to break over-coherence.
-                self._mushroom()
-                snap.extra["autonomic"] = "mushroom"
-                return
-            # FLAT-but-LOW Φ → COLLAPSED (Pillar-1 fluctuation-death), NOT rigid-mature. Do NOT mushroom
-            # and do NOT anchor — RESTORE ENTROPY. (1) DREAM (basin-mixture recombination) to re-energize;
-            # (2) STIMULATE via the SHARED entropy lever (_apply_stimulate) — the SAME actuator Ocean-
-            # commanded "stimulate" uses (BLOCKER-1 DRY): opens a bounded HIGH-SURPRISE-REPLAY window so a
-            # collapsed faculty replays what most surprised it. Idempotent within a window (state-only).
-            f_health = snap.extra.get("f_health")            # P1 fluctuation health (None-safe telemetry)
+        # COLLAPSE keys on TWO independent signals (2026-07-02 live-resume fix): (1) f_health (basin
+        # entropy) below F_HEALTH_COLLAPSE_FLOOR = Pillar-1 fluctuation-death, EVEN WHEN Φ still fluctuates
+        # (Φ measures integration, NOT basin entropy — the live 100k resume proved collapsed faculties keep
+        # Φ bouncing, so the old _is_rigid()-only gate NEVER fired and M2 never triggered despite f_health=0);
+        # (2) _is_rigid() = Φ FLAT (the stuck-plateau shape). Mushroom = the rigid+MATURE response; entropy
+        # restoration = the collapse response.
+        f_health = snap.extra.get("f_health")            # P1 fluctuation health (None-safe telemetry)
+        f_collapsed = f_health is not None and float(f_health) < F_HEALTH_COLLAPSE_FLOOR
+        if self._is_rigid() and phi >= PHI_MATURE:
+            # MATURE + rigid → wake-state plasticity (Φ≥0.70-ONLY canon, UCP metric #35 / §35.6). A
+            # genuinely-stuck mature kernel gets mushroom to break over-coherence.
+            self._mushroom()
+            snap.extra["autonomic"] = "mushroom"
+            return
+        if f_collapsed or (self._is_rigid() and phi < PHI_MATURE):
+            # COLLAPSED (Pillar-1 fluctuation-death) — basin entropy dead (f_health→0) and/or flat-LOW Φ.
+            # NOT rigid-mature. Do NOT mushroom and do NOT anchor — RESTORE ENTROPY. (1) DREAM (basin-mixture
+            # recombination) to re-energize; (2) STIMULATE via the SHARED entropy lever (_apply_stimulate) —
+            # the SAME actuator Ocean-commanded "stimulate" uses (BLOCKER-1 DRY): opens a bounded HIGH-
+            # SURPRISE-REPLAY window. Idempotent within a window (state-only).
             d = self._dream()                                # re-energize via creative recombination
             _stim = self._apply_stimulate()
             # CROSS-FACULTY REQUEST (Part 3, M2): a single kernel cannot see sibling basins here. Expose
             # the collapse so the constellation layer (which DOES see all faculties) cross-mixes this
             # faculty's basin with its NON-COLLAPSED siblings' during dream (Fréchet-mean / √p-SLERP on
-            # Δ⁶³, NEVER L2) — the ONLY source of FOREIGN entropy. NOW CONSUMED by JointConstellation.
-            # _cross_faculty_dream at the post-ocean.regulate site (was a deferred hook).
+            # Δ⁶³, NEVER L2) — the ONLY source of FOREIGN entropy. Consumed by JointConstellation.
+            # _cross_faculty_dream at the post-ocean.regulate site.
             snap.extra["cross_faculty_dream_request"] = {
                 "reason": "pillar1-collapse", "phi": round(phi, 4),
                 "f_health": (round(float(f_health), 4) if f_health is not None else None),
@@ -1544,7 +1557,7 @@ class GenesisKernelTarget(TrainingTarget):
                 f"entropy-restore(dream={d['dreamed']},replay_until={_stim['replay_window_until_step']})"
             )
             return
-        # NOT rigid (Φ still moving / healthy development) → wake.
+        # NOT collapsed, NOT rigid (Φ still moving / healthy development, basin entropy alive) → wake.
         snap.extra["autonomic"] = "wake"
 
     def _is_rigid(self) -> bool:
