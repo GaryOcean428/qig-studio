@@ -26,7 +26,7 @@ from typing import Any
 
 import numpy as np
 
-from qig_core.geometry import frechet_mean
+from qig_core.geometry import frechet_mean, slerp_sqrt
 
 from .coupling import couple_step, rel_weights
 from .faculty import Faculty, min_pairwise_fr, seed_birth_basin
@@ -36,6 +36,15 @@ from .ocean import FACULTY_FUNCTION, OceanAutonomic, function_of
 # OCEAN bandit epoch cadence: joint steps per OceanPolicy epoch-update (P14 rate invariant — adaptation
 # happens on epochs, NEVER per step). Env-overridable for tests / faster local iteration.
 _OCEAN_EPOCH_STEPS = int(os.environ.get("QIG_STUDIO_OCEAN_EPOCH_STEPS", "500") or "500")
+
+# CROSS-FACULTY DREAM (M2) tunables. NOT frozen physics — orchestration knobs.
+#  • _XDREAM_PULL   : geodesic fraction (√p SLERP on Δ⁶³) the collapsed faculty is pulled toward the
+#                     FOREIGN sibling mixture in ONE dream step. 0.5 = a decisive re-energising step
+#                     (measured: lifts a one-hot's f_health from ~0 to ~0.58 toward a wide mixture).
+#  • _XDREAM_COLLAPSE_FH : f_health at/below which a sibling is itself treated as COLLAPSED and is NOT
+#                     used as an entropy source (skip requesters + fluctuation-dead siblings).
+_XDREAM_PULL = 0.5
+_XDREAM_COLLAPSE_FH = 0.15
 
 
 def _seed(role: str) -> int:
@@ -111,6 +120,9 @@ class JointConstellation:
         self.ocean = OceanAutonomic()
         self._phi_hist: dict[str, list[float]] = {role: [] for role in self.roles}
         self._last_regulation: dict[str, dict] = {}
+        # CROSS-FACULTY DREAM (M2) cooldown: role → last OCEAN-epoch window in which its cross-faculty
+        # dream fired. Fires at most once per faculty per epoch window (A10 dream-storm guard).
+        self._last_xdream_epoch: dict[str, int] = {}
         self._step_count: int = 0
         self._coordizer_path: str | None = None
         self.coordizer = coordizer
@@ -206,6 +218,94 @@ class JointConstellation:
         wn = (w / wsum).tolist() if wsum > 0 else None
         return frechet_mean(basins, weights=wn)
 
+    def _cross_faculty_dream(self) -> dict[str, dict]:
+        """M2 (Task-E Part 3) — the ONLY FOREIGN entropy source for a COLLAPSED faculty.
+
+        A faculty in Pillar-1 fluctuation-death (near-one-hot basin, f_health→0) cannot re-inject
+        entropy from its OWN history: ``_dream()`` recombines its degenerate collapsed basins (mixing
+        near-identical one-hots → the same one-hot, ~0 entropy). The constellation — which DOES see
+        every faculty — mixes the collapsed faculty's basin with its NON-COLLAPSED siblings' basins on
+        the Δ⁶³ simplex (proximity-weighted ``frechet_mean`` / ``slerp_sqrt`` in √p coordinates — PURE
+        Fisher-Rao, NEVER an L2/arithmetic mean) and pulls the collapsed faculty ONE dream-step toward
+        that FOREIGN mixture. The wide (higher-entropy) healthy mixture strictly raises the one-hot's
+        basin entropy → f_health rises.
+
+        Guards:
+          • siblings that are THEMSELVES collapse-requesting / f_health ≤ ``_XDREAM_COLLAPSE_FH`` are
+            skipped — a collapsed sibling is not a valid entropy source;
+          • whole-constellation collapse (no healthy sibling) → fall back to the birth-basin anchor
+            mixture (wide independent Pillar-3 scars — still non-degenerate) and LOG the fallback
+            (never a silent no-op);
+          • cooldown (A10 dream-storm guard): fire at most once per faculty per OCEAN epoch window — a
+            request arriving inside the cooldown is CONSUMED but does not re-fire.
+
+        Returns ``{role: {source, n_siblings}}`` for the faculties that fired (``{}`` when none).
+        """
+        epoch = self._step_count // _OCEAN_EPOCH_STEPS
+        fired: dict[str, dict] = {}
+
+        def _extra(role: str) -> dict:
+            try:
+                return self.kernels[role].telemetry().extra or {}
+            except Exception:  # noqa: BLE001 — a node with no live snapshot simply has no request
+                return {}
+
+        def _healthy(role: str) -> bool:
+            """A valid FOREIGN entropy source: not itself collapse-requesting, and f_health above the
+            collapse floor (unknown f_health → treat as healthy; absence of the collapse signature)."""
+            ex = _extra(role)
+            if ex.get("cross_faculty_dream_request"):
+                return False
+            fh = ex.get("f_health")
+            return fh is None or float(fh) > _XDREAM_COLLAPSE_FH
+
+        for f in self.faculties:
+            if not _extra(f.role).get("cross_faculty_dream_request"):
+                continue
+            k = self.kernels[f.role]
+            # COOLDOWN: already fired this epoch window → consume the request, do NOT re-fire.
+            if self._last_xdream_epoch.get(f.role) == epoch:
+                _extra(f.role).pop("cross_faculty_dream_request", None)
+                continue
+            # gather NON-collapsed sibling basins (skip requesters / fluctuation-dead siblings)
+            siblings = [g.basin for g in self.faculties if g.role != f.role and _healthy(g.role)]
+            if siblings:
+                # proximity-weighted Fréchet mean of the healthy siblings — the geometric consensus of
+                # the parts that are STILL ALIVE (rel_weights = Bhattacharyya overlap). PURE Δ⁶³.
+                centroid = frechet_mean(siblings)
+                w = rel_weights(centroid, siblings)
+                wsum = float(w.sum())
+                wn = (w / wsum).tolist() if wsum > 0 else None
+                mixture = frechet_mean(siblings, weights=wn)
+                source, n_sib = "siblings", len(siblings)
+            else:
+                # WHOLE-constellation collapse → the wide birth scars (still non-degenerate, near-max
+                # entropy) are the only remaining FOREIGN entropy. Fréchet mean on Δ⁶³; LOG (never silent).
+                births = [np.asarray(g.birth, dtype=np.float64) for g in self.faculties if g.role != f.role]
+                mixture = frechet_mean(births) if births else np.asarray(f.birth, dtype=np.float64)
+                source, n_sib = "birth-fallback", 0
+                print(f"[joint] cross-faculty dream FALLBACK role={f.role!r}: no healthy siblings "
+                      f"(whole-constellation collapse) → birth-anchor mixture", flush=True)
+            # ONE dream-pull toward the FOREIGN mixture:
+            #   (1) nudge the SHARED faculty basin a geodesic fraction toward it (immediate foreign
+            #       entropy — √p SLERP on Δ⁶³, NEVER L2). Pure numpy Fisher-Rao — the GUARANTEED effect.
+            #   (2) point the kernel's basin-pull (_basin_ref) at it so the kernel's own train/dream
+            #       follows over the next steps — mirrors how coupling sets the pull each step (_set_pull).
+            #       Best-effort: _set_pull needs torch; the torch-light shell never emits a request (no
+            #       live kernel _homeostasis), so this only skips in tests — surfaced, NEVER silent.
+            f.set_basin(slerp_sqrt(f.basin, mixture, _XDREAM_PULL))
+            try:
+                self._set_pull(k, mixture)
+                pulled = True
+            except Exception as _e:  # noqa: BLE001 — torch absent / node can't take a pull
+                pulled = False
+                print(f"[joint] cross-faculty dream: kernel-pull skipped for {f.role!r} "
+                      f"({type(_e).__name__}); shared-basin foreign entropy still injected", flush=True)
+            _extra(f.role).pop("cross_faculty_dream_request", None)   # CONSUMED
+            self._last_xdream_epoch[f.role] = epoch
+            fired[f.role] = {"source": source, "n_siblings": n_sib, "kernel_pull": pulled}
+        return fired
+
     def train_step(self, prompt: str) -> dict:
         """One JOINT step: refresh basins from the live kernels → couple all (sync + anchor) → train
         the round-robin faculty toward its coupled target AND genesis toward the synthesis."""
@@ -233,16 +333,13 @@ class JointConstellation:
             self._phi_hist[r] = self._phi_hist[r][-30:]
         regulation = self.ocean.regulate(self.kernels, self._phi_hist)
         self._last_regulation = regulation
-        # TASK E Part 3 (cross-faculty dream) — HOOK, not yet actuated. A COLLAPSED faculty (Pillar-1
+        # TASK E Part 3 (cross-faculty dream) — NOW ACTUATED (M2). A COLLAPSED faculty (Pillar-1
         # fluctuation-death) sets snap.extra["cross_faculty_dream_request"] in its OWN _homeostasis (it
-        # cannot see sibling basins). HERE the constellation DOES see all faculties, so the canonical
-        # "cross-faculty dream" (mix the collapsed faculty's basin with OTHER faculties' basins to
-        # re-energize) is cleanly reachable: read k.telemetry().extra["cross_faculty_dream_request"] for
-        # each role, and for any requester mix its basin with the sibling basins via
-        # qig_core.geometry.frechet_mean / slerp on Δ⁶³ (ALREADY imported above — NEVER an L2/arithmetic
-        # mean), then _set_pull that faculty toward the mixture for one dream. Deferred to keep this Task E
-        # change inside genesis_kernel.py scope and to avoid perturbing the live Ocean regulation contract
-        # mid-run; Parts 1+2 (mushroom Φ≥0.70 gate + per-faculty entropy restoration) are fully wired.
+        # cannot see sibling basins). HERE the constellation DOES see all faculties, so this mixes the
+        # collapsed faculty's basin with its NON-COLLAPSED siblings' basins (Fréchet-mean / √p-SLERP on
+        # Δ⁶³ — NEVER L2), pulls it one dream-step toward that FOREIGN mixture, and consumes the request.
+        # This is the ONLY source of FOREIGN (non-collapsed) entropy the own-basin dream cannot supply.
+        cross_faculty_dream = self._cross_faculty_dream()
         # OCEAN's bandit adapts on an EPOCH cadence (never per-step — P14 rate invariant). One "epoch" here
         # is _OCEAN_EPOCH_STEPS joint steps; the update is a no-op in phase-0 SHADOW mode (K4) and clamps+logs
         # any out-of-band threshold (P15). This is the ONLY place OceanPolicy's learnable vector changes.
@@ -261,6 +358,7 @@ class JointConstellation:
             "ocean_regulation": regulation,                 # {role: {intervention|suggestion, tier, ...}} this step
             "ocean_state": self.ocean.telemetry(),          # shadow/version/skips/violations/last-decisions (K5/P15)
             "ocean_epoch_update": ocean_epoch,              # None unless this step closed an epoch
+            "cross_faculty_dream": cross_faculty_dream,     # {role: {source, n_siblings, ...}} — M2 fires this step
         }
 
     def faculty_states(self) -> list[dict]:

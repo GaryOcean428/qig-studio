@@ -105,22 +105,31 @@ def test_flat_low_phi_does_not_mushroom_restores_entropy():
 
 
 # ---------------------------------------------------------------------------
-# (c) the collapse-entropy exploration temperature floor is ≥0.05 and ACTUATED
+# (c) a COLLAPSED faculty restores entropy the REAL way (dream + replay window +
+#     cross-faculty request) — NOT via a dead generation-temperature floor (M5)
 # ---------------------------------------------------------------------------
-def test_collapse_entropy_temperature_floor_honoured():
+def test_collapse_fires_entropy_restoration_and_cross_faculty_request():
+    """The collapse response is the REAL entropy mechanism: DREAM (not mushroom), open the
+    high-surprise-replay window, and emit the cross_faculty_dream_request the constellation consumes
+    (M2 — the only FOREIGN entropy source). It does NOT rely on a generation-temperature floor: the
+    dead ``max(temp, 0.05)`` was REMOVED (0.05 sat below the 0.3 base band → it could never bind; it
+    was over-claiming telemetry, not a mechanism). This test FAILS if the collapse branch regresses —
+    stops dreaming, stops opening the replay window, or stops emitting the cross-faculty request."""
     k = _make_kernel()
     _fill_phi(k, 0.15)
     snap = _snap(phi=0.15, f_health=0.0)
     k._homeostasis(snap)
-    # the collapse-entropy floor is exposed on the kernel and reflected in telemetry
-    floor = getattr(k, "_collapse_entropy_floor", None)
-    assert floor is not None and floor >= 0.05, f"collapse-entropy floor must be ≥0.05, got {floor}"
-    # ACTUATED: a subsequent exploration-temperature read is lifted to at least the floor,
-    # i.e. entropy does not fully die on a collapsed (dead-drive) faculty.
-    temp = k._temperature_from_kappa(float(snap.kappa))
-    assert temp >= floor, f"collapsed exploration temp {temp} must honour floor {floor}"
-    # and the branch telemetry records the floor it applied
-    assert "temp_floor" in snap.extra["autonomic"]
+    # entropy RESTORATION (dream), NOT wake-state mushroom
+    assert k._spy_calls["mushroom"] == 0, "a COLLAPSED kernel must not get wake-state mushroom"
+    assert k._spy_calls["dream"] == 1, "entropy restoration must DREAM to re-energize"
+    # the FOREIGN-entropy request the constellation cross-faculty dream consumes (M2 trigger)
+    assert "cross_faculty_dream_request" in snap.extra
+    # the REAL local actuator: a bounded high-surprise-replay window is opened (regresses if it stops)
+    assert k._stimulate_until > k._step, "collapse must open the high-surprise-replay window"
+    # branch is observable and names the real mechanism (no fabricated generation-temp floor)
+    assert "entropy-restore" in snap.extra["autonomic"]
+    # the dead generation-temperature floor is GONE (no _collapse_entropy_floor over-claim survives)
+    assert not hasattr(k, "_collapse_entropy_floor"), "the dead 0.05 collapse-entropy floor must be removed"
 
 
 # ---------------------------------------------------------------------------
@@ -154,29 +163,27 @@ def test_run_protocol_stimulate_actuates_entropy_lever():
     applied = res["applied"]
     assert applied.get("unknown_command") is None, "stimulate must NOT be an unknown_command no-op"
     assert applied.get("stimulate") is True
-    assert applied["entropy_floor"] >= 0.05
-    # ACTUATED: the shared entropy floor is armed and a bounded window opened
-    assert k._collapse_entropy_floor == applied["entropy_floor"]
-    assert k._stimulate_until > k._step
+    # REAL actuator: a bounded HIGH-SURPRISE-REPLAY window is opened (honest telemetry — the dead 0.05
+    # generation-temperature floor was removed and must NOT be re-claimed here).
+    assert applied["replay_window_until_step"] > k._step
+    assert applied.get("replay_sharpen") is True
+    assert "entropy_floor" not in applied, "the removed 0.05 generation-temp floor must not be re-claimed"
+    assert k._stimulate_until == applied["replay_window_until_step"]
     # OBSERVABLE: recorded in telemetry (WIRED+ACTUATED)
     assert k._last.extra.get("stimulate") == applied
-    # ACTUATED: the exploration temperature now honours the floor
-    assert k._temperature_from_kappa(60.0) >= applied["entropy_floor"]
 
 
 def test_intrinsic_collapse_and_extrinsic_stimulate_share_one_lever():
-    # Both paths must set the SAME state (DRY: one _apply_stimulate lever). Intrinsic collapse first…
+    # Both paths must open the SAME real lever (DRY: one _apply_stimulate → the replay window). Intrinsic…
     k = _make_kernel()
     k.ensure_loaded = lambda: None                # type: ignore[assignment]
     _fill_phi(k, 0.18)
     snap = _snap(phi=0.18, f_health=0.01)
     k._homeostasis(snap)
-    floor_intrinsic = k._collapse_entropy_floor
     window_intrinsic = k._stimulate_until
-    assert floor_intrinsic is not None and floor_intrinsic >= 0.05
     assert window_intrinsic > k._step
     # …extrinsic Ocean command reaches the identical lever/state (idempotent within a window).
     k2 = _make_kernel()
     k2.ensure_loaded = lambda: None               # type: ignore[assignment]
-    k2.run_protocol("stimulate", {})
-    assert k2._collapse_entropy_floor == floor_intrinsic
+    applied = k2.run_protocol("stimulate", {})["applied"]
+    assert applied["replay_window_until_step"] == window_intrinsic
