@@ -22,6 +22,13 @@ from .faculty import (
     seed_constellation,
 )
 from .identity_anchor import ANCHOR_FRACTION, apply_anchor, equilibrium_distance, identity_drift
+# S5(b) GUARD — ``NeuroState`` is a CATEGORY-3 regulatory-modulation analogy (neurochem.py): its scalars
+# retune constellation ANCHOR STIFFNESS + SYNC STRENGTH only (via ``apply_modulation``), never a drive. Its
+# ``NeuroState.dopamine`` field is FLOOR-LESS (defaults 0.0) BY DESIGN — a modulation salience signal legitimately
+# reads 0 when nothing is salient. It is therefore NOT the P23 drive channel and MUST NEVER be wired into drive
+# logic: the drive dopamine is the TONIC-FLOORED one (≥0.08 DOPAMINE_FLOOR) in
+# ``GenesisKernelTarget._drive_signals`` / qig-core neurochemistry. Wiring this floor-less field into a drive
+# would reintroduce drive-death (P23 violation). Consume it ONLY through ``apply_modulation`` for anchor/sync.
 from .neurochem import NeuroState, apply_modulation, compute_modulation
 from .ocean import OceanAutonomic, context_from_telemetry, function_of
 from .ocean_policy import (
@@ -62,7 +69,8 @@ __all__ = [
     "Faculty",
     "FacultyView",
     "HeartOscillator",
-    "NeuroState",
+    "NeuroState",          # S5(b): anchor/sync modulation ONLY — floor-less; NEVER wire into the P23 drive channel
+
     "OceanAutonomic",
     "OceanContext",
     "OceanPolicy",

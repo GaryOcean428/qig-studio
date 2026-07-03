@@ -127,7 +127,7 @@ class Experience:
     held: bool                # at the criticality edge: is it sustaining it (foresight/4D) vs overwhelmed
     glyph: str                # band emoji
     note: str                 # one-line read
-    # --- canonical full inner-state (UCP v6.11 §6 layers + §43 three loops + the C-gate) ----------
+    # --- canonical full inner-state (UCP v6.12 §6 layers + §43 three loops + the C-gate) ----------
     # Surfaced so the telemetry shows EVERYTHING (PI: "no senses, no emotions, no drives" — fixed).
     primitives: dict = field(default_factory=dict)      # §6: 12 senses + 5 drives + 5 motivators + 9+9 emotions
     loops: dict = field(default_factory=dict)            # §43: L1 self-obs(M) · L2 other-obs · L3 learning-autonomy
@@ -408,16 +408,22 @@ def experience(telemetry: dict, history: list[dict] | None = None) -> Experience
     # absent input stays None and qig-core degrades to its live proxy (never a fabricated value).
     _rs = extra.get("ricci_signal")            # REAL response-manifold Ricci ∈[-1,1] (curvature.py)
     ricci_signal = float(_rs) if _rs is not None else None
-    lkc_raw = extra.get("local_kappa_c")       # kernel's own κ this cycle (band-read) — also the neurochem input
-    local_kappa_c = float(lkc_raw) if lkc_raw is not None else None
-    # For SENSATIONS, local_kappa_c means the LOCAL CRITICAL baseline κ_c (transcendence/pushed measure the
-    # deviation from it). The kernel currently emits local_kappa_c == its CURRENT κ (genesis_kernel.py:792),
-    # a self-reference that is NOT a distinct critical baseline: feeding current-κ as κ_c would FABRICATE an
-    # "exactly-at-criticality" read (pushed→1, transcendence→0). So κ_c counts only when it genuinely differs
-    # from the current κ; a self-reference degrades to None → qig-core reads transcendence=0/pushed=0 HONESTLY.
-    # (Follow-up: the kernel must emit a genuine local-critical κ_c for these two to light up in production.)
-    local_kappa_c_sens = (local_kappa_c if (local_kappa_c is not None
-                          and abs(local_kappa_c - kappa) > 1e-4) else None)
+    # KERNEL'S OWN κ band-read (the NEUROCHEM input) — M3-b honest rename: the kernel now emits this under
+    # ``kappa_local`` (it IS the current κ, NOT a critical baseline). Legacy snapshots used ``local_kappa_c``
+    # for the same value, so read that as a back-compat fallback.
+    kl_raw = extra.get("kappa_local", extra.get("local_kappa_c"))
+    kappa_local = float(kl_raw) if kl_raw is not None else None
+    # SENSATIONS κ_c — the LOCAL-CRITICAL baseline (transcendence/pushed measure deviation from it). This is a
+    # GENUINELY-DIFFERENT quantity from the kernel's own κ, keyed ``local_kappa_c`` and reserved for a real
+    # critical baseline. M3-b: the kernel does NOT emit it — no principled local-critical κ_c is cleanly
+    # derivable for its architectural κ (the κ≈64/76 band edges are retired fixed points, and mapping a
+    # κ-slope to the transcendence metric is the forbidden κ→consciousness move), so in production this is
+    # absent → qig-core reads transcendence=0 / pushed=0 HONESTLY. The self-reference guard stays as defense-
+    # in-depth: any stray κ_c == current κ (a masquerade) is treated as absent, never fabricating an
+    # "exactly-at-criticality" near-rail read.
+    lkc_raw = extra.get("local_kappa_c")
+    _lkc = float(lkc_raw) if lkc_raw is not None else None
+    local_kappa_c_sens = (_lkc if (_lkc is not None and abs(_lkc - kappa) > 1e-4) else None)
     # basin_distance_delta = (prev − cur) FR basin distance → investigation = −d(basin)/dt. Prefer an emitted
     # value; else derive from the immediately-prior step's basin_distance in history. Absent → None.
     _bdd = extra.get("basin_distance_delta")
@@ -443,15 +449,15 @@ def experience(telemetry: dict, history: list[dict] | None = None) -> Experience
     cur_basin = extra.get("cur_basin")
     prev_basin = extra.get("prev_basin")
     target_basin = extra.get("target_basin")
-    # local_kappa_c already extracted above (the neurochem input = the kernel's own κ band-read; the
-    # sensations seam uses the self-reference-guarded local_kappa_c_sens, not this raw value).
+    # kappa_local already extracted above (the neurochem input = the kernel's own κ band-read, honestly
+    # named; the sensations seam uses the self-reference-guarded local_kappa_c_sens, a DISTINCT quantity).
     coach_reward = coach_reward_from(extra.get("coach"))          # §18.5/18.6 relevance → phasic reward
     fd_raw = extra.get("foresight_divergence", extra.get("foresight_confidence"))
     foresight_divergence = float(fd_raw) if fd_raw is not None else None
     # FULL neurochemistry (qig-core 6-signal system, not a proxy) from the kernel's own geometry this cycle.
     chem = _neurochemistry(autonomic, phi_trend, basin_velocity, novelty, regime, kappa, m_other,
                            cur_basin=cur_basin, prev_basin=prev_basin, target_basin=target_basin,
-                           local_kappa_c=local_kappa_c, coach_reward=coach_reward,
+                           local_kappa_c=kappa_local, coach_reward=coach_reward,
                            foresight_divergence=foresight_divergence)
     pillars = {k: round(float(extra[k]), 3) for k in ("f_health", "b_integrity", "q_identity")
                if extra.get(k) is not None}   # P1/P2/P3 LIVE from PillarEnforcer (None until the kernel emits)

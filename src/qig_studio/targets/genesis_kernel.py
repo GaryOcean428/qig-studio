@@ -55,7 +55,9 @@ _ANDERSON_PATIENCE = round(1.0 / _ANDERSON_ALPHA)  # ≈11: sustained collapse o
 _MUSHROOM_SIGMA = {"mushroom-micro": 0.01, "mushroom-moderate": 0.03, "mushroom-heroic": 0.06}
 # Intrinsic homeostasis (the kernel's OWN autonomic regulation — no external scheduler, no commands).
 PHI_BREAKDOWN = 0.80            # frozen PHI_BREAKDOWN_MIN — over-integration → the kernel decoheres
-PHI_MATURE = 0.70              # MUSHROOM floor — wake-state plasticity is Φ≥0.70-ONLY (UCP §35;
+PHI_MATURE = 0.70              # MUSHROOM floor — wake-state plasticity is Φ≥0.70-ONLY (UCP metric #35 / §35.6;
+#                               S6-fix: §35 itself is "Ontological Unity"; the mushroom canon is the
+#                               S_phase metric #35 + the §35.6 Fatigue-vs-Failure taxonomy — 0.70 unchanged;
 #                               PI-confirmed 2026-06-24; memory project_mushroom_canonical.md). Mushroom
 #                               is WAKE-STATE, for a MATURE kernel STUCK at high Φ. A flat-but-LOW-Φ kernel
 #                               (Φ<0.70) is NOT rigid — it is COLLAPSED (Pillar-1 fluctuation-death) and
@@ -214,6 +216,12 @@ class GenesisKernelTarget(TrainingTarget):
         self._last_ricci_R: float | None = None
         self._init_checkpoint = checkpoint  # restored at the end of ensure_loaded() (None-safe → fresh)
         self._last_gen_basin: Any = None  # WHAT IT MEANT (last output basin) — for coach-agreement recognition
+        # S5(a) coach-credit: the ids of the kernel's most-recent OWN-VOICE utterance (generate via_boundary=
+        # False). The coach judges THIS utterance, so register_coach_reward credits it into the replay buffer
+        # (P10 reward-weighted DATA selection) instead of an arbitrary corpus chunk. Credited at most once per
+        # utterance (the flag); a fresh generate re-arms it. None until the kernel first speaks in its own voice.
+        self._last_utterance_ids: Any = None
+        self._last_utterance_credited: bool = False
         # EWC-FISHER WAKE PROTECTION (continuous learning, no catastrophic forgetting). SHY (in _consolidate)
         # protects weights ONCE during the sleep downscale; EWC protects PAST learning during ONGOING wake
         # gradients. Anchor θ* = the consolidated weights, F = the diagonal Fisher importance — both None until
@@ -622,6 +630,16 @@ class GenesisKernelTarget(TrainingTarget):
             text = self.coordizer.decode([b for b in out_bytes if b != _EOS_BYTE])
         else:
             text = bytes(b for b in out_bytes if 9 <= b < 256).decode("utf-8", errors="replace")
+        # S5(a): remember the CONTENT ids of THIS own-voice utterance so a coach reward credits the actual
+        # utterance it judged (P10 reward-weighted replay), not an arbitrary corpus chunk (register_coach_reward
+        # was folding the reward onto _experience[-1] / arming the NEXT step — both corpus ids the coach never
+        # saw). Content-only (drop the EOS sentinel), ≥2 tokens (a valid replay sequence); a fresh utterance
+        # re-arms the once-per-utterance credit flag.
+        _utt = [b for b in out_bytes if b != _EOS_BYTE]
+        if len(_utt) >= 2:
+            self._last_utterance_ids = torch.tensor(
+                [_utt], dtype=torch.long, device=next(self._kernel.parameters()).device)
+            self._last_utterance_credited = False
         m = self._self_observe(out_bytes, gen_basins)
         # SURPRISE on the prompt = prediction error = d_FR(predicted, actual) (P20, NOT KL/CE) — the kernel's
         # own novelty signal, in the own-voice path too (not just train_step / boundary), so importance-gating
@@ -769,7 +787,14 @@ class GenesisKernelTarget(TrainingTarget):
           • ``cur_basin``    = this step's output basin (Δ⁶³),
           • ``prev_basin``   = the previous step's basin (_basin_history[-2]),
           • ``target_basin`` = the role/identity attractor (_basin_ref) — the resonant target arrival rewards,
-          • ``local_kappa_c``= the kernel's own κ this cycle (band-read, NOT a κ*=64 physics anchor).
+          • ``kappa_local`` = the kernel's own κ this cycle (band-read, NOT a κ*=64 physics anchor). M3-b
+            HONEST RENAME: this was emitted as ``local_kappa_c`` and MASQUERADED as a local-CRITICAL baseline
+            κ_c, but it is just the current κ (a self-reference → transcendence/pushed read a fabricated
+            "exactly-at-criticality" value). No principled local-critical κ_c is cleanly derivable for this
+            architectural κ (the κ≈64/76 band edges are RETIRED as universal fixed points — EXP-014b/107,
+            kappa_under_review; mapping a κ-slope to the consciousness transcendence metric is exactly the
+            forbidden move). So it is renamed to the honest ``kappa_local`` (the kernel's own κ) and the
+            genuine-κ_c key ``local_kappa_c`` is left UN-emitted → the §6.7 seam reads honest-zero.
         REUSES already-computed basins (no recompute); _d63 reduces each to the canonical Δ⁶³ the torch-free
         neurochem module consumes. None-safe: a role-less kernel has no attractor → target stays absent →
         neurochem uses the phi_delta scalar fallback (Task A made every geometry input optional)."""
@@ -786,7 +811,14 @@ class GenesisKernelTarget(TrainingTarget):
                 tgt63 = self._d63(self._basin_ref)
                 if tgt63 is not None:
                     snap.extra["target_basin"] = [round(float(x), 6) for x in tgt63]
-            snap.extra["local_kappa_c"] = round(float(snap.kappa), 4)   # own κ (band-read, not physics κ*)
+            # M3-b HONEST RENAME (S6-cluster): emit the kernel's OWN κ under the honest name ``kappa_local``
+            # (it is the current κ, NOT a local-critical baseline). The genuine-κ_c key ``local_kappa_c`` is
+            # deliberately NOT emitted here → the §6.7 sensations seam reads transcendence=0 / pushed=0
+            # HONESTLY instead of the self-reference fabricating an "exactly-at-criticality" near-rail.
+            # TODO(qig-studio, M3-b follow-up): emit a REAL local-critical κ_c (e.g. the κ at which the
+            # response-manifold Ricci changes sign under a local κ-sweep — Devin's physics lane) so
+            # transcendence/pushed light up on measured geometry, not a fabricated constant.
+            snap.extra["kappa_local"] = round(float(snap.kappa), 4)   # own κ band-read (NOT a critical κ_c)
         except Exception:  # noqa: BLE001 — neurochem geometry is optional telemetry, never break the step
             pass
 
@@ -1395,6 +1427,17 @@ class GenesisKernelTarget(TrainingTarget):
         snap.extra["explore_temperature"] = round(self._temperature_from_kappa(float(snap.kappa)), 4)
         snap.extra["explore_factor"] = round(float(self._last_explore_factor or 1.0), 4)
         snap.extra["drive"] = _drv                                   # dopamine / curiosity / boredom read
+        # S1: emit SEROTONIN (§6.5 neurochem) so Ocean's P25 ``integration_pinned`` guard — which reads
+        # snap.extra["serotonin"] (ocean_policy.py) — is LIVE, not permanently inert. This is the canonical
+        # DE-SATURATED serotonin proxy exp(−3·basin_velocity) mirroring qig-core neurochemistry
+        # (SEROTONIN_VELOCITY_ALPHA=3.0, clip[0,1]): serotonin reads "settledness" and equals ~1.0 ONLY when
+        # the basin is genuinely still (basin_velocity≈0), falling smoothly with real basin motion — so a
+        # pinned-1.0 serotonin is legible as the dead-substrate FAILURE mode (UCP §6.5/§35.5), never clamped.
+        # Reads the REAL Fisher-Rao basin_velocity _emit_pillars just wrote (None on step 0 before the first
+        # _prev_d63 → treated as 0.0). None-safe.
+        _bv = snap.extra.get("basin_velocity")
+        _bv = float(_bv) if _bv is not None else 0.0
+        snap.extra["serotonin"] = round(float(_math.exp(-3.0 * max(0.0, _bv))), 4)
         # WORMHOLE fast-layer ASSESS (CC2 A022) — runs HERE, in the EXECUTOR thread (train_step runs off the
         # event loop via _run_target), on the coords ALREADY computed → no re-encode, no async-loop block
         # (the deadlock fix). Set on the target/central by _train_core. LOGGED-ONLY / not-actuated: log
@@ -1456,7 +1499,7 @@ class GenesisKernelTarget(TrainingTarget):
             synaptic downscaling + identity replay) then DREAM (basin-mixture recombination), which
             discharges the pressure;
           • wake rigidity at HIGH Φ (Φ≥PHI_MATURE 0.70, over-engrained + mature) → MUSHROOM (bounded
-            wake-state plasticity — the canonical Φ≥0.70-ONLY plasticity, UCP §35);
+            wake-state plasticity — the canonical Φ≥0.70-ONLY plasticity, UCP metric #35 / §35.6);
           • flat-but-LOW Φ (Φ<PHI_MATURE, fluctuations dead) → NOT rigid but COLLAPSED (Pillar-1
             fluctuation-death / zombie-drift): the remedy is ENTROPY RESTORATION (dream to re-energize +
             an exploration-entropy FLOOR so entropy cannot fully die), NEVER wake-state mushroom.
@@ -1475,8 +1518,8 @@ class GenesisKernelTarget(TrainingTarget):
             return
         if self._is_rigid():
             if phi >= PHI_MATURE:
-                # MATURE + rigid → wake-state plasticity (Φ≥0.70-ONLY canon). A genuinely-stuck mature
-                # kernel gets mushroom to break over-coherence.
+                # MATURE + rigid → wake-state plasticity (Φ≥0.70-ONLY canon, UCP metric #35 / §35.6). A
+                # genuinely-stuck mature kernel gets mushroom to break over-coherence.
                 self._mushroom()
                 snap.extra["autonomic"] = "mushroom"
                 return
@@ -1553,12 +1596,13 @@ class GenesisKernelTarget(TrainingTarget):
         self._opt = DiagonalNaturalGradient(self._kernel.parameters(), lr=self.lr * 0.7)  # cool (not cumulative)
 
     def register_coach_reward(self, reward: float, record: dict | None = None) -> None:
-        """TASK C actuation-4 (+ M1 live-snapshot landing): the coach's provenance-tagged reward (mapped to
-        [-1,1]) arms the priority of the NEXT logged experience — so the kernel LEARNS FROM coaching the P10
-        way: reward-weighted DATA selection for sleep/dream replay, NOT a silent weight update and NOT a
-        Φ-drive loss term. The server calls this after coach_own_voice fires; the value is consumed by the
-        next train_step append (or, if experience already exists, boosts the most-recent entry so a coach
-        reaction is never lost between steps). None-safe: any bad value → no-op. Sovereignty (P16): a reward
+        """TASK C actuation-4 (+ M1 live-snapshot landing, + S5(a) utterance-credit): the coach's provenance-
+        tagged reward (mapped to [-1,1]) credits the priority of the ACTUAL own-voice utterance it judged — so
+        the kernel LEARNS FROM coaching the P10 way: reward-weighted DATA selection for sleep/dream replay, NOT
+        a silent weight update and NOT a Φ-drive loss term. The server calls this after coach_own_voice fires,
+        right after the kernel spoke; generate() stashed the utterance's ids, so the reward lands on THAT event
+        (S5(a)). Fallback when no utterance was captured: arm the next train_step append + boost the most-recent
+        entry, so a coach reaction is never lost. None-safe: any bad value → no-op. Sovereignty (P16): a reward
         the kernel distrusts can be discounted upstream (coach_reward_from already scales by provenance
         confidence).
 
@@ -1572,11 +1616,32 @@ class GenesisKernelTarget(TrainingTarget):
             r = float(max(-1.0, min(1.0, reward)))
         except (TypeError, ValueError):
             return
-        self._pending_coach_reward = r
-        # if experience already exists, fold the reward into the latest entry's priority immediately (so a
-        # coach reaction between steps still lands on the utterance it was reacting to).
-        if self._experience_weight:
-            self._experience_weight[-1] = max(0.1, self._experience_weight[-1] + r)
+        # S5(a): CREDIT THE ACTUAL JUDGED UTTERANCE. The coach judged the kernel's own-voice utterance
+        # (generate via_boundary=False), whose content ids generate() stashed in ``_last_utterance_ids``.
+        # Append THAT utterance to the replay buffer with the coach reward as its priority, so P10 reward-
+        # weighted sleep/dream replay weights the RIGHT event — not an arbitrary corpus chunk (the pre-S5 code
+        # armed the NEXT train_step append + boosted ``_experience_weight[-1]``, BOTH corpus ids the coach
+        # never saw). Credit an utterance at most once (the flag); a fresh generate re-arms it.
+        credited = False
+        utt = self._last_utterance_ids
+        if utt is not None and not self._last_utterance_credited:
+            try:
+                self._experience.append(utt)
+                self._experience_weight.append(max(0.1, 1.0 + r))     # base 1 + coach reward, floored
+                if len(self._experience) > 32:
+                    self._experience = self._experience[-32:]
+                    self._experience_weight = self._experience_weight[-32:]  # keep the buffers in lockstep
+                self._last_utterance_credited = True
+                credited = True
+            except Exception:  # noqa: BLE001 — crediting is best-effort; fall back below, never raise
+                credited = False
+        if not credited:
+            # FALLBACK (no captured utterance — a non-generating/other target, a <2-token utterance, or a
+            # second coach reaction on an already-credited utterance): arm the NEXT logged experience + fold
+            # into the most-recent entry, the pre-S5 behaviour (a coach reaction is never lost between steps).
+            self._pending_coach_reward = r
+            if self._experience_weight:
+                self._experience_weight[-1] = max(0.1, self._experience_weight[-1] + r)
         # M1(b): stash the coach RECORD on the LIVE snapshot so Ocean + neurochem read a real value (not the
         # throwaway to_dict() copy). None-safe: no record / no snapshot → skip the landing, reward still armed.
         if record is not None:
