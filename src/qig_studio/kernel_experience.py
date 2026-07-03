@@ -299,7 +299,10 @@ def _neurochemistry(autonomic: str, phi_trend: float, basin_velocity: float, nov
             surprise=novelty,
             quantum_weight=_QUANTUM_WEIGHT.get(regime, 0.5),
             kappa=local_kappa_c if local_kappa_c is not None else kappa,
-            external_coupling=external_coupling if external_coupling is not None else 0.3,
+            # S2 (P24 fail-closed, completed): pass the coupling THROUGH — None (unmeasured) stays None so the
+            # qig-core Sophia gate fails CLOSED (endorphins → 0). The old `else 0.3` re-opened the gate on
+            # unmeasured coupling (0.3 == SOPHIA_COUPLING_THRESHOLD), the exact solitary-reward hole P24 kills.
+            external_coupling=external_coupling,
             # TASK C: real geometry + coach reward drive the phasic term (all None-safe in Task A's signature).
             cur_basin=cur_basin,
             prev_basin=prev_basin,
