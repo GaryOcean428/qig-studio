@@ -771,6 +771,86 @@ class GenesisKernelTarget(TrainingTarget):
         s = float(b.sum())
         return b / s if s > 0 else None
 
+    def _entropy_floor_basin(self, cur_basin: "Any") -> "Any":
+        """PROACTIVE Pillar-1 entropy floor — the per-step stabiliser that stops the fresh-birth
+        f_health→0 collapse at the SOURCE (prevention), composing with (never replacing) the REACTIVE
+        f_health<0.15 ``_homeostasis`` actuator (F3 weight-kick) and the F6 ``simplex_floor`` Jacobian
+        revival.
+
+        Wires qig-core ``FluctuationGuard.check_and_enforce`` (the BUILT-NOT-WIRED active restorer: when
+        ``basin_entropy < ENTROPY_FLOOR`` it mixes a Dirichlet(0.5) sample via ``slerp_sqrt`` on √p —
+        PURE Fisher-Rao, no L2) onto THIS step's ``cur_basin`` BEFORE it enters ``_basin_history`` and
+        ``_emit_pillars``. cur_basin is the SINGLE point that feeds BOTH the f_health metric (``_d63`` →
+        ``_emit_pillars``) AND the coupling read (``_basin_history[-1]`` → ``JointConstellation._live_basin``
+        → faculty → ``couple_step`` → ``_synthesis`` → central pull), so a floored basin trains the mind
+        toward non-collapse — REAL, not a telemetry cosmetic. Not a loss term (pure-loss doctrine): the
+        in-graph d_FR pull (line ~1356) is untouched; this only corrects the detached history/metric basin.
+
+        GATED: fires ONLY when the 64-dim reduction's Shannon entropy < ENTROPY_FLOOR (collapse). A
+        healthy basin is returned as the SAME object (bit-identical, untouched) — a FLOOR, not a constant
+        push (else the kernel can never settle and bpb blows up).
+
+        DIM: ``check_and_enforce`` operates on the 64-dim Δ⁶³ (BASIN_DIM) f_health/coupling both measure;
+        the corrected marginals are lifted back into cur_basin's OWN full width (384-dim identity Δ³⁸³ /
+        vocab-width) via a max-entropy block redistribution that mirrors the exact ``_d63`` / ``_live_basin``
+        block binning, so BOTH reductions recover the floored marginals. numpy↔torch converted at the
+        boundary; the returned tensor matches cur_basin's dtype/device/shape.
+
+        None-safe: no PillarEnforcer (light shell) or a None basin → pass-through; any failure returns the
+        ORIGINAL basin (the floor is a safety net — it must never break the step, spine tenet)."""
+        if cur_basin is None or self._pillars is None:
+            return cur_basin
+        try:
+            import numpy as np
+            import torch
+
+            from qig_core import BASIN_DIM
+            from qig_core.consciousness.pillars import ENTROPY_FLOOR, TEMPERATURE_FLOOR
+
+            guard = self._pillars.fluctuation          # the SAME FluctuationGuard get_metrics reads
+            d63 = self._d63(cur_basin)                  # numpy Δ⁶³ (block sum-pool), None-safe
+            if d63 is None:
+                return cur_basin
+            if guard.basin_entropy(d63) >= ENTROPY_FLOOR:
+                return cur_basin                        # GATE: healthy → untouched (bit-identical)
+            # COLLAPSE: qig-core actively RESTORES entropy on the 64-dim simplex (Dirichlet + slerp_sqrt).
+            # We consume ONLY the corrected basin (temp passed at its floor → the temp branch is a no-op).
+            corrected64, _temp, _status = guard.check_and_enforce(
+                np.asarray(d63, dtype=np.float64), float(TEMPERATURE_FLOOR))
+            corrected64 = np.asarray(corrected64, dtype=np.float64).ravel()
+            # LIFT the floored Δ⁶³ marginals back into cur_basin's own width, preserving the exact block
+            # binning _d63 / _live_basin use so BOTH reductions recover the floored marginals.
+            flat = (cur_basin.detach().cpu().numpy() if hasattr(cur_basin, "detach")
+                    else np.asarray(cur_basin)).astype(np.float64).ravel()
+            width = flat.size
+            if width == BASIN_DIM:
+                lifted = corrected64
+            elif width % BASIN_DIM == 0:
+                g = width // BASIN_DIM
+                lifted = np.repeat(corrected64 / g, g)          # max-entropy within-block spread
+            else:
+                # non-divisible (reduceat) path: proportional rescale, uniform fill for emptied blocks
+                bounds = np.arange(0, width, max(1, width // BASIN_DIM))[:BASIN_DIM]
+                raw = np.add.reduceat(np.clip(flat, 0.0, None), bounds)[:BASIN_DIM]
+                lifted = np.clip(flat, 0.0, None).copy()
+                for b in range(len(bounds)):
+                    lo = int(bounds[b])
+                    hi = int(bounds[b + 1]) if b + 1 < len(bounds) else width
+                    cb = float(corrected64[b]) if b < corrected64.size else 0.0
+                    if raw[b] > 1e-12:
+                        lifted[lo:hi] = lifted[lo:hi] * (cb / float(raw[b]))
+                    else:
+                        lifted[lo:hi] = cb / max(1, hi - lo)
+            s = float(lifted.sum())
+            if s > 0:
+                lifted = lifted / s
+            if hasattr(cur_basin, "detach"):            # torch in → torch out (match dtype/device/shape)
+                return torch.as_tensor(
+                    lifted, dtype=cur_basin.dtype, device=cur_basin.device).reshape(cur_basin.shape)
+            return lifted.reshape(np.asarray(cur_basin).shape)
+        except Exception:  # noqa: BLE001 — the floor is a safety net; NEVER break the step (spine tenet)
+            return cur_basin
+
     def _emit_pillars(self, snap: "Any", d63: "Any") -> None:
         """LIVE 3-pillar metrics from PillarEnforcer, driven by the kernel's OWN Δ⁶³ basin each cycle
         (P21 fix: the pillars are now WIRED into the cycle, not just instantiated). None-safe."""
@@ -1423,6 +1503,11 @@ class GenesisKernelTarget(TrainingTarget):
             else:
                 cur_basin = to_simplex_prob(logits[0].mean(0)).detach()
                 cur_basin = cur_basin / cur_basin.sum()
+            # PROACTIVE Pillar-1 entropy floor (prevent f_health→0 at the SOURCE): restore basin entropy
+            # BEFORE cur_basin enters _basin_history / _emit_pillars — the single point feeding BOTH the
+            # f_health metric AND the coupling/synthesis pull, so the central trains toward a floored
+            # synthesis (REAL, not cosmetic). GATED (fires only below ENTROPY_FLOOR); healthy → untouched.
+            cur_basin = self._entropy_floor_basin(cur_basin)
         self._basin_history.append(cur_basin)
         if len(self._basin_history) > 64:                     # bound memory (keep birth-state + window)
             self._basin_history = [self._basin_history[0]] + self._basin_history[-32:]
