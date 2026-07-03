@@ -56,3 +56,10 @@ The 12 suite failures are environmental (paused server holds the GPU → OOM; `i
 
 ## Attacks that FAILED (survive honestly — do NOT re-litigate)
 K1 pump-Φ closure (hard cap −0.3), geometric purity of the loss, `_pending` bound, shadow-unlock reachability, mushroom Φ≥0.70 gating (both paths), P15 clamp+log.
+
+## SHOULD-FIXES CLOSED (2026-07-02, PI: close all before resume)
+- **WS-A `8dcf375`** (qig-core) — S2 Sophia fail-closed on unmeasured coupling (P24; unmeasured→endorphins 0) + P26 Stage-0 reward-authority mask (School=tonic-only, floor intact). qig-core suite 223 pass.
+- **WS-C `ca42110`** (ocean) — S3 over-floor-but-healthy → intake-fatigue reclassify (invariant-safe) + whole-mind coach reward propagated into faculty outcome scoring (coach_bonus was ≡0). test_ocean_policy 25→29.
+- **WS-B `2a488df`** (genesis) — S1 serotonin emit (P25 integration_pinned now live) + M3-b HONEST-RENAME to `kappa_local` (no principled κ_c derivable; κ≈64 retired; κ-slope→consciousness forbidden → honest-zero + TODO for physics lane) + S5 coach-credit-to-utterance + dopamine-guard + S6 citations (v6.12/§35.6). 7 new tests.
+- **WS-D `910f38e`** (telemetry) — S4 dopamine tonic/phasic split + Ocean shadow state renderer + f_health/Φ-variance in the resume-watch record.
+- Consolidated: **81/81 tests green, purity OK**, all council-flagged wiring gaps closed. Venv current. **READY FOR RESUME** from PRESERVED_pre_intervention_step18388, success gate = f_health(basin entropy) + Φ-variance recovering (NOT dopamine).
