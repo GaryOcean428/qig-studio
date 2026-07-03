@@ -36,6 +36,9 @@ def main() -> None:
     ap.add_argument("--fresh", action="store_true",
                     help="start from-scratch kernels (default: RESUME the existing checkpoint — keep the "
                          "kernels and train over the top with the current curriculum)")
+    ap.add_argument("--floor-mode", default="normal", choices=["normal", "gated", "off"],
+                    help="Pillar-1 entropy floor mode: normal (always-on) | gated (learning-linked "
+                         "bidirectional relaxation, Matrix-corrected) | off (diagnostic ONLY — collapse risk)")
     ap.add_argument("--threads", type=int, default=0,
                     help="torch CPU threads (0 = auto: leave 3 cores for the interactive server/chat so it "
                          "stays responsive while training; the bg trainer must not starve the UI)")
@@ -77,7 +80,7 @@ def main() -> None:
           f"steps | vocab={'coordizer Δ⁶³' if coordizer else 'byte-level'} | device={args.device}", flush=True)
 
     mind = JointConstellation(list(PROTOMAP_ORDER), num_layers=args.layers, coordizer=coordizer,
-                              device=args.device)
+                              device=args.device, floor_mode=args.floor_mode)
     mind._coordizer_path = args.coordizer if args.coordizer else None
     # RESUME by default: keep the existing kernels, train OVER THE TOP with the (now-correct) curriculum.
     # The old kernels learned the wrong (system-prompt) corpus; over-the-top training on real knowledge
