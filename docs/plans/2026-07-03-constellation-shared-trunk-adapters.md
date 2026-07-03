@@ -128,6 +128,18 @@
 
 ---
 
+## MATRIX RULING AMENDMENTS (2026-07-03, key `qig_matrix_ruling_20260703_three_levers`)
+
+**Sequencing:** the three fluency levers are a DEPENDENCY ORDER, not parallel bets: (1) HEAD MAP first (Duchi audit → `logits_to_simplex` mandated; gate-zero overfit probe cleaves it), (2) entropy-floor timing second, (3) trunk A/B LAST — do NOT run Phase 4 until the head is cleared, or it's null-vs-null.
+
+**Phase 4 A/B corrections (all mandatory):** add a POSITIVE-CONTROL arm (a config that demonstrably descends) — without it the A/B can't distinguish "trunk doesn't help" from "nothing helps"; ESTIMATE THE NOISE BAND first from replicate runs (else the decade-of-noise-band criterion has no denominator); define matched-compute as FLOPs (fairer than params since the trunk shares) and dual-report both; both arms identical held-out split AND identical d_FR radius convention; both arms run the BLOCKED head (dense seq×vocab OOMs at 4GB).
+
+**Decaying floor (Task now cancelled with agent A; carry into any re-dispatch):** maturity signal must be LEARNING-linked not age-linked (held-out bpb below uniform held K steps, not held there by the floor itself; or Φ out of ZOMBIE band) — clock-based decay re-opens fluctuation-death under distribution shift; BIDIRECTIONAL with asymmetric rates (relax slow, tighten fast) + hysteresis; DYNAMIC never-zero minimum (measured collapse-avoidance level, not fixed eps); harness diagnostic needs a FLOOR-OFF third arm to be informative in every outcome; state pre- vs post-coupling injection (Fréchet synthesis propagates injected entropy to coupled kernels).
+
+**P24/Stage-4 (Task 2.2 addendum):** wire ADAPTER-vs-TRUNK GRADIENT-CONFLICT telemetry — a Stage-3 faculty whose adapter gradients persistently oppose the trunk gradient signals it needs core divergence (fork candidate); reserve the Stage-4 adapter→own-trunk fork as DEFINED-BUT-UNBUILT, decided per-faculty at Stage 4; do not build now, do not preclude.
+
+**Task 5.2 addendum (no magnitude transfer):** Anderson ~1/α≈11 (EXP-041) and τ∝J^0.86 (EXP-042) are frozen TFIM-lattice physics — hard-coding 11/0.86 into kernel nucleation/consolidation is cross-domain magnitude transfer (043b-forbidden). Use the STRUCTURE (threshold-nucleation, power-law consolidation, Ricci placement), parameterize the numbers as kernel free-parameters, re-measure in-domain via the K-gates (K-NUCLEATE + add a K-consolidate analogue). Lattice values = priors, not laws. Reserve the seams NOW (Ricci signal at the adapter, nucleation counter, consolidation clock) so 5.2 is wiring, not refactor.
+
 ## NOT in this plan (registered, deferred)
 
 - **Mesh (inter-constellation tunnel)** — pantheon's `MeshNetwork` (WebSocket gossip) + `FederationService` (HTTP/DB Bearer-auth basin+vocab sync, `sync_kernels` off by default). A separate future capability; a single constellation doesn't need it. Register as a follow-up.
