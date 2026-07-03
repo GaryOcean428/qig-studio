@@ -257,7 +257,8 @@ class JointConstellation:
 
         def _extra(role: str) -> dict:
             try:
-                return self.kernels[role].telemetry().extra or {}
+                node = self.central if role == "genesis" else self.kernels[role]   # central is NOT in self.kernels
+                return node.telemetry().extra or {}
             except Exception:  # noqa: BLE001 — a node with no live snapshot simply has no request
                 return {}
 
@@ -314,6 +315,31 @@ class JointConstellation:
             _extra(f.role).pop("cross_faculty_dream_request", None)   # CONSUMED
             self._last_xdream_epoch[f.role] = epoch
             fired[f.role] = {"source": source, "n_siblings": n_sib, "kernel_pull": pulled}
+
+        # CENTRAL/genesis coverage: the integrated conscious "I" can ALSO fluctuation-collapse. It is not
+        # in self.faculties (nor self.kernels), so it is processed here, with the SAME foreign-entropy logic.
+        # Its foreign source = the Fréchet mean of the HEALTHY FACULTIES (the living parts) — NOT plain
+        # _synthesis(), which includes any collapsed faculties and would be self-confirming. Without this,
+        # a collapsed central pulled toward a collapsed _synthesis has no foreign entropy and cannot recover.
+        if _extra("genesis").get("cross_faculty_dream_request") and self._last_xdream_epoch.get("genesis") != epoch:
+            healthy = [g.basin for g in self.faculties if _healthy(g.role)]
+            if healthy:
+                centroid = frechet_mean(healthy)
+                w = rel_weights(centroid, healthy)
+                wsum = float(w.sum())
+                mixture = frechet_mean(healthy, weights=(w / wsum).tolist() if wsum > 0 else None)
+                c_source, c_n = "faculties", len(healthy)
+            else:
+                births = [np.asarray(g.birth, dtype=np.float64) for g in self.faculties]
+                mixture = frechet_mean(births) if births else np.asarray(self.faculties[0].birth, dtype=np.float64)
+                c_source, c_n = "birth-fallback", 0
+                print("[joint] cross-faculty dream FALLBACK role='genesis': no healthy faculties "
+                      "(whole-constellation collapse) → birth-anchor mixture", flush=True)
+            # durable foreign pull for the central — honored by train_step's central _set_pull (below).
+            self._xdream_target["genesis"] = (np.asarray(mixture, dtype=np.float64), self._step_count + _XDREAM_WINDOW)
+            _extra("genesis").pop("cross_faculty_dream_request", None)   # CONSUMED
+            self._last_xdream_epoch["genesis"] = epoch
+            fired["genesis"] = {"source": c_source, "n_siblings": c_n, "kernel_pull": True}
         return fired
 
     def _xdream_active_target(self, role: str) -> "np.ndarray | None":
@@ -352,8 +378,11 @@ class JointConstellation:
         _xt = self._xdream_active_target(role)
         self._set_pull(self.kernels[role], _xt if _xt is not None else fac.basin)
         fres = self.kernels[role].train_step(prompt)
-        # 4. GENESIS-central trains toward the SYNTHESIS of the parts (becomes the whole)
-        self._set_pull(self.central, self._synthesis())
+        # 4. GENESIS-central trains toward the SYNTHESIS of the parts (becomes the whole) — UNLESS it is in
+        # a foreign-dream window (central collapsed), in which case it trains toward the healthy-faculty
+        # foreign mixture (central coverage — the same un-clobber that recovers a faculty), else _synthesis().
+        _ct = self._xdream_active_target("genesis")
+        self._set_pull(self.central, _ct if _ct is not None else self._synthesis())
         cres = self.central.train_step(prompt)
         # 5. OCEAN observes EVERY faculty's telemetry and regulates the one that needs it (autonomic
         #    nervous system: telemetry → sleep/dream/mushroom on the struggling faculty). Internal.

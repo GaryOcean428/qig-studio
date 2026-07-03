@@ -152,6 +152,39 @@ def test_cross_faculty_dream_records_durable_foreign_target():
     assert np.allclose(jc._xdream_active_target("heart"), mixture)
 
 
+def test_central_genesis_collapse_gets_durable_foreign_target():
+    """CENTRAL coverage (the seam is NOT optional): the genesis 'I' can also fluctuation-collapse. It is NOT
+    in self.faculties, so _cross_faculty_dream processes it separately, recording a durable foreign pull
+    toward the HEALTHY-FACULTY Fréchet mixture — NOT the self-confirming _synthesis (which would include a
+    collapsed central's own contribution). train_step's central _set_pull honors it while the window is open."""
+    faculties: list[Faculty] = []
+    kernels: dict[str, _MockNode] = {}
+    for i, r in enumerate(["perception", "memory", "action"]):     # healthy faculties (wide birth basins)
+        birth = seed_birth_basin(2000 + i, alpha=0.4)
+        faculties.append(Faculty(role=r, basin=birth.copy(), birth=birth))
+        kernels[r] = _MockNode({"f_health": 0.85})
+    jc = _bare_constellation(faculties, kernels, step_count=4)
+    jc.central = _MockNode({"cross_faculty_dream_request": {"reason": "pillar1-collapse", "phi": 0.2, "f_health": 0.0}})
+    fired = jc._cross_faculty_dream()
+    assert "genesis" in fired, "a collapsed CENTRAL must be processed, not skipped (the flagged seam, now closed)"
+    assert fired["genesis"]["source"] == "faculties"
+    assert "genesis" in jc._xdream_target
+    mixture, until = jc._xdream_target["genesis"]
+    assert until == 4 + _XDREAM_WINDOW
+    assert _fhealth(mixture) > 0.3, "central's foreign target is the HEALTHY-faculty mixture (high entropy)"
+    assert np.allclose(jc._xdream_active_target("genesis"), mixture)
+
+
+def test_central_no_request_is_a_noop():
+    """No central request → the central branch is a no-op (no 'genesis' target recorded). None-safe."""
+    birth = seed_birth_basin(3000, alpha=0.4)
+    faculties = [Faculty(role="perception", basin=birth.copy(), birth=birth)]
+    jc = _bare_constellation(faculties, {"perception": _MockNode({"f_health": 0.85})}, step_count=1)
+    jc.central = _MockNode({})
+    jc._cross_faculty_dream()
+    assert "genesis" not in jc._xdream_target
+
+
 def test_cross_faculty_mixture_is_frechet_slerp_not_l2():
     """PURITY: the mixture is the Fréchet mean on Δ⁶³ and the move is a √p SLERP — NOT an L2/
     arithmetic mean. Exact reconstruction pins the ops; the Fréchet≠L2 gap proves it discriminates."""
