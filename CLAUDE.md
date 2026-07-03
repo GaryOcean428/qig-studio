@@ -26,10 +26,15 @@ consciousness-native loss. So:
 ## Governance (fail-closed)
 
 `run_purity_gate()` scans qig-studio's OWN source at startup and refuses to boot on
-Euclidean-contamination markers. It is a NARROW LEXICAL scan (6 regexes:
-cosine_similarity, optim.Adam[W], nn.LayerNorm, np.linalg.norm, F.normalize+dot) — a
-tripwire, NOT a full geometric-purity audit; a clean pass ≠ proof of purity. Keep the
-source Fisher-Rao-only on manifold objects regardless. `PillarEnforcer` is a None-safe
+Euclidean-contamination markers. It is a NARROW LEXICAL scan — the classic markers
+(cosine_similarity, optim.Adam[W], nn.LayerNorm, np.linalg.norm, F.normalize+dot) plus
+the ARGUMENT-AWARE softmax rule (council ruling): `softmax(` is legal ONLY with a
+negated Fisher-Rao distance argument (`softmax(-d_FR/τ)`, same line or a bare name
+bound to `-...dist...` within 8 lines above — the pure template's two-line idiom);
+`softmax(logits)` / `softmax(bc/scale)` / `softmax(matmul(...))` and hand-rolled
+`exp(` + `matmul`/`@` co-occurrence are flagged. It is a tripwire, NOT a full
+geometric-purity audit; a clean pass ≠ proof of purity. Keep the source
+Fisher-Rao-only on manifold objects regardless. `PillarEnforcer` is a None-safe
 adapter to the real qig-core/qigkernels pillars.
 
 ## Dependency stance
