@@ -98,7 +98,8 @@ def main() -> None:
     vocab = getattr(mind.central, "vocab_size", None)
     last: dict = {}
     last_own: str | None = None             # carry the most recent OWN-VOICE forward (no nulls between samples)
-    last_seed: str | None = None            # the STIMULUS that produced last_own (paired → relevance check)
+    last_seed: str | None = None            # the 160-char generation SEED (what the own-voice was primed with)
+    last_stimulus: str | None = None        # the FULL untruncated passage (display) — matches the server path
     last_gen_health: float | None = None    # carry gen-health/gen-ricci forward too (BUILD #3, no nulls)
     last_gen_ricci: float | None = None
     prev_db: float | None = None            # previous d_basin → identity-drift VELOCITY (sudden jump = harm)
@@ -128,6 +129,7 @@ def main() -> None:
                                            gen_health=True)                       # BUILD #3: gen-health curvature
                 last_own = gr.text
                 last_seed = seed
+                last_stimulus = prompt.strip()          # the FULL passage (display) — NOT the 160-char seed
                 gx = gr.telemetry.extra or {}
                 if gx.get("gen_health") is not None:
                     last_gen_health = gx.get("gen_health")
@@ -145,7 +147,7 @@ def main() -> None:
                           telemetry=tel, experience=exp, central_phi=last.get("central_phi"),
                           min_pairwise_fr=last.get("min_pairwise_fr"),
                           ocean_action=last.get("ocean_regulation"), own_voice=last_own,
-                          coordizer_vocab=vocab, drift_velocity=dv, faculty_phi=fphi, stimulus=last_seed)
+                          coordizer_vocab=vocab, drift_velocity=dv, faculty_phi=fphi, stimulus=last_stimulus)
         livelog.write(rec)
         if i % args.ckpt_every == 0 or i == steps:
             mind.save_checkpoint(args.ckpt_root)            # whole-mind checkpoint
