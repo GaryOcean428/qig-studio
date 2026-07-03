@@ -53,10 +53,15 @@ def _make_kernel() -> GenesisKernelTarget:
         calls["consolidate"] += 1
         return {"replayed": steps}
 
+    def _spy_collapse_perturb(sigma: float = 0.02) -> None:
+        calls["collapse_perturb"] += 1
+
+    calls["collapse_perturb"] = 0
     k._mushroom = _spy_mushroom            # type: ignore[assignment]
     k._dream = _spy_dream                  # type: ignore[assignment]
     k._decohere = _spy_decohere            # type: ignore[assignment]
     k._consolidate = _spy_consolidate      # type: ignore[assignment]
+    k._collapse_perturb = _spy_collapse_perturb   # type: ignore[assignment]
     k._spy_calls = calls                   # type: ignore[attr-defined]
     return k
 
@@ -151,6 +156,7 @@ def test_collapse_fires_on_low_f_health_even_when_phi_fluctuates():
     k._homeostasis(snap)
     assert k._spy_calls["mushroom"] == 0, "a collapsed LOW-Φ kernel must not mushroom"
     assert k._spy_calls["dream"] == 1, "f_health→0 must trigger entropy restoration even with Φ fluctuating"
+    assert k._spy_calls["collapse_perturb"] == 1, "F3: collapse must kick the generator off the absorbing vertex"
     assert "cross_faculty_dream_request" in snap.extra, "the M2 foreign-entropy trigger must fire on f_health→0"
     assert "entropy-restore" in snap.extra["autonomic"]
 

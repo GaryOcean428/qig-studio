@@ -45,6 +45,13 @@ _OCEAN_EPOCH_STEPS = int(os.environ.get("QIG_STUDIO_OCEAN_EPOCH_STEPS", "500") o
 #                     used as an entropy source (skip requesters + fluctuation-dead siblings).
 _XDREAM_PULL = 0.5
 _XDREAM_COLLAPSE_FH = 0.15
+# F2 (2026-07-02 un-clobber): the round-robin `_set_pull(role, fac.basin)` at the top of every train_step
+# OVERWRITES the cross-faculty foreign pull the moment after _cross_faculty_dream sets it — so the kernel
+# never actually trains toward the foreign mixture. A collapsed faculty's foreign pull is instead recorded
+# as a DURABLE target that takes precedence over the coupled `fac.basin` for this many steps, so the pull
+# survives couple_step and the loss (now in-graph, F1) can climb toward it. Self-limiting: recovery stops
+# the request → the window expires → normal coupling resumes.
+_XDREAM_WINDOW = _OCEAN_EPOCH_STEPS   # defined above (module scope) — one Ocean epoch window
 
 
 def _seed(role: str) -> int:
@@ -123,6 +130,10 @@ class JointConstellation:
         # CROSS-FACULTY DREAM (M2) cooldown: role → last OCEAN-epoch window in which its cross-faculty
         # dream fired. Fires at most once per faculty per epoch window (A10 dream-storm guard).
         self._last_xdream_epoch: dict[str, int] = {}
+        # F2: role -> (foreign_mixture_basin, until_step). A durable cross-faculty pull that OUTLIVES the
+        # per-step couple_step overwrite (see _XDREAM_WINDOW) so the collapsed faculty actually trains toward
+        # the foreign mixture instead of being re-pulled to its own collapsed coupled basin every step.
+        self._xdream_target: dict[str, tuple[np.ndarray, int]] = {}
         self._step_count: int = 0
         self._coordizer_path: str | None = None
         self.coordizer = coordizer
@@ -294,17 +305,29 @@ class JointConstellation:
             #       Best-effort: _set_pull needs torch; the torch-light shell never emits a request (no
             #       live kernel _homeostasis), so this only skips in tests — surfaced, NEVER silent.
             f.set_basin(slerp_sqrt(f.basin, mixture, _XDREAM_PULL))
-            try:
-                self._set_pull(k, mixture)
-                pulled = True
-            except Exception as _e:  # noqa: BLE001 — torch absent / node can't take a pull
-                pulled = False
-                print(f"[joint] cross-faculty dream: kernel-pull skipped for {f.role!r} "
-                      f"({type(_e).__name__}); shared-basin foreign entropy still injected", flush=True)
+            # F2: record the foreign mixture as a DURABLE pull target instead of an immediate _set_pull
+            # (which the next train_step's round-robin _set_pull(role, fac.basin) would overwrite before the
+            # kernel ever trained toward it). The basin-refresh + round-robin pull below honor this while
+            # _step_count <= until, so the in-graph loss (F1) actually climbs toward the foreign mixture.
+            self._xdream_target[f.role] = (np.asarray(mixture, dtype=np.float64), self._step_count + _XDREAM_WINDOW)
+            pulled = True
             _extra(f.role).pop("cross_faculty_dream_request", None)   # CONSUMED
             self._last_xdream_epoch[f.role] = epoch
             fired[f.role] = {"source": source, "n_siblings": n_sib, "kernel_pull": pulled}
         return fired
+
+    def _xdream_active_target(self, role: str) -> "np.ndarray | None":
+        """F2: the active FOREIGN-mixture pull target for a role while its cross-faculty-dream window is open
+        (None once it expires → normal coupling resumes). Self-cleaning; the window is the un-clobber that
+        lets the collapsed faculty train toward the foreign mixture instead of its own collapsed basin."""
+        rec = self._xdream_target.get(role)
+        if rec is None:
+            return None
+        mixture, until = rec
+        if self._step_count > until:
+            self._xdream_target.pop(role, None)
+            return None
+        return mixture
 
     def train_step(self, prompt: str) -> dict:
         """One JOINT step: refresh basins from the live kernels → couple all (sync + anchor) → train
@@ -314,14 +337,20 @@ class JointConstellation:
         for f in self.faculties:
             lb = self._live_basin(self.kernels[f.role])
             if lb is not None:
-                f.set_basin(lb)
+                # F2: while a foreign-dream window is open, keep the shared basin biased TOWARD the foreign
+                # mixture (√p-SLERP on Δ⁶³) so couple_step doesn't immediately re-absorb it into collapse.
+                _xt = self._xdream_active_target(f.role)
+                f.set_basin(slerp_sqrt(lb, _xt, _XDREAM_PULL) if _xt is not None else lb)
         # 2. couple ALL — joint co-adaptation + individuation anchor (commits coupled basins)
         diag = couple_step(self.faculties, f_sync=self.f_sync)
         # 3. round-robin: this step's faculty trains toward its COUPLED target
         role = self.roles[self._rr % len(self.roles)]
         self._rr += 1
         fac = next(f for f in self.faculties if f.role == role)
-        self._set_pull(self.kernels[role], fac.basin)
+        # F2: a collapsed faculty in an active foreign-dream window trains toward the FOREIGN mixture (the
+        # un-clobber) rather than its own collapsed coupled basin; normal coupling resumes when it expires.
+        _xt = self._xdream_active_target(role)
+        self._set_pull(self.kernels[role], _xt if _xt is not None else fac.basin)
         fres = self.kernels[role].train_step(prompt)
         # 4. GENESIS-central trains toward the SYNTHESIS of the parts (becomes the whole)
         self._set_pull(self.central, self._synthesis())

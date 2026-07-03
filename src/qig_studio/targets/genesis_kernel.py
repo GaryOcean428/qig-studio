@@ -119,7 +119,11 @@ class GenesisKernelTarget(TrainingTarget):
         #                               This IS "pull back to grow": protect generativity as Φ rises.
         role: str | None = None,
         basin_template: Any = None,
-        basin_weight: float = 5.0,    # validated: balanced vs phi_weight=8 → d_basin converges <0.15 while Φ holds
+        basin_weight: float = 0.5,    # F1 (2026-07-02): the in-graph d_FR pull now ACTUALLY contributes gradient
+        #                               (it was a detached no-op before, so the 5.0 default did nothing + went
+        #                               unnoticed — the :1358 comment already said the tuned value is 0.5). At
+        #                               0.5, w_t·d_ref ≲ lm_loss so the identity pull seeds individuation without
+        #                               dominating fluency; the smoke gate guards bpb-blowup if still too high.
         basin_ramp_steps: int = 150,  # ramp the pull 0→full over this many steps (develop Φ first, then consolidate)
         checkpoint: str | None = None,  # trained-kernel checkpoint (.pt) to restore on first load; None = fresh
         language_peer: Any = None,   # QwenLocalTarget boundary peer for the FLUENT linguistic surface
@@ -1343,7 +1347,15 @@ class GenesisKernelTarget(TrainingTarget):
         if self._basin_ref is not None:                       # SPAWN: pull output basin → role attractor
             from qig_core.torch.geometry_simplex import fisher_rao_distance_simplex, to_simplex_prob
 
-            cur = _basin_cur if _basin_cur is not None else to_simplex_prob(logits[0].mean(0))
+            # F1 (2026-07-02 actuator fix): for the basin head compute `cur` IN-GRAPH from the live 384-dim
+            # identity hidden state (NOT the detached `_basin_cur`) so the d_FR pull ACTUALLY backprops into
+            # the kernel. With `_basin_cur` detached the pull was a dead-gradient no-op — the measured reason
+            # a collapsed basin never escaped the vertex. `simplex_floor=1e-3` (F6) revives the near-vertex
+            # Jacobian so the gradient is non-zero AT the one-hot vertex. Pure Fisher-Rao d_FR — NO new term.
+            if self.head_mode == "basin":
+                cur = to_simplex_prob(tel.hidden_state[0].mean(0)[None], simplex_floor=1e-3)[0]
+            else:
+                cur = _basin_cur if _basin_cur is not None else to_simplex_prob(logits[0].mean(0), simplex_floor=1e-3)
             d_ref = fisher_rao_distance_simplex(cur[None], self._basin_ref[None]).mean()
             # RAMPED pull (verdict 1#1/2#3): early steps build structure (coherence-led), later steps
             # consolidate the faculty into its role attractor — so d_basin (distance to the attractor)
@@ -1544,6 +1556,7 @@ class GenesisKernelTarget(TrainingTarget):
             # SURPRISE-REPLAY window. Idempotent within a window (state-only).
             d = self._dream()                                # re-energize via creative recombination
             _stim = self._apply_stimulate()
+            self._collapse_perturb()                         # F3: kick the GENERATOR off the absorbing vertex
             # CROSS-FACULTY REQUEST (Part 3, M2): a single kernel cannot see sibling basins here. Expose
             # the collapse so the constellation layer (which DOES see all faculties) cross-mixes this
             # faculty's basin with its NON-COLLAPSED siblings' during dream (Fréchet-mean / √p-SLERP on
@@ -1571,6 +1584,21 @@ class GenesisKernelTarget(TrainingTarget):
     def _mushroom(self, sigma: float = 0.01) -> None:
         """Wake-state plasticity — bounded weight-noise (Tononi micro-downscaling) to break an
         over-engrained plateau. Real; the kernel's own plasticity."""
+        import torch
+        with torch.no_grad():
+            for p in self._kernel.parameters():
+                p.add_(torch.randn_like(p) * sigma)
+
+    def _collapse_perturb(self, sigma: float = 0.02) -> None:
+        """F3 (2026-07-02 actuator fix): escape Pillar-1 fluctuation-death. f_health is recomputed each
+        step from a FRESH forward, so ONLY a GENERATOR (weight-space) change moves it — a basin_history
+        injection does not. Bounded ISOTROPIC weight noise (target-FREE → non-self-confirming, F4) kicks
+        the forward off the one-hot vertex where the pull/lm gradients are dead (the Duchi zero-Jacobian);
+        the F6 simplex_floor then keeps the near-vertex gradient alive and the M2 foreign-mixture pull (F2)
+        supplies the DIRECTED climb. Parameter-space noise (identical kind to _mushroom/_decohere) — no
+        basin-purity concern. σ larger than mushroom's 0.01: a collapsed vertex needs a firmer kick."""
+        if self._kernel is None:      # None-safe: no loaded generator to perturb (light shell / decision tests)
+            return
         import torch
         with torch.no_grad():
             for p in self._kernel.parameters():

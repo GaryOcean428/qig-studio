@@ -32,6 +32,7 @@ from qig_studio.constellation.joint_trainer import (
     JointConstellation,
     _OCEAN_EPOCH_STEPS,
     _XDREAM_PULL,
+    _XDREAM_WINDOW,
 )
 
 
@@ -80,6 +81,7 @@ def _bare_constellation(faculties, kernels, step_count: int = 1) -> JointConstel
     jc.faculties = faculties
     jc.kernels = kernels
     jc._last_xdream_epoch = {}
+    jc._xdream_target = {}          # F2: the durable foreign-mixture pull targets (role → (mixture, until))
     jc._step_count = step_count
     jc.f_sync = 0.25
     return jc
@@ -130,18 +132,24 @@ def test_cross_faculty_dream_consumes_request_and_raises_f_health():
     assert fh_after > fh_before + 0.2, f"f_health must rise on the collapsed faculty: {fh_before}→{fh_after}"
 
 
-def test_cross_faculty_dream_sets_kernel_pull_when_torch_present():
-    """The DURABLE gradient path: _set_pull points the collapsed kernel's _basin_ref at the FOREIGN
-    (healthy) mixture so the kernel's own train/dream follows. Needs torch (the real training box);
-    skipped in the torch-light app shell (where no live kernel emits a request anyway)."""
-    pytest.importorskip("torch")
+def test_cross_faculty_dream_records_durable_foreign_target():
+    """F2 (un-clobber): the DURABLE gradient path. _cross_faculty_dream records the FOREIGN (healthy)
+    mixture as a durable _xdream_target (role → (mixture, until)) instead of an INLINE _set_pull. The
+    inline pull was overwritten by the next train_step's round-robin _set_pull(role, fac.basin) BEFORE
+    the collapsed kernel ever trained toward it (the measured M2 clobber). train_step's basin-refresh +
+    round-robin now honor the durable target for the window, so the in-graph pull (F1) actually climbs
+    toward the foreign mixture. Numpy-only (no _set_pull inline) → no torch needed."""
     _roles, faculties, kernels = _scenario()
-    jc = _bare_constellation(faculties, kernels)
+    jc = _bare_constellation(faculties, kernels, step_count=7)
     fired = jc._cross_faculty_dream()
     assert fired["heart"]["kernel_pull"] is True
-    ref = kernels["heart"]._basin_ref
-    assert ref is not None
-    assert _fhealth(ref.numpy()) > 0.3, "the pull target is the FOREIGN (higher-entropy) mixture"
+    # RECORDED as a durable target (not an inline _basin_ref that gets clobbered next step)
+    assert "heart" in jc._xdream_target, "foreign mixture must be recorded as a durable pull target"
+    mixture, until = jc._xdream_target["heart"]
+    assert until == 7 + _XDREAM_WINDOW, "the window must extend _XDREAM_WINDOW steps from now"
+    assert _fhealth(mixture) > 0.3, "the durable target is the FOREIGN (higher-entropy) mixture"
+    # while the window is open the ACTIVE target is the foreign mixture — what round-robin _set_pull uses
+    assert np.allclose(jc._xdream_active_target("heart"), mixture)
 
 
 def test_cross_faculty_mixture_is_frechet_slerp_not_l2():
