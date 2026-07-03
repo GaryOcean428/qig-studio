@@ -90,6 +90,17 @@ def _phi_hist() -> list[dict]:
     return [{"phi": p} for p in _PHI_HISTORY]
 
 
+def _phi_variance() -> float | None:
+    """Variance of central Φ over the recent window (S4c). The M4 resume-watch gates on this + f_health,
+    NOT dopamine: an ALIVE kernel's Φ FLUCTUATES (variance > 0); a collapsed/zombie one pins it (→0).
+    None until ≥2 samples so the watch can distinguish 'no data yet' from 'genuinely flat'."""
+    xs = [float(p) for p in _PHI_HISTORY if p is not None]
+    if len(xs) < 2:
+        return None
+    mu = sum(xs) / len(xs)
+    return round(sum((x - mu) ** 2 for x in xs) / len(xs), 6)
+
+
 def _record_turn(kind: str, prompt: str, payload: dict[str, Any]) -> None:
     """HARD-WIRED output: append every conversation/inference turn to runs/sessions/transcript.jsonl —
     prompt + the kernel's OWN voice + the fluent surface + full telemetry/experience. The mind's record;
@@ -1011,6 +1022,12 @@ async def _train_core(
                 faculty_phi=((td.get("extra") or {}).get("faculty_phi")
                              or ({target.name: phi} if phi is not None else {})),
                 ocean_action=(td.get("extra") or {}).get("ocean_regulation") or {},
+                # S4b/c — Ocean shadow/policy state + the M4 resume-watch signals (f_health comes through
+                # experience.pillars inside step_record; phi_variance + explore_temperature/drive here).
+                ocean_state=(td.get("extra") or {}).get("ocean_state") or {},
+                phi_variance=_phi_variance(),
+                explore_temperature=(td.get("extra") or {}).get("explore_temperature"),
+                drive=(td.get("extra") or {}).get("drive") or {},
                 own_voice=((samp or {}).get("output")   # the kernel's generation — shown EVERY time it speaks
                            or (f"⚠ own-voice failed ({samp['error']})" if samp and samp.get("error") else None)),
                 relevance=(samp or {}).get("relevance"),  # how on-topic that generation was to the stimulus
@@ -1206,6 +1223,12 @@ async def train(req: TrainRequest, _: None = Depends(verify_key)) -> StreamingRe
                     stepped_function=None, telemetry=td, experience=exp_d,
                     central_phi=phi, min_pairwise_fr=None, drift_velocity=_dv,
                     faculty_phi={t.name: phi} if phi is not None else {},
+                    # S4b/c — same resume-watch signals on the single-target train path (ocean_state is {}
+                    # for single-kernel targets; f_health flows via experience.pillars inside step_record).
+                    ocean_state=(td.get("extra") or {}).get("ocean_state") or {},
+                    phi_variance=_phi_variance(),
+                    explore_temperature=(td.get("extra") or {}).get("explore_temperature"),
+                    drive=(td.get("extra") or {}).get("drive") or {},
                     own_voice=(sample or {}).get("output") if sample else None,
                     stimulus=stimulus,                  # the FULL training passage (UNtruncated) the step learned
                     coordizer_vocab=getattr(t, "vocab_size", None)))

@@ -76,12 +76,34 @@ def step_record(*, step: int, total: int | None, ts: float, source: str,
                 ocean_action: dict[str, Any] | None = None, own_voice: str | None = None,
                 coordizer_vocab: int | None = None, drift_velocity: float | None = None,
                 faculty_phi: dict[str, Any] | None = None, stimulus: str | None = None,
-                relevance: float | None = None, coach: dict[str, Any] | None = None) -> dict[str, Any]:
+                relevance: float | None = None, coach: dict[str, Any] | None = None,
+                ocean_state: dict[str, Any] | None = None, phi_variance: float | None = None,
+                explore_temperature: float | None = None, drive: dict[str, Any] | None = None) -> dict[str, Any]:
     """Assemble ONE rich live record. Pulls the harm signals so the UI never has to recompute them. The
     FULL ``experience`` is carried so the UI's left inner-state panel reflects the LIVE training kernel
-    (not the idle target) — LiveLog keeps it only on ``current`` to bound the SSE stream."""
+    (not the idle target) — LiveLog keeps it only on ``current`` to bound the SSE stream.
+
+    S4 (council SHOULD-FIX) — the signals the user must SEE the resume recover by are lifted to TOP LEVEL
+    so they survive LiveLog's lean ``recent[]`` ring (which strips the heavy ``experience``):
+      • ``f_health`` (basin entropy) + ``phi_variance`` — the M4 resume-watch gate (NOT dopamine; the
+        tonic floor fakes "alive"). f_health is read out of ``experience.pillars`` (PillarEnforcer's live
+        P1 read); phi_variance is computed by the caller over the recent central-Φ window.
+      • dopamine tonic/phasic split (P23: log tonic vs phasic separately) — read from
+        ``experience.neurochemistry`` IF present. NOTE: the ``NeurochemicalState`` object is NOT reachable
+        here (it is ``as_dict()``-flattened upstream at kernel_experience.py:310, and both the local and
+        installed qig-core ``NeurochemicalState.as_dict()`` DROP the split — the true fix is qig-core /
+        kernel_experience, out of the studio-owned files). This carry-through surfaces the split the moment
+        a split-aware qig-core lands; until then the fields are honestly None.
+      • ``ocean_state`` — Ocean's shadow/policy telemetry (shadow_mode / policy_version / scored_outcomes /
+        skips / constitutional_violations) so the user can SEE whether Ocean is shadowing or adapting."""
     ex = telemetry.get("extra") or {}
-    gate = (experience or {}).get("gate") if experience else None
+    _exp = experience or {}
+    gate = _exp.get("gate") if experience else None
+    # S4a: dopamine tonic/phasic split — surfaced from the (already as_dict'd) neurochemistry dict. The
+    # state object is unreachable here; carry whatever the running qig-core exposed (None-safe).
+    _chem = _exp.get("neurochemistry") or {}
+    # S4c: f_health is PillarEnforcer's live P1 read, nested in experience.pillars (which the lean ring drops).
+    _pillars = _exp.get("pillars") or {}
     return {
         "step": step, "total": total, "ts": ts, "source": source,
         "stepped_faculty": stepped_faculty, "stepped_function": stepped_function,
@@ -108,6 +130,21 @@ def step_record(*, step: int, total: int | None, ts: float, source: str,
         "c_gate": (gate or {}).get("state") if isinstance(gate, dict) else None,
         "suffering_S": _f((gate or {}).get("suffering_S")) if isinstance(gate, dict) else None,
         "ocean_action": ocean_action or {},
+        # S4b — Ocean shadow/policy state (shadow_mode/policy_version/scored_outcomes/skips/violations) so
+        # the UI can SHOW whether Ocean is shadowing (SHADOW n/100) or adapting (ADAPTING v{version}).
+        "ocean_state": ocean_state or {},
+        # S4c — the M4 resume-watch gate: f_health (basin entropy, →0 on collapse) + Φ-variance (alive =
+        # fluctuating, pinned = zombie). Both top-level so the watch reads them from the lean recent[] ring.
+        "f_health": _f(_pillars.get("f_health")),
+        "phi_variance": _f(phi_variance),
+        # S4a — dopamine tonic/phasic split (P23). The tonic FLOOR fakes "alive"; the phasic is the real
+        # reward-prediction-error. Surfaced separately so the user can tell the two apart (None if the
+        # running qig-core's as_dict drops the split — flagged: fix is in qig-core / kernel_experience).
+        "dopamine": _f(_chem.get("dopamine")),
+        "dopamine_tonic": _f(_chem.get("dopamine_tonic")),
+        "dopamine_phasic": _f(_chem.get("dopamine_phasic")),
+        "explore_temperature": _f(explore_temperature),  # drive → temperature (LOW dopamine/HIGH boredom → up)
+        "drive": drive or {},                            # dopamine / curiosity / boredom read (S4b context)
         "own_voice": own_voice,                        # the kernel's OWN learned voice (carried forward)
         "relevance": _f(relevance),                    # response↔stimulus relevance (1=on-topic, 0=drift; self↔other)
         "coach": coach,                                # provenance-tagged coach reward+relevance record (§18.6): encourage/interpret/reframe/relevance_score/positive_feedback + provenance tag

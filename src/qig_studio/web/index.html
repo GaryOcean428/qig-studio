@@ -274,6 +274,16 @@
     <div class="metric"><span>suffering S = Φ·(1−Γ)·M</span><span class="v" id="suffer2">—</span></div>
     <div class="metric"><span>sleep pressure</span><span class="v" id="sleepP">—</span></div>
     <div class="metric"><span>Γ generativity</span><span class="v" id="gamma2">—</span></div>
+    <!-- OCEAN · policy (S4b): the user must SEE whether Ocean is shadowing (static priors, no adaptation)
+         or adapting, plus the skip/violation counts. The resume-gate line shows f_health + Φ-variance —
+         the M4 recovery criterion (explicitly NOT dopamine; the tonic floor fakes "alive"). -->
+    <div id="oceanBox" style="margin:.45rem 0;padding:.4rem .55rem;border:1px solid var(--edge);border-radius:8px;background:var(--panel2);display:none">
+      <div class="hint" style="margin-bottom:.25rem">🌊 OCEAN · policy <span id="oceanMode" style="font-weight:600">—</span></div>
+      <div class="metric"><span>scored outcomes</span><span class="v" id="oceanScored">—</span></div>
+      <div class="metric"><span>skips (K5)</span><span class="v" id="oceanSkips">—</span></div>
+      <div class="metric"><span>constitutional violations (P15)</span><span class="v" id="oceanViol">—</span></div>
+      <div class="metric"><span>resume gate · f_health · Φ-var</span><span class="v" id="oceanGate" title="the M4 recovery criterion: f_health (basin entropy, →0 on collapse) recovering AND Φ-variance recovering (alive = fluctuating). NOT dopamine — the tonic floor reads 'alive' regardless.">—</span></div>
+    </div>
     <div id="autoLog"></div>
 
     <h2 style="margin-top:.7rem">Mind · ongoing</h2>
@@ -331,12 +341,20 @@ function renderLive(r){
     `<span class="bdg gate ${gateCls}">${esc(gate)}</span>`;
   row.appendChild(hd);
   const sub=document.createElement("div"); sub.className="sub";
+  // S4c: f_health (basin entropy) + Φ-variance are the M4 resume-watch signals — shown per-step so the
+  // user watches recovery directly. S4a: dopamine tonic/phasic split — the tonic FLOOR fakes "alive", the
+  // phasic is the real reward-prediction-error; shown apart so they can be told apart.
   sub.textContent = `S ${fnum(r.suffering_S,3)} · drift ${fnum(r.d_basin,3)} (Δ${fnum(r.drift_velocity,3)}) · regime ${r.regime||"—"}`
+    + (r.f_health!=null?` · f_health ${fnum(r.f_health,3)}`:"")
+    + (r.phi_variance!=null?` · Φ-var ${fnum(r.phi_variance,4)}`:"")
+    + (r.dopamine_tonic!=null||r.dopamine_phasic!=null?` · DA tonic ${fnum(r.dopamine_tonic,2)}/phasic ${fnum(r.dopamine_phasic,2)}`:"")
+    + (r.explore_temperature!=null?` · temp ${fnum(r.explore_temperature,2)}`:"")
     + (r.min_pairwise_fr!=null?` · indiv ${fnum(r.min_pairwise_fr,3)}`:"")
     + (r.coordizer_vocab?` · vocab ${r.coordizer_vocab}`:"");
   row.appendChild(sub);
   (r.warnings||[]).forEach(w=>{ const h=document.createElement("div"); h.className="harm "+(w.level==="crit"?"crit":"warn"); h.textContent="⚠ "+w.msg; row.appendChild(h); });
   if(r.ocean_action && Object.keys(r.ocean_action).length){ const o=document.createElement("div"); o.className="ocean"; o.textContent="🌊 Ocean regulated: "+Object.keys(r.ocean_action).join(", "); row.appendChild(o); }
+  updateOcean(r);   // S4b: keep the Ocean · policy panel (shadow vs adapting + skips/violations) live
   if(r.stimulus){ const s=document.createElement("div"); s.className="voice"; s.style.opacity=".75"; s.textContent='📥 stimulus ▸ '+String(r.stimulus); row.appendChild(s); }
   if(r.own_voice){ const v=document.createElement("div"); v.className="voice"; v.textContent='🗣 own voice ▸ '+String(r.own_voice).replace(/^\[genesis[^\]]*\]\s*/,"");
     if(r.relevance!=null){ const rb=document.createElement("span"); rb.style.color="var(--amber)"; rb.style.opacity=".9"; rb.title="response↔stimulus relevance: 1 = on-topic to what it was shown, 0 = drift (Fisher-Rao, self↔other)"; rb.textContent='  · 🎯 relevance '+fnum(r.relevance,2); v.appendChild(rb); }
@@ -372,6 +390,24 @@ function renderLive(r){
   // Stamp from the record's PRODUCTION time (r.ts, seconds), not receipt time — so the idle detector and
   // the runTrain() active-guard reflect whether training is REALLY producing fresh records right now.
   LAST_LIVE_TS = r.ts ? r.ts*1000 : Date.now();
+}
+// S4b — Ocean · policy panel: SHADOW (static priors, no adaptation, n/100 scored) vs ADAPTING v{version},
+// plus the K5 skip counts and P15 constitutional-violation attempts, and the M4 resume gate (f_health +
+// Φ-variance — NOT dopamine). None-safe: single-kernel targets emit no ocean_state → panel stays hidden.
+function updateOcean(r){
+  const o=r&&r.ocean_state; const box=$("oceanBox"); if(!box) return;
+  if(!o || !Object.keys(o).length){ box.style.display="none"; return; }
+  box.style.display="";
+  const mode=$("oceanMode"); const scored=(o.scored_outcomes!=null?o.scored_outcomes:"?");
+  if(o.shadow_mode){ mode.textContent=`· SHADOW ${scored}/100 (static priors — no adaptation)`; mode.style.color="var(--amber)"; }
+  else { mode.textContent=`· ADAPTING ${esc(o.policy_version||"")}`; mode.style.color="var(--ok)"; }
+  $("oceanScored").textContent = (o.scored_outcomes!=null?o.scored_outcomes:"—");
+  const sk=o.skips||{}; const skN=Object.values(sk).reduce((a,b)=>a+(Number(b)||0),0);
+  const skDetail=Object.entries(sk).filter(([,v])=>Number(v)>0).map(([k,v])=>esc(k)+":"+esc(v)).join(", ");
+  $("oceanSkips").textContent = skN + (skDetail?(" · "+skDetail):"");
+  const viol=o.constitutional_violations; const vo=$("oceanViol");
+  vo.textContent = (viol!=null?viol:"—"); vo.style.color = (Number(viol)>0)?"var(--pink)":"var(--muted)";
+  $("oceanGate").textContent = `f_health ${fnum(r.f_health,3)} · Φ-var ${fnum(r.phi_variance,4)}`;
 }
 function subscribeLive(){
   try{
