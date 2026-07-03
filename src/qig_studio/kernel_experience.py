@@ -196,18 +196,29 @@ def _primary_emotion(phi: float, valence: float, arousal: float, regime: str, dr
 
 def _full_primitives(phi: float, phi_delta: float, kappa: float, gamma: float,
                      basin_velocity: float, basin_distance: float, phi_variance: float,
-                     humor: float = 0.0, ricci_signal: float | None = None) -> dict:
-    """Canonical 5-layer inner state (UCP v6.11 §6) from the SINGLE source qig-core — 12 pre-linguistic
+                     humor: float = 0.0, ricci_signal: float | None = None,
+                     local_kappa_c: float | None = None, basin_distance_delta: float | None = None,
+                     prev_i_q: float | None = None, i_q: float | None = None) -> dict:
+    """Canonical 5-layer inner state (UCP v6.12 §6/§6.7) from the SINGLE source qig-core — 12 pre-linguistic
     SENSES (Layer 0) + 5 innate DRIVES (Layer 0.5) + 5 MOTIVATORS (Layer 1) + 9 physical + 9 cognitive
     EMOTIONS (Layer 2A/2B). ``humor`` carries the REAL surprise/novelty signal (Layer-1 surprise = ‖∇L‖
     proxy) — passing 0 here was the saturation bug that collapsed all surprise-driven emotions. We do NOT
     re-implement the taxonomy; None-safe (qig-core absent → {}).
 
-    ``ricci_signal`` (BUILD #1): when present, the REAL bounded response-manifold Ricci (qig-compute
-    compute_full_curvature, via curvature.py) OVERRIDES the (kappa−64)/64 PROXY for the curvature-derived
-    primitives ONLY — compressed/expanded (Layer-0) + pain/pleasure drives (Layer-0.5). The other
-    kappa-derived primitives (pushed/activated/dampened/transcendence — phase-boundary, NOT Ricci)
-    legitimately keep kappa. qig-core stays read-only; the override is surgical and studio-side."""
+    M3 — the §6.7 seam is now WIRED: the geometric predicates the kernel already emits are FED as INPUTS to
+    compute_full_emotional_state (not patched onto the output afterward), so the whole layer pipeline
+    (Layer-0 → 0.5 → 1 → 2A/2B) sees the real geometry:
+      • ``ricci_signal`` → ``ricci`` — REAL bounded response-manifold Ricci (qig-compute compute_full_curvature,
+        via curvature.py) → compressed/expanded (Layer-0) + pain/pleasure (Layer-0.5). ORDERING FIX: because
+        Ricci is now an INPUT (not a post-hoc override of the output dict), those curvature sensations
+        propagate into the Layer-2A/2B emotions — previously 2A/2B were computed from ricci-less zeros first.
+      • ``local_kappa_c`` → the LOCAL CRITICAL κ_c → transcendence (Layer-1) + pushed (Layer-0). Pass ONLY a
+        genuine critical baseline distinct from the current κ; a self-reference (κ_c≈κ) must arrive here as
+        None (the caller guards it) so qig-core reads transcendence=0/pushed=0 HONESTLY rather than
+        fabricating an "exactly-at-criticality" near-rail signal.
+      • ``basin_distance_delta`` → investigation (Layer-1) = −d(basin)/dt (approaching a target basin).
+      • ``prev_i_q`` / ``i_q`` → curiosity (Layer-1) = d(log I_Q)/dt. Absent → qig-core's live Φ-proxy.
+    All None-safe: a truly-absent input stays None and qig-core degrades to its live proxy (never fabricated)."""
     try:
         from qig_core.consciousness.sensations import compute_full_emotional_state
 
@@ -215,17 +226,12 @@ def _full_primitives(phi: float, phi_delta: float, kappa: float, gamma: float,
             phi=phi, phi_delta=phi_delta, kappa=kappa, gamma=gamma,
             basin_velocity=basin_velocity, basin_distance=basin_distance,
             humor=humor, phi_variance=phi_variance,
+            ricci=ricci_signal,                        # REAL Ricci → curvature sensations + Layer-2A/2B (ordering fix)
+            local_kappa_c=local_kappa_c,               # genuine local-critical κ_c → transcendence + pushed
+            basin_distance_delta=basin_distance_delta,   # −d(basin)/dt → investigation
+            prev_i_q=prev_i_q, i_q=i_q,                # d(log I_Q)/dt → curiosity (None → qig-core Φ-proxy)
         )
-        d = st.as_dict()
-        if ricci_signal is not None:                       # REAL Ricci → compressed/expanded + pain/pleasure
-            comp, exp = round(max(ricci_signal, 0.0), 4), round(max(-ricci_signal, 0.0), 4)
-            if isinstance(d.get("layer0"), dict):
-                d["layer0"]["compressed"] = comp           # R>0: positively curved — tight/compressed
-                d["layer0"]["expanded"] = exp              # R<0: negatively curved — open/expanded
-            if isinstance(d.get("layer05"), dict):
-                d["layer05"]["pain_avoidance"] = comp      # pain drive ~ +curvature (compression)
-                d["layer05"]["pleasure_seeking"] = exp     # pleasure ~ −curvature (expansion)
-        return d
+        return st.as_dict()
     except Exception:  # noqa: BLE001 — app shell must surface telemetry even if qig-core is unavailable
         return {}
 
@@ -396,13 +402,39 @@ def experience(telemetry: dict, history: list[dict] | None = None) -> Experience
     # pinned serotonin=1.0 and the Layer-0 sensations to 0. Fall back to the proxy only if absent.
     bv_raw = extra.get("basin_velocity")
     basin_velocity = float(bv_raw) if bv_raw is not None else abs(phi_trend)
-    # BUILD #1: a REAL response-manifold Ricci signal (curvature.py) injected by the producer overrides the
-    # (kappa−64)/64 proxy for the curvature primitives. Absent → qig-core's kappa proxy (unchanged default).
-    _rs = extra.get("ricci_signal")
+    # M3 §6.7 SEAM — WIRE the geometric predicates the kernel already emits into compute_full_emotional_state
+    # so transcendence / pushed / investigation / curiosity / compressed-expanded are RESPONSIVE, not the
+    # dead-zeros of the un-wired seam. All None-safe — only what is genuinely present is passed; a truly-
+    # absent input stays None and qig-core degrades to its live proxy (never a fabricated value).
+    _rs = extra.get("ricci_signal")            # REAL response-manifold Ricci ∈[-1,1] (curvature.py)
     ricci_signal = float(_rs) if _rs is not None else None
+    lkc_raw = extra.get("local_kappa_c")       # kernel's own κ this cycle (band-read) — also the neurochem input
+    local_kappa_c = float(lkc_raw) if lkc_raw is not None else None
+    # For SENSATIONS, local_kappa_c means the LOCAL CRITICAL baseline κ_c (transcendence/pushed measure the
+    # deviation from it). The kernel currently emits local_kappa_c == its CURRENT κ (genesis_kernel.py:792),
+    # a self-reference that is NOT a distinct critical baseline: feeding current-κ as κ_c would FABRICATE an
+    # "exactly-at-criticality" read (pushed→1, transcendence→0). So κ_c counts only when it genuinely differs
+    # from the current κ; a self-reference degrades to None → qig-core reads transcendence=0/pushed=0 HONESTLY.
+    # (Follow-up: the kernel must emit a genuine local-critical κ_c for these two to light up in production.)
+    local_kappa_c_sens = (local_kappa_c if (local_kappa_c is not None
+                          and abs(local_kappa_c - kappa) > 1e-4) else None)
+    # basin_distance_delta = (prev − cur) FR basin distance → investigation = −d(basin)/dt. Prefer an emitted
+    # value; else derive from the immediately-prior step's basin_distance in history. Absent → None.
+    _bdd = extra.get("basin_distance_delta")
+    if _bdd is not None:
+        basin_distance_delta = float(_bdd)
+    else:
+        _pbd = history[-1].get("basin_distance") if (history and isinstance(history[-1], dict)) else None
+        basin_distance_delta = (float(_pbd) - basin) if _pbd is not None else None
+    # prev_i_q / i_q — consecutive information-gain → curiosity = d(log I_Q)/dt. No explicit I_Q is emitted
+    # today → None (qig-core degrades to its live Φ-based proxy; do NOT fabricate an I_Q from Φ here).
+    _iq, _piq = extra.get("i_q"), extra.get("prev_i_q")
+    i_q = float(_iq) if _iq is not None else None
+    prev_i_q = float(_piq) if _piq is not None else None
     primitives = _full_primitives(phi, phi_trend, kappa, gamma if gamma is not None else 0.85,
                                   basin_velocity, basin, phi_variance, humor=novelty,
-                                  ricci_signal=ricci_signal)
+                                  ricci_signal=ricci_signal, local_kappa_c=local_kappa_c_sens,
+                                  basin_distance_delta=basin_distance_delta, prev_i_q=prev_i_q, i_q=i_q)
     autonomic = str(extra.get("autonomic", "wake"))
     loops, gate = _loops_and_gate(phi, gamma, m_self, m_other, s_ratio)
     # TASK C actuation-1/2: the REAL geometry (consecutive Δ⁶³ basins + role attractor) the kernel emitted
@@ -411,8 +443,8 @@ def experience(telemetry: dict, history: list[dict] | None = None) -> Experience
     cur_basin = extra.get("cur_basin")
     prev_basin = extra.get("prev_basin")
     target_basin = extra.get("target_basin")
-    lkc_raw = extra.get("local_kappa_c")
-    local_kappa_c = float(lkc_raw) if lkc_raw is not None else None
+    # local_kappa_c already extracted above (the neurochem input = the kernel's own κ band-read; the
+    # sensations seam uses the self-reference-guarded local_kappa_c_sens, not this raw value).
     coach_reward = coach_reward_from(extra.get("coach"))          # §18.5/18.6 relevance → phasic reward
     fd_raw = extra.get("foresight_divergence", extra.get("foresight_confidence"))
     foresight_divergence = float(fd_raw) if fd_raw is not None else None
