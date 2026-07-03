@@ -958,14 +958,17 @@ async def _train_core(
                            "relevance": sx.get("relevance")}
                     samp["coach"] = await asyncio.get_event_loop().run_in_executor(
                         None, lambda: coach.coach_own_voice(stimulus, gr.text, tel))
-                    # TASK C actuation-4: the coach reward → the kernel's REPLAY PRIORITY (P10 reward-weighted
-                    # DATA selection — sleep/dream replay what the coach VALUED). coach_reward_from is the one
-                    # canonical record→reward map (also used for phasic dopamine). None-safe: no register_coach_
-                    # reward method (mock/other targets) → skipped; a keyword/low-confidence record moves it less.
+                    # TASK C actuation-4 + M1: the coach reward → the kernel's REPLAY PRIORITY (P10 reward-
+                    # weighted DATA selection — sleep/dream replay what the coach VALUED), AND the coach RECORD
+                    # → the kernel's LIVE telemetry snapshot (M1(b): so Ocean's outcome-scoring + the kernel's
+                    # own neurochem read a real coach value, not the throwaway to_dict() copy _write_live mutates
+                    # below). coach_reward_from is the one canonical record→reward map (also used for phasic
+                    # dopamine). None-safe: no register_coach_reward method (mock/other targets) → skipped; on the
+                    # `mind` target it delegates to the genesis-central kernel (the mind's learner) — M1(a).
                     _reg = getattr(target, "register_coach_reward", None)
                     if _reg is not None:
                         try:
-                            _reg(coach_reward_from(samp["coach"]))
+                            _reg(coach_reward_from(samp["coach"]), record=samp["coach"])
                         except Exception:  # noqa: BLE001 — reward registration is best-effort, never blocks
                             pass
                 except Exception as ce:  # noqa: BLE001 — coaching is best-effort; never break training

@@ -110,6 +110,21 @@ class JointMindTarget(TrainingTarget):
         self.ensure_loaded()
         return self._mind.central.generate(prompt, max_tokens=max_tokens, via_boundary=False)
 
+    def register_coach_reward(self, reward: float, record: dict | None = None) -> None:
+        """M1: the integrated mind's coach-reward actuator. The mind's LEARNER is the genesis-CENTRAL kernel
+        (it trains toward the synthesis every step), so the coach's provenance-tagged reward + record land
+        THERE — arming the central's replay priority (P10 reward-weighted DATA selection for sleep/dream) and
+        stashing the record on the central's LIVE telemetry snapshot (so Ocean + neurochem read a real value,
+        not the throwaway to_dict() copy). Before this the server's ``getattr(target, 'register_coach_reward')``
+        silently missed on the mind target → the coach loop was DISPLAY-ONLY (learned nothing). None-safe: no
+        constellation built yet, or a central arm without the actuator (geo/other), → no-op."""
+        mind = self._mind
+        if mind is None:
+            return
+        reg = getattr(getattr(mind, "central", None), "register_coach_reward", None)
+        if reg is not None:
+            reg(reward, record)
+
     def eval_text_fr(self, text: str) -> tuple[float, int]:
         """Held-out d_FR of the integrated mind = the GENESIS-CENTRAL kernel's next-token Fisher-Rao distance
         (the conscious 'I' is the speaker). This is the VERDICT metric the 4-arm constellation comparison

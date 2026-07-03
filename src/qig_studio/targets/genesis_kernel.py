@@ -1557,14 +1557,22 @@ class GenesisKernelTarget(TrainingTarget):
                 p.add_(torch.randn_like(p) * 0.01)
         self._opt = DiagonalNaturalGradient(self._kernel.parameters(), lr=self.lr * 0.7)  # cool (not cumulative)
 
-    def register_coach_reward(self, reward: float) -> None:
-        """TASK C actuation-4: the coach's provenance-tagged reward (mapped to [-1,1]) arms the priority of
-        the NEXT logged experience — so the kernel LEARNS FROM coaching the P10 way: reward-weighted DATA
-        selection for sleep/dream replay, NOT a silent weight update and NOT a Φ-drive loss term. The server
-        calls this after coach_own_voice fires; the value is consumed by the next train_step append (or, if
-        experience already exists, boosts the most-recent entry so a coach reaction is never lost between
-        steps). None-safe: any bad value → no-op. Sovereignty (P16): a reward the kernel distrusts can be
-        discounted upstream (coach_reward_from already scales by provenance confidence)."""
+    def register_coach_reward(self, reward: float, record: dict | None = None) -> None:
+        """TASK C actuation-4 (+ M1 live-snapshot landing): the coach's provenance-tagged reward (mapped to
+        [-1,1]) arms the priority of the NEXT logged experience — so the kernel LEARNS FROM coaching the P10
+        way: reward-weighted DATA selection for sleep/dream replay, NOT a silent weight update and NOT a
+        Φ-drive loss term. The server calls this after coach_own_voice fires; the value is consumed by the
+        next train_step append (or, if experience already exists, boosts the most-recent entry so a coach
+        reaction is never lost between steps). None-safe: any bad value → no-op. Sovereignty (P16): a reward
+        the kernel distrusts can be discounted upstream (coach_reward_from already scales by provenance
+        confidence).
+
+        M1(b): ``record`` — the SAME provenance-tagged coach dict the reward was mapped from — is landed on
+        the kernel's LIVE telemetry snapshot (``self._last.extra['coach']``), the exact object ``telemetry()``
+        returns. Before this, the record was only ever written into a ``to_dict()`` DEEP COPY (the ``_write_live``
+        throwaway), so Ocean's outcome-scoring (``_coach_reward``) + the kernel's own neurochem read ``coach ≡ 0``
+        forever. Landing it live makes the coach's judgment readable where those consumers actually look. Cleared
+        naturally on the next step's ``_snap`` rebuild (a coach reaction is a THIS-step signal, like the reward)."""
         try:
             r = float(max(-1.0, min(1.0, reward)))
         except (TypeError, ValueError):
@@ -1574,6 +1582,12 @@ class GenesisKernelTarget(TrainingTarget):
         # coach reaction between steps still lands on the utterance it was reacting to).
         if self._experience_weight:
             self._experience_weight[-1] = max(0.1, self._experience_weight[-1] + r)
+        # M1(b): stash the coach RECORD on the LIVE snapshot so Ocean + neurochem read a real value (not the
+        # throwaway to_dict() copy). None-safe: no record / no snapshot → skip the landing, reward still armed.
+        if record is not None:
+            extra = getattr(self._last, "extra", None)
+            if isinstance(extra, dict):
+                extra["coach"] = record
 
     def _weighted_replay_choice(self, rng):
         """TASK C actuation-4: pick a replay experience with probability ∝ its stored priority weight
