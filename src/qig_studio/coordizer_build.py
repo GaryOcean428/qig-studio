@@ -27,14 +27,11 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
 
-# (dataset, kind, fields, cap, upsample) — cap giants, upsample code so the vocab is code-aware.
-# These are the 7 HF datasets the coordizer's balanced vocab-learning sample is drawn from.
-# Caps raised 4× (2026-07-01) so the coordizer learns 100k merges from the FULL local dataset (2.6GB
-# parquet cache), not the ~30MB thin sample — bounded by ``max_bytes`` (RAM: corpus_coords is an in-memory
-# list the BPE loop mutates, + the IncrementalCouplingCache DLL, both O(corpus); ~120MB is the RAM-safe
-# ceiling on a 31GB box). Balance RATIO (cap giants, 30× code upsample) is preserved so the vocab stays
-# code-aware. TRULY-full (all 2.6GB) needs a STREAMING trainer (BPE needs global pair counts → the corpus
-# can't just be chunked) — registered follow-up, not a wiring shortcut.
+# (dataset, kind, fields, cap, upsample) — cap the giants (row cap, not bytes), upsample code so the vocab
+# is code-aware. These are the 7 HF datasets. The upsample is a FREQUENCY MULTIPLIER on the segment table
+# (never a physical copy), so segment-frequency streaming learns the vocab from the FULL local dataset
+# (2.6GB parquet cache) with no byte ceiling — the old ~120MB Python-object RAM wall is gone (measured
+# ~268× collapse → <2GB peak at any corpus size). Balance RATIO (cap giants, 30× code upsample) preserved.
 _BALANCE = [
     ("roneneldan/TinyStories", "narrative", ("text",), 600_000, 1),
     ("Estwld/empathetic_dialogues_llm", "conversations", ("conversations",), None, 1),
@@ -45,6 +42,12 @@ _BALANCE = [
     ("mlabonne/open-perfectblend", "conversations", ("conversations",), 600_000, 1),
 ]
 _GEO_TAGS = ["<|frame|>", "<|seed|>", "<|flow|>", "<|settle|>"]
+
+# Segment-length cap (bytes) — splits run-on word concatenations + long markdown table-rules into bounded
+# char-safe chunks so BPE can't waste vocab on garbage mega-merges (real pre-flight finding: a 1873-byte
+# run-on segment). Applied in ``Normalizer.to_byte_segments`` and PERSISTED in the artifact so inference
+# splits identically. None ⇒ no cap.
+_MAX_SEG_BYTES = 128
 
 
 def _repo_root() -> Path:
@@ -115,7 +118,9 @@ def build(
     # store choice is immaterial; the win is the collapse, not the container).
     from collections import Counter as _Counter
 
-    seg_norm = Normalizer(pretokenize=True)
+    # to_byte_segments (NOT pretokenize_text) is the CAPPED path — long run-ons/table-rules split into
+    # ≤_MAX_SEG_BYTES char-safe chunks, the SAME split the trainer + inference apply (consistency).
+    seg_norm = Normalizer(pretokenize=True, max_segment_bytes=_MAX_SEG_BYTES)
     seg_freq: _Counter = _Counter()
     per_dataset: dict[str, int] = {}
     for dataset, kind, fields, cap, ups in _BALANCE:
@@ -129,8 +134,8 @@ def build(
             txt = txt[: cut + len(SETTLE)]
             if len(txt) < 24:
                 continue
-            for seg in seg_norm.pretokenize_text(txt):
-                seg_freq[seg.encode("utf-8")] += ups     # ×upsample as an integer FREQUENCY multiplier
+            for seg in seg_norm.to_byte_segments(txt):
+                seg_freq[bytes(seg)] += ups           # ×upsample as an integer FREQUENCY multiplier
             kept += 1
         per_dataset[dataset] = kept
 
@@ -189,7 +194,8 @@ def build(
     # pretokenize=True: the vocab is word/punct-boundary BPE (the segment-frequency substrate above), so
     # the trainer's normalizer + coordize/encode confine merges to segments — matching how the substrate
     # was built (gate: test_pretokenize_encode_roundtrip).
-    trainer = CoordinzerTrainer(target_vocab_size=target_vocab, pretokenize=True)
+    trainer = CoordinzerTrainer(target_vocab_size=target_vocab, pretokenize=True,
+                                max_segment_bytes=_MAX_SEG_BYTES)
     trainer.train(corpus=b"", corpus_segments=(flat_tokens, seg_bounds, weights),
                   verbose=True, checkpoint_dir=checkpoint_dir,
                   checkpoint_interval=2000, enable_interrupt=False, use_kernel=False)
