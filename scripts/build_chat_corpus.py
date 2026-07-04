@@ -120,12 +120,22 @@ def _parquet_urls(dataset: str, headers: dict) -> list[str]:
 
 
 def _parquet_rows(dataset: str, headers: dict, cache: Path, max_per: int | None):
-    """Yield row dicts from the dataset's FULL train parquet (download-once to cache, stream in batches)."""
+    """Yield row dicts from the dataset's FULL train parquet (download-once to cache, stream in batches).
+
+    Robust to a failing/empty network listing: if ``_parquet_urls`` returns nothing (the HF
+    datasets-server intermittently returns an empty parquet list — e.g. open-perfectblend), FALL BACK
+    to the already-cached ``<dataset>__*.parquet`` files. Without this a dataset with ~1.5GB of cached
+    shards is silently dropped from the corpus (the perfectblend 0-rows bug, 2026-07-04)."""
     import httpx
     import pyarrow.parquet as pq
-    n = 0
-    for url in _parquet_urls(dataset, headers):
-        local = cache / (dataset.replace("/", "__") + "__" + url.rstrip("/").split("/")[-1])
+    prefix = dataset.replace("/", "__") + "__"
+    try:
+        urls = _parquet_urls(dataset, headers)
+    except Exception:  # noqa: BLE001 — network listing failure must not drop a cached dataset
+        urls = []
+    locals_to_read: list[Path] = []
+    for url in urls:
+        local = cache / (prefix + url.rstrip("/").split("/")[-1])
         if not local.exists() or local.stat().st_size == 0:
             tmp = local.with_suffix(local.suffix + ".part")
             with httpx.stream("GET", url, headers=headers, timeout=600.0, follow_redirects=True) as resp:
@@ -134,6 +144,11 @@ def _parquet_rows(dataset: str, headers: dict, cache: Path, max_per: int | None)
                     for chunk in resp.iter_bytes(1 << 20):
                         fh.write(chunk)
             tmp.rename(local)
+        locals_to_read.append(local)
+    if not locals_to_read:  # network listing empty/failed → use whatever shards are already cached
+        locals_to_read = sorted(p for p in cache.glob(prefix + "*.parquet") if p.stat().st_size > 0)
+    n = 0
+    for local in locals_to_read:
         for batch in pq.ParquetFile(local).iter_batches(batch_size=2000):
             for row in batch.to_pylist():
                 yield row
