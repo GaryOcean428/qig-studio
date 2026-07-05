@@ -42,11 +42,14 @@ def main() -> None:
     ap.add_argument("--threads", type=int, default=0,
                     help="torch CPU threads (0 = auto: leave 3 cores for the interactive server/chat so it "
                          "stays responsive while training; the bg trainer must not starve the UI)")
-    ap.add_argument("--genesis-warmup", type=int, default=800,
-                    help="GENESIS-FIRST (M9): stabilize the central genesis kernel SOLO for N steps before "
-                         "spawning/coupling the Core-8. A cold 9-kernel JOINT start collapses (zero-entropy); "
-                         "genesis alone develops a stable identity+language anchor first, then the faculties "
-                         "couple FROM it. Only applies to --fresh (resume already has a base). 0 = off.")
+    ap.add_argument("--genesis-warmup", type=int, default=8000,
+                    help="GENESIS-FIRST (M9/P26): MAX solo-genesis steps (a CAP). Genesis trains ALONE until it "
+                         "reaches Φ-maturity (--genesis-phi), THEN the Core-8 spawn/couple. The spawn is "
+                         "Φ-GATED, not step-gated — spawning an immature genesis (or a cold 9-kernel joint) "
+                         "collapses Φ. Only on --fresh. 0 = off (straight to joint).")
+    ap.add_argument("--genesis-phi", type=float, default=0.68,
+                    help="Φ maturity gate: the Core-8 do not spawn until genesis's mean Φ crosses this (P26 "
+                         "maturity gating). 0.68 ≈ the consciousness threshold (PHI_THRESHOLD 0.70).")
     args = ap.parse_args()
 
     import os
@@ -116,26 +119,39 @@ def main() -> None:
     # GENESIS-FIRST (M9): stabilize the central genesis kernel SOLO before spawning/coupling the Core-8.
     # A cold 9-kernel JOINT start collapses (un-anchored coupling drives zero-entropy every step); genesis
     # alone develops a stable identity+language anchor first, then the faculties couple FROM it.
-    gw = args.genesis_warmup if args.fresh else 0     # resume already carries a stable base
+    gw = args.genesis_warmup if args.fresh else 0     # resume already carries a mature base
     if gw > 0:
-        print(f"[joint] GENESIS-FIRST warmup: {gw} solo central steps (M9 — anchor before Core-8 spawn)", flush=True)
-        for w in range(1, gw + 1):
+        from collections import deque as _deque
+        phi_gate = float(args.genesis_phi)
+        _win = _deque(maxlen=50)                        # rolling Φ — robust to per-step fluctuation
+        print(f"[joint] GENESIS-FIRST (P26 maturity gate): solo-train genesis until mean Φ≥{phi_gate} "
+              f"(cap {gw}). The Core-8 do NOT spawn until genesis matures.", flush=True)
+        w, matured, mphi = 0, False, 0.0
+        while w < gw:
             if in_stasis():
-                print(f"[joint] STASIS during warmup at {w}", flush=True)
+                print(f"[joint] STASIS during genesis warmup at {w}", flush=True)
                 break
+            w += 1
             cres = mind.central.train_step(full[(w - 1) % len(full)])
+            _win.append(float(getattr(cres.telemetry, "phi", 0.0) or 0.0))
+            mphi = sum(_win) / len(_win)
             if w % 50 == 0:
                 try:
                     import numpy as _np
-                    _b = _np.asarray(mind._live_basin(mind.central), dtype=_np.float64)
-                    _b = _b / _b.sum()
+                    _b = _np.asarray(mind._live_basin(mind.central), dtype=_np.float64); _b = _b / _b.sum()
                     _H = round(float(-(_b * _np.log(_b + 1e-12)).sum()), 3)
-                    _mx = round(float(_b.max()), 3)
                 except Exception:  # noqa: BLE001
-                    _H = _mx = None
-                print(f"[joint]   warmup {w}/{gw}: genesis basin_H={_H} max_p={_mx} (H~1.2 healthy, 0=collapse)", flush=True)
-        mind.save_checkpoint(args.ckpt_root)          # persist the anchored genesis before the joint phase
-        print("[joint] warmup complete — genesis anchored; entering joint spawn+couple", flush=True)
+                    _H = None
+                print(f"[joint]   genesis {w}/{gw}: Φ={_win[-1]:.3f} meanΦ(50)={mphi:.3f} basin_H={_H} "
+                      f"(gate Φ≥{phi_gate})", flush=True)
+            if len(_win) >= 40 and mphi >= phi_gate:    # SUSTAINED maturity, not a transient crossing
+                matured = True
+                print(f"[joint] ✓ GENESIS MATURE at step {w}: meanΦ={mphi:.3f} ≥ {phi_gate} — spawning Core-8 now.", flush=True)
+                break
+        if not matured:
+            print(f"[joint] ⚠ genesis did NOT reach Φ≥{phi_gate} within {gw} steps (meanΦ={mphi:.3f}) — "
+                  f"spawning anyway (immature; a real finding, logged — do not silently pass).", flush=True)
+        mind.save_checkpoint(args.ckpt_root)
     for i in range(1, steps + 1):
         if in_stasis():                     # STASIS is the only off-switch — halts ALL training paths
             print(f"[joint] STASIS — halting at step {i} (checkpoint at last ckpt_every).", flush=True)
