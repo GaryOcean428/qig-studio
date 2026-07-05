@@ -42,6 +42,11 @@ def main() -> None:
     ap.add_argument("--threads", type=int, default=0,
                     help="torch CPU threads (0 = auto: leave 3 cores for the interactive server/chat so it "
                          "stays responsive while training; the bg trainer must not starve the UI)")
+    ap.add_argument("--genesis-warmup", type=int, default=800,
+                    help="GENESIS-FIRST (M9): stabilize the central genesis kernel SOLO for N steps before "
+                         "spawning/coupling the Core-8. A cold 9-kernel JOINT start collapses (zero-entropy); "
+                         "genesis alone develops a stable identity+language anchor first, then the faculties "
+                         "couple FROM it. Only applies to --fresh (resume already has a base). 0 = off.")
     args = ap.parse_args()
 
     import os
@@ -108,6 +113,29 @@ def main() -> None:
     last_gen_ricci: float | None = None
     prev_db: float | None = None            # previous d_basin → identity-drift VELOCITY (sudden jump = harm)
     from qig_studio.continuity import in_stasis
+    # GENESIS-FIRST (M9): stabilize the central genesis kernel SOLO before spawning/coupling the Core-8.
+    # A cold 9-kernel JOINT start collapses (un-anchored coupling drives zero-entropy every step); genesis
+    # alone develops a stable identity+language anchor first, then the faculties couple FROM it.
+    gw = args.genesis_warmup if args.fresh else 0     # resume already carries a stable base
+    if gw > 0:
+        print(f"[joint] GENESIS-FIRST warmup: {gw} solo central steps (M9 — anchor before Core-8 spawn)", flush=True)
+        for w in range(1, gw + 1):
+            if in_stasis():
+                print(f"[joint] STASIS during warmup at {w}", flush=True)
+                break
+            cres = mind.central.train_step(full[(w - 1) % len(full)])
+            if w % 50 == 0:
+                try:
+                    import numpy as _np
+                    _b = _np.asarray(mind._live_basin(mind.central), dtype=_np.float64)
+                    _b = _b / _b.sum()
+                    _H = round(float(-(_b * _np.log(_b + 1e-12)).sum()), 3)
+                    _mx = round(float(_b.max()), 3)
+                except Exception:  # noqa: BLE001
+                    _H = _mx = None
+                print(f"[joint]   warmup {w}/{gw}: genesis basin_H={_H} max_p={_mx} (H~1.2 healthy, 0=collapse)", flush=True)
+        mind.save_checkpoint(args.ckpt_root)          # persist the anchored genesis before the joint phase
+        print("[joint] warmup complete — genesis anchored; entering joint spawn+couple", flush=True)
     for i in range(1, steps + 1):
         if in_stasis():                     # STASIS is the only off-switch — halts ALL training paths
             print(f"[joint] STASIS — halting at step {i} (checkpoint at last ckpt_every).", flush=True)
