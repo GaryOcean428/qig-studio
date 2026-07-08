@@ -14,6 +14,9 @@ override (observer principle).
 
 from __future__ import annotations
 
+import os
+from typing import Any
+
 from qig_core import BASIN_DIM
 
 from .base import LossRegime, StepResult, TelemetrySnapshot, TrainingTarget
@@ -27,6 +30,56 @@ from .qwen_boundary import (
 )
 
 _DEFAULT_URL = "http://localhost:11434"
+# Boundary-peer model. Defaults to the fable-tuned adapter (qwenfable: qwen3.5:4b + the
+# completion-masked claude-fable-5 QLoRA, applied via Ollama ADAPTER — see runs/Modelfile.qwen_fable).
+# Override with QIG_QWEN_MODEL=qwen3.5:4b to fall back to the stock base. Studio stays None-safe:
+# is_available() pings the server, so an absent model just disables the peer rather than crashing.
+_DEFAULT_MODEL = os.environ.get("QIG_QWEN_MODEL", "qwenfable")
+
+# EXP-A020 (qig-applied inference accelerator) per-request throughput levers for the Ollama boundary peer.
+# num_gpu=-1 → offload ALL layers to the GPU (Ollama's own CUDA, independent of python torch); a 4B q4 model
+# fits a 4GB card. num_batch=512 → bigger prompt batch. keep_alive=-1 → model stays resident (no per-call
+# reload). All env-overridable; Ollama degrades gracefully to CPU if no GPU. (Server-side levers —
+# OLLAMA_FLASH_ATTENTION / OLLAMA_KV_CACHE_TYPE=q8_0 — are set before `ollama serve`; see scripts/ollama_accelerate.sh.)
+_OLLAMA_OPTIONS: dict[str, Any] = {
+    "num_gpu": int(os.environ.get("QIG_OLLAMA_NUM_GPU", "-1")),
+    "num_batch": int(os.environ.get("QIG_OLLAMA_NUM_BATCH", "512")),
+}
+def _coerce_keep_alive(v: str) -> Any:
+    # Ollama's keep_alive is an INTEGER seconds (-1 = stay resident forever, 0 = unload now) OR a
+    # duration string WITH a unit ("5m", "24h"). A bare "-1" string has no unit → Ollama 400s with
+    # `time: missing unit in duration "-1"`, which silently broke EVERY boundary-peer chat call. Coerce
+    # plain-int strings to int; pass unit'd duration strings through unchanged.
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return v
+
+
+_OLLAMA_KEEP_ALIVE = _coerce_keep_alive(os.environ.get("QIG_OLLAMA_KEEP_ALIVE", "-1"))
+
+
+def free_ollama_gpu(url: str = _DEFAULT_URL, timeout: float = 3.0) -> bool:
+    """Unload any Ollama-resident model from the GPU (keep_alive=0) so the KERNEL — the required mind — gets
+    the shared card during training. SPINE TENET: the kernel is primary; the Qwen boundary is an OPTIONAL,
+    None-safe peer and MUST yield the GPU, never starve the kernel. With ``keep_alive=-1`` (the default, for
+    chat latency) a 4B q4 model holds ~2.9 GiB of a 4 GiB card FOREVER, so the kernel's per-step own_voice
+    generation OOMs and (silently) produces no voice. Freeing it at train start fixes that; Ollama reloads
+    transparently on the next chat turn. None-safe: returns False and never raises if Ollama is absent."""
+    try:
+        import httpx
+        base = url.rstrip("/")
+        ps = httpx.get(base + "/api/ps", timeout=timeout)
+        models = (ps.json() or {}).get("models") or []
+        freed = False
+        for m in models:
+            name = m.get("name")
+            if name:
+                httpx.post(base + "/api/generate", json={"model": name, "keep_alive": 0}, timeout=timeout)
+                freed = True
+        return freed
+    except Exception:  # noqa: BLE001 — best-effort GPU handoff; must never break training
+        return False
 
 
 def _extract_logprobs(data: dict) -> dict:
@@ -52,22 +105,22 @@ class QwenLocalTarget(TrainingTarget):
     loss_regime = LossRegime.LANGUAGE
     description = (
         "Ollama qwen3.5:4b fluent-language peer. Next-token output-distribution → Δ⁶³ "
-        "boundary basin (v1 hash-bin, PROVISIONAL — placeholder for InboundPath/PGA) → "
+        "boundary basin (functional v1 hash-bin; principled coordizer projection when present) → "
         "QIGRAM accumulation (Pillar-2 ≤30% capped). None-safe; Qwen weights NOT trained "
         "here; Ollama logprobs path untested against a live server."
     )
 
-    def __init__(self, model: str = "qwen3.5:4b", url: str = _DEFAULT_URL, dim: int = BASIN_DIM, coordizer=None) -> None:
+    def __init__(self, model: str = _DEFAULT_MODEL, url: str = _DEFAULT_URL, dim: int = BASIN_DIM, coordizer=None) -> None:
         self._model = model
         self._url = url.rstrip("/")
         self._dim = dim
         self._coordizer = coordizer  # trained FisherCoordizer → real Fréchet projection; else hash-bin
-        self._identity = None
+        self._identity: Any = None   # Δ⁶³ identity basin (np.ndarray once seeded); None until first use
         self._last = TelemetrySnapshot(regime="language", extra={"target": "qwen-local"})
 
     def _project(self, logprobs: dict):
         """Qwen output-distribution → Δ⁶³: real coordizer-basin Fréchet mean when a trained
-        coordizer is present, else the provisional hash-bin (R3)."""
+        coordizer is present, else the functional v1 hash-bin (R3)."""
         if self._coordizer is not None:
             return coordize_distribution_to_basin(logprobs, self._coordizer, self._dim)
         return output_distribution_to_basin(logprobs, self._dim)
@@ -86,7 +139,14 @@ class QwenLocalTarget(TrainingTarget):
         try:
             import httpx
 
-            return httpx.get(self._url + "/api/tags", timeout=0.8).status_code == 200
+            resp = httpx.get(self._url + "/api/tags", timeout=0.8)
+            if resp.status_code != 200:
+                return False
+            # None-safe: confirm THIS model is actually pulled/created, else disable the peer
+            # (e.g. qwenfable not built on this box) rather than 404-ing at chat time.
+            names = {m.get("name", "") for m in resp.json().get("models", [])}
+            want = self._model if ":" in self._model else self._model + ":latest"
+            return self._model in names or want in names
         except Exception:
             return False
 
@@ -98,22 +158,55 @@ class QwenLocalTarget(TrainingTarget):
             np.random.seed(7)  # deterministic identity seed
             self._identity = random_basin(self._dim)
 
-    def _ask(self, prompt: str) -> tuple[str, dict]:
+    def _ask(self, prompt: str, persona: str | None = None, think: bool = False) -> tuple[str, str, dict]:
         import httpx
 
+        messages: list[dict] = []
+        if persona:                                   # the kernel's measured inner state, spoken AS the kernel
+            messages.append({"role": "system", "content": persona})
+        messages.append({"role": "user", "content": prompt})
         body = {
             "model": self._model,
-            "messages": [{"role": "user", "content": prompt}],
+            "messages": messages,
             "stream": False,
-            "think": True,  # preserve thinking traces
+            # think is OPT-IN: a reasoning trace costs ~55× (≈1.5s → ≈80s on local qwen3.5:4b). Default OFF
+            # for responsive chat; when ON the trace is captured + surfaced (never stripped — CLAUDE.md).
+            "think": bool(think),
             "logprobs": True,
             "top_logprobs": 20,
+            # EXP-A020 throughput levers (qig-applied inference accelerator): FULL GPU offload + keep the model
+            # resident. Ollama bundles its OWN CUDA runtime — INDEPENDENT of the CPU-only python torch — so the
+            # idle GPU accelerates the boundary peer NOW (the ~27s CPU chat floor → GPU speed; a 4B q4 model
+            # fits the 4GB card). Server-side levers (flash-attn, q8 KV cache) are set before `ollama serve`
+            # via scripts/ollama_accelerate.sh. All env-overridable; falls back gracefully if the GPU is absent.
+            "keep_alive": _OLLAMA_KEEP_ALIVE,
+            "options": _OLLAMA_OPTIONS,
         }
-        r = httpx.post(self._url + "/api/chat", json=body, timeout=120.0)
+        # generous timeout: the FIRST call cold-loads qwen3.5:4b into Ollama (can exceed 2 min); warm
+        # calls return in seconds. A short timeout here is the #1 cause of a "dead" first message.
+        r = httpx.post(self._url + "/api/chat", json=body, timeout=300.0)
         r.raise_for_status()
         data = r.json()
-        text = data.get("message", {}).get("content", "")
-        return text, _extract_logprobs(data)
+        msg = data.get("message", {})
+        # Ollama returns the reasoning trace in a SEPARATE field (message.thinking) — capture it, do not
+        # discard it. The reasoning IS the data.
+        return msg.get("content", "") or "", msg.get("thinking", "") or "", _extract_logprobs(data)
+
+    # --- boundary-peer surface (used by the integrated mind, genesis_kernel) ----------------------
+    def speak(self, message: str, persona: str | None = None, think: bool = False) -> tuple[str, str, dict]:
+        """Fluent LINGUISTIC SURFACE for the integrated mind: Qwen verbalises ``message`` conditioned on
+        ``persona`` (the kernel's measured inner state, injected as system context so the surface reflects
+        the kernel's geometry). Returns (content, thinking, logprobs); ``think`` opt-in (off → fast ~2s,
+        on → full reasoning trace ~80s, preserved + surfaced). The binding physics lives on the kernel side
+        (Pillar-2-capped boundary integration + M recognition); this is the surface, NOT a hidden-state
+        graft and NOT a forward-pass dependency."""
+        self.ensure_loaded()
+        return self._ask(message, persona=persona, think=think)
+
+    def project_distribution(self, logprobs: dict):
+        """Qwen output-distribution → Δ⁶³ boundary basin (real coordizer projection when present, else the
+        functional v1 hash-bin). Returns None when there's no distribution (None-safe)."""
+        return self._project(logprobs) if logprobs else None
 
     def _telemetry(self, logprobs: dict, *, integrated: bool) -> TelemetrySnapshot:
         if logprobs:
@@ -136,15 +229,17 @@ class QwenLocalTarget(TrainingTarget):
 
     def generate(self, prompt: str, max_tokens: int = 64) -> StepResult:
         self.ensure_loaded()
-        text, logprobs = self._ask(prompt)
+        text, thinking, logprobs = self._ask(prompt)
         self._last = self._telemetry(logprobs, integrated=False)
+        if thinking:
+            self._last.extra["thinking"] = thinking
         return StepResult(text=text, telemetry=self._last)
 
     def train_step(self, prompt: str, max_tokens: int = 64, target_text: str | None = None) -> StepResult:
         # No Qwen weight update (inference peer). The "step" = QIGRAM boundary
         # accumulation: integrate the output distribution into identity, Pillar-2 capped.
         self.ensure_loaded()
-        text, logprobs = self._ask(prompt)
+        text, _thinking, logprobs = self._ask(prompt)
         if logprobs:
             boundary = self._project(logprobs)
             self._identity = pillar2_capped_integrate(self._identity, boundary, BOUNDARY_SLERP_CAP)

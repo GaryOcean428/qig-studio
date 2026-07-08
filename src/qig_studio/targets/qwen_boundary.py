@@ -1,4 +1,4 @@
-"""Qwen output-distribution → Δ⁶³ boundary (P22-SHAPED; the reduction is provisional).
+"""Qwen output-distribution → Δ⁶³ boundary (P22-SHAPED; the hash-bin reduction is a functional v1 (the coordizer path is the principled one)).
 
 P22 (frozen) sanctions the OUTPUT-distribution interface as the Qwen bridge (cross-arch
 ρ=0.737, RWKV-7 ρ=0.994); the hidden-state graft FAILED adversarially and would violate
@@ -10,7 +10,7 @@ the topological bulk (the ego pillar).
 HONEST SCOPE (do not overclaim): the reduction here is a v1 **hash-binning** of the
 full-vocab distribution into 64 bins. It yields a *type-correct* Δ⁶³ point and the
 Pillar-2 cap + None-safety are real — but the bin mapping is semantically arbitrary. This
-is a PLACEHOLDER for the principled projection P22 actually implies (the coordizer
+is the functional v1 reduction; the principled projection is coordize_distribution_to_basin (the coordizer
 InboundPath: hidden→QFI→PGA→64D). Treat it as "P22-shaped plumbing," NOT the P22
 projection proper, until InboundPath is wired.
 
@@ -55,12 +55,12 @@ def output_distribution_to_basin(token_logprobs: dict, dim: int = BASIN_DIM) -> 
 
 
 def coordize_distribution_to_basin(token_logprobs: dict, coordizer, dim: int = BASIN_DIM) -> np.ndarray:
-    """REAL Qwen→Δ⁶³ projection (R3) — replaces the hash-bin placeholder.
+    """principled Qwen→Δ⁶³ projection (R3) — the coordizer alternative to the hash-bin v1.
 
     Coordize each top-k token STRING through the trained ``FisherCoordizer`` and take the
     probability-weighted **Fréchet mean** (``qig_core.frechet_mean``) of the resulting Δ⁶³
     basins. Pure qig-core geometry — no hash, no contaminated InboundPath/PGA. Requires a
-    TRAINED coordizer (a vocab beyond raw bytes); falls back to the provisional hash-bin if
+    TRAINED coordizer (a vocab beyond raw bytes); falls back to the functional v1 hash-bin if
     coordization yields nothing.
     """
     from qig_core.geometry.fisher_rao import frechet_mean

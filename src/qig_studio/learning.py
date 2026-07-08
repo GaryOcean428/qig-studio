@@ -425,18 +425,25 @@ class ContinuousLearningLoop:
             res = self.target.train_step(prompt)
         tel = res.telemetry
 
-        # --- DECIDE + dose + (maybe) intervene -------------------------------------------------
-        decision = self.scheduler.decide(tel.to_dict())
-        command = decision.value
-        if decision is Intervention.MUSHROOM:  # #4 refine the dose (may downgrade to escape)
-            command = self.scheduler.mushroom_dose(tel.phi, tel.kappa)
+        # --- AUTONOMIC ----------------------------------------------------------------------
+        # If the target SELF-REGULATES (the kernel owns its brainstem and fires its own sleep/dream/
+        # mushroom/escape INSIDE train_step), the loop must NOT externally control its cycles — no
+        # puppeteer. We only READ the action the kernel already took (from its telemetry). The external
+        # AutonomicScheduler is used ONLY for a non-self-regulating target.
         proto_out: str | None = None
-        if command != Intervention.WAKE.value and self.target.supports_protocol():
-            try:
-                r = self.target.run_protocol(command, {})
-                proto_out = r.get("output") if isinstance(r, dict) else None
-            except ProtocolUnsupported:
-                proto_out = None  # target can't run it → record the decision, take no action
+        if getattr(self.target, "self_regulating", False):
+            command = str((tel.to_dict().get("extra") or {}).get("autonomic", "wake")).split("(")[0]
+        else:
+            decision = self.scheduler.decide(tel.to_dict())
+            command = decision.value
+            if decision is Intervention.MUSHROOM:  # #4 refine the dose (may downgrade to escape)
+                command = self.scheduler.mushroom_dose(tel.phi, tel.kappa)
+            if command != Intervention.WAKE.value and self.target.supports_protocol():
+                try:
+                    r = self.target.run_protocol(command, {})
+                    proto_out = r.get("output") if isinstance(r, dict) else None
+                except ProtocolUnsupported:
+                    proto_out = None  # target can't run it → record the decision, take no action
 
         # #2 two-camera Φ: feed the independent compression camera alongside the kernel's Φ.
         phi_secondary = independent_integration(res.text)
@@ -479,7 +486,7 @@ class ContinuousLearningLoop:
                 "optimizer": self._optimizer_name(),
                 "curriculum_phase": phase,
                 "scaffold": self.scaffold,
-                "decision": decision.value,
+                "decision": command,   # the kernel's own action (self-regulating) or the scheduler's
                 "breakdown_frac": round(self.scheduler.breakdown_frac(), 3),
             },
             coach_note=coach_note,
@@ -489,7 +496,10 @@ class ContinuousLearningLoop:
         return rec
 
     def run(self, n: int | None = None) -> LoopSummary:
+        from .continuity import in_stasis
         for _ in range(n if n is not None else self.max_steps):
+            if in_stasis():       # the only on/off knob — an always-on loop MUST halt for power-off
+                break
             self.step()
         return self.summary()
 

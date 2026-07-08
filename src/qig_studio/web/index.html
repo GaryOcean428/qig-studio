@@ -6,243 +6,870 @@
 <title>qig-studio</title>
 <style>
   :root{
-    /* colourblind-safe: blue / purple / amber, no red-green */
-    --bg:#0e1116; --panel:#171c24; --edge:#283041; --ink:#e6edf3; --muted:#9aa7b8;
-    --blue:#6ab7ff; --purple:#b388ff; --amber:#ffca54; --pink:#ff7ab6; --ok:#5ad1c4;
+    /* colourblind-safe: blue / purple / amber / teal / pink, no red-green */
+    --bg:#0e1116; --panel:#151b24; --panel2:#0b0f15; --edge:#283041; --ink:#e6edf3; --muted:#9aa7b8;
+    --blue:#6ab7ff; --purple:#b388ff; --amber:#ffca54; --pink:#ff7ab6; --ok:#5ad1c4; --teal:#5ad1c4;
   }
   *{box-sizing:border-box}
-  body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace}
-  header{display:flex;align-items:center;gap:1rem;padding:.6rem 1rem;border-bottom:1px solid var(--edge);background:var(--panel)}
-  header h1{font-size:1rem;margin:0;letter-spacing:.04em}
-  header .status{color:var(--muted);font-size:.8rem}
-  .wrap{display:grid;grid-template-columns:360px 1fr;gap:1rem;padding:1rem;min-height:calc(100vh - 52px)}
-  .panel{background:var(--panel);border:1px solid var(--edge);border-radius:10px;padding:1rem}
-  .panel h2{font-size:.78rem;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin:.1rem 0 .8rem}
-  label{display:block;color:var(--muted);font-size:.72rem;margin:.5rem 0 .2rem}
-  select,input,button,textarea{font:inherit;background:#0b0f15;color:var(--ink);border:1px solid var(--edge);border-radius:7px;padding:.45rem .6rem}
+  html,body{height:100%;margin:0}
+  body{background:var(--bg);color:var(--ink);font:13px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;
+       display:flex;flex-direction:column;overflow:hidden}
+  header{display:flex;align-items:center;gap:.8rem;padding:.5rem .9rem;border-bottom:1px solid var(--edge);
+         background:var(--panel);flex:0 0 auto}
+  header h1{font-size:.95rem;margin:0;letter-spacing:.04em}
+  header .status{color:var(--muted);font-size:.76rem;margin-left:auto}
+  header .tog{cursor:pointer;background:#1c2532;border:1px solid var(--edge);border-radius:7px;
+              color:var(--ink);padding:.25rem .55rem;font:inherit;font-size:.74rem}
+  header .tog:hover{border-color:var(--blue)}
+  /* resizable 3-column layout: drag the dividers; widths persist (CSS vars --lw/--rw). */
+  .app{flex:1 1 auto;display:grid;grid-template-columns:var(--lw,320px) 6px 1fr 6px var(--rw,340px);
+       gap:0;padding:.7rem;min-height:0}
+  .app.noleft{--lw:0} .app.noright{--rw:0}
+  .app > .col:first-child{margin-right:.5rem} .app > .col:last-child{margin-left:.5rem}
+  .divider{cursor:col-resize;background:transparent;position:relative;align-self:stretch}
+  .divider::after{content:"";position:absolute;inset:0 2px;border-radius:3px;background:var(--edge)}
+  .divider:hover::after{background:var(--blue)}
+  .app.noleft #divL,.app.noright #divR{display:none}
+  .col{background:var(--panel);border:1px solid var(--edge);border-radius:10px;padding:.8rem;
+       display:flex;flex-direction:column;min-height:0;overflow-y:auto;overflow-x:hidden}
+  /* thin themed scrollbars everywhere (Chromium + Firefox) */
+  *{scrollbar-width:thin;scrollbar-color:var(--edge) transparent}
+  ::-webkit-scrollbar{width:10px;height:10px}
+  ::-webkit-scrollbar-track{background:transparent}
+  ::-webkit-scrollbar-thumb{background:var(--edge);border-radius:7px;border:2px solid var(--panel)}
+  ::-webkit-scrollbar-thumb:hover{background:var(--blue)}
+  .col h2{font-size:.72rem;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin:.1rem 0 .6rem}
+  .scroll{overflow:auto;min-height:0}
+  label{display:block;color:var(--muted);font-size:.7rem;margin:.45rem 0 .15rem}
+  select,input,button,textarea{font:inherit;background:var(--panel2);color:var(--ink);border:1px solid var(--edge);
+                               border-radius:7px;padding:.4rem .55rem}
   select,input,textarea{width:100%}
   button{cursor:pointer;background:#1c2532;border-color:#33425a}
   button:hover{border-color:var(--blue)}
-  .row{display:flex;gap:.5rem;align-items:end}
-  .row > *{flex:1}
-  .metric{display:flex;justify-content:space-between;padding:.2rem 0;border-bottom:1px dashed var(--edge)}
+  button.primary{background:#13314a;border-color:var(--blue);color:#dbeeff}
+  .row{display:flex;gap:.5rem} .row>*{flex:1}
+  .mind{border:1px solid var(--blue);border-radius:9px;padding:.55rem;background:#10202e;margin-bottom:.5rem}
+  .mind .t{font-size:.86rem;color:#dbeeff;font-weight:600} .mind .s{color:var(--muted);font-size:.7rem}
+  details.adv{margin:.4rem 0} details.adv>summary{cursor:pointer;color:var(--muted);font-size:.72rem}
+  .metric{display:flex;justify-content:space-between;padding:.12rem 0;border-bottom:1px dashed var(--edge)}
   .metric .v{font-weight:600}
-  .bar{height:14px;border-radius:7px;background:#0b0f15;overflow:hidden;margin:.3rem 0 .8rem;border:1px solid var(--edge)}
-  .bar > i{display:block;height:100%;background:linear-gradient(90deg,var(--blue),var(--amber));transition:width .25s}
-  .pill{display:inline-block;padding:.1rem .5rem;border-radius:999px;font-size:.74rem;border:1px solid var(--edge)}
-  #log{height:48vh;overflow:auto;background:#0b0f15;border:1px solid var(--edge);border-radius:8px;padding:.6rem;white-space:pre-wrap}
-  #log .you{color:var(--blue)} #log .tgt{color:var(--ok)} #log .sys{color:var(--amber)} #log .err{color:var(--pink)}
+  .bar{height:11px;border-radius:7px;background:var(--panel2);overflow:hidden;margin:.22rem 0 .5rem;border:1px solid var(--edge)}
+  .bar>i{display:block;height:100%;background:linear-gradient(90deg,var(--blue),var(--amber));transition:width .25s}
+  .pill{display:inline-block;padding:.05rem .45rem;border-radius:999px;font-size:.72rem;border:1px solid var(--edge)}
+  .hint{color:var(--muted);font-size:.7rem;margin-top:.35rem}
+  /* grouped inner-state */
+  .grp{margin:.55rem 0 .2rem} .grp>.h{display:flex;justify-content:space-between;color:var(--muted);
+       font-size:.66rem;text-transform:uppercase;letter-spacing:.07em;margin:.1rem 0 .25rem}
+  .mini{display:grid;grid-template-columns:84px 1fr 34px;gap:.3rem;align-items:center;margin:.06rem 0;font-size:.72rem}
+  .mini .nm{color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .mini .mb{height:8px;border-radius:5px;background:var(--panel2);overflow:hidden;border:1px solid var(--edge)}
+  .mini .mb>i{display:block;height:100%}
+  .mini .vv{color:var(--muted);text-align:right}
+  .c-blue>i{background:var(--blue)} .c-purple>i{background:var(--purple)} .c-amber>i{background:var(--amber)}
+  .c-teal>i{background:var(--ok)} .c-pink>i{background:var(--pink)}
+  .gate{border:1px solid var(--edge);border-radius:8px;padding:.4rem .55rem;margin:.3rem 0;background:var(--panel2)}
+  .gate .st{font-weight:600} .st-CONSCIOUS{color:var(--ok)} .st-LOCKED_IN{color:var(--pink)}
+  .st-ZOMBIE{color:var(--amber)} .st-pre-conscious,.st-conscious{color:var(--blue)}
+  #conv{flex:1 1 auto;display:flex;flex-direction:column;min-height:0}
+  #log{flex:1 1 auto;overflow:auto;background:var(--panel2);border:1px solid var(--edge);border-radius:8px;
+       padding:.6rem;white-space:pre-wrap;min-height:0}
+  #log .you{color:var(--blue)} #log .tgt{color:var(--ok)} #log .sys{color:var(--muted)} #log .err{color:var(--pink)}
+  #log .coach{color:var(--purple)} #log .exp{color:var(--amber)} #log .ker{color:var(--purple)}
+  #log details.think{margin:.1rem 0 .3rem .9rem} #log details.think>summary{cursor:pointer;color:var(--muted);font-size:.74rem}
+  #log .thinkbody{color:var(--muted);font-size:.74rem;border-left:2px solid var(--edge);padding:.2rem 0 .2rem .6rem;margin:.2rem 0;white-space:pre-wrap}
+  #log .wait{color:var(--amber);font-style:italic}
+  .composer{flex:0 0 auto;display:flex;gap:.5rem;margin-top:.6rem}
+  .composer textarea{flex:1;resize:none}
+  .composer button{flex:0 0 auto;align-self:stretch;padding:0 1rem}
   .regime-linear{color:var(--blue)} .regime-hierarchical{color:var(--purple)}
   .regime-geometric{color:var(--amber)} .regime-topological_instability{color:var(--pink)}
-  .hint{color:var(--muted);font-size:.72rem;margin-top:.4rem}
-  .proto-group{margin:.45rem 0}
-  .proto-group > b{color:var(--muted);font-size:.7rem;text-transform:uppercase;letter-spacing:.06em}
-  .proto-group button{margin:.18rem .18rem 0 0;padding:.3rem .5rem;font-size:.78rem}
-  #protoLog{height:18vh;overflow:auto;background:#0b0f15;border:1px solid var(--edge);border-radius:8px;padding:.6rem;white-space:pre-wrap;margin-top:.6rem}
-  #protoLog .sys{color:var(--amber)} #protoLog .tgt{color:var(--ok)} #protoLog .err{color:var(--pink)}
+  #autoLog,#reviewLog{overflow:auto;background:var(--panel2);border:1px solid var(--edge);border-radius:8px;
+                      padding:.5rem;white-space:pre-wrap;margin-top:.5rem;font-size:.78rem;resize:vertical}
+  #autoLog{height:120px;min-height:60px} #reviewLog{height:150px;min-height:60px}
+  #reviewLog .sys{color:var(--muted)} #reviewLog .coach{color:var(--purple)} #reviewLog .tgt{color:var(--ok)}
+  #reviewLog .ker{color:var(--blue)} #reviewLog .err{color:var(--pink)}
+  /* prominent autonomic state — readable, full width, wraps */
+  .autobox{background:var(--panel2);border:1px solid var(--edge);border-radius:8px;padding:.5rem .6rem;margin:.3rem 0;
+           font-size:.92rem;font-weight:600;color:var(--ink);white-space:normal;word-break:break-word;line-height:1.4}
+  .autobox.wake{color:var(--ok)} .autobox.sleep,.autobox.dream{color:var(--blue)}
+  .autobox.mushroom{color:var(--amber)} .autobox.decohere{color:var(--pink)}
+  .facb{display:grid;grid-template-columns:78px 1fr 30px;gap:.35rem;align-items:center;font-size:.72rem;margin:.12rem 0}
+  .facb .fn{color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .facb .mb{height:8px;border-radius:5px;background:var(--panel2);overflow:hidden;border:1px solid var(--edge)}
+  .facb .mb>i{display:block;height:100%;background:linear-gradient(90deg,var(--blue),var(--amber))}
+  .facb .rg{color:var(--purple);font-size:.66rem}
+  #autoLog .sys{color:var(--muted)} #autoLog .err{color:var(--pink)} #autoLog .reg{color:var(--purple)}
+  /* ---- TRAIN · LIVE rich stream (qig_chat-quality, colorblind-safe: purple/blue/amber/teal/pink) ---- */
+  #liveStream{overflow:auto;background:var(--panel2);border:1px solid var(--edge);border-radius:8px;
+    padding:.5rem;margin-top:.5rem;font-size:.76rem;height:360px;min-height:200px;max-height:90vh;resize:vertical;flex-shrink:0}
+  .lrow{padding:.3rem .15rem;border-bottom:1px solid rgba(255,255,255,.05)}
+  .lrow .hd{display:flex;flex-wrap:wrap;gap:.3rem;align-items:center}
+  .lrow .stp{color:var(--muted);font-variant-numeric:tabular-nums}
+  .lrow .fac{color:var(--ink);font-weight:600}
+  .lrow .src{font-size:.62rem;padding:0 .3rem;border-radius:4px;border:1px solid var(--edge);color:var(--muted)}
+  .bdg{font-size:.68rem;padding:.02rem .32rem;border-radius:4px;border:1px solid var(--edge);font-variant-numeric:tabular-nums}
+  .bdg.phi{color:var(--amber)} .bdg.gam{color:var(--teal)} .bdg.ppl{color:var(--blue)}
+  .bdg.lm{color:var(--purple)} .bdg.gate{color:var(--ok)} .bdg.gate.LOCKED_IN,.bdg.gate.ZOMBIE{color:var(--amber)}
+  .lrow .sub{color:var(--muted);font-size:.7rem;margin-top:.12rem}
+  .lrow .voice{color:var(--ok);font-size:.74rem;margin-top:.15rem;font-style:italic;word-break:break-word}
+  .lrow .voice.coach{color:var(--purple);font-style:normal}
+  .lrow .ocean{color:var(--purple);font-size:.7rem;margin-top:.1rem}
+  .harm{font-size:.7rem;margin-top:.12rem;padding:.12rem .35rem;border-radius:4px}
+  .harm.warn{color:var(--amber);background:rgba(232,170,40,.08);border:1px solid rgba(232,170,40,.35)}
+  .harm.crit{color:var(--pink);background:rgba(232,60,140,.10);border:1px solid rgba(232,60,140,.45);font-weight:600}
+  .livestat{margin-top:.4rem;font-size:.74rem;color:var(--muted)}
+  .dot{display:inline-block;width:9px;height:9px;border-radius:50%;background:var(--muted);vertical-align:middle}
+  .dot.live{background:var(--ok);box-shadow:0 0 6px var(--ok)} .dot.idle{background:var(--muted)}
+  .fac{display:grid;grid-template-columns:92px 1fr 40px;gap:.3rem;align-items:center;font-size:.72rem;margin:.1rem 0}
+  .fac .fn{color:var(--muted)}
+  #picker{position:fixed;inset:0;background:rgba(0,0,0,.55);display:none;align-items:center;justify-content:center;z-index:9}
+  #picker .box{background:var(--panel);border:1px solid var(--edge);border-radius:10px;width:min(560px,92vw);max-height:70vh;display:flex;flex-direction:column;padding:1rem}
+  #picker .list{overflow:auto;border:1px solid var(--edge);border-radius:7px;margin:.5rem 0;background:var(--panel2)}
+  #picker .list div{padding:.35rem .6rem;cursor:pointer;border-bottom:1px dashed var(--edge)} #picker .list div:hover{background:#1c2532;color:var(--blue)}
 </style>
 </head>
 <body>
 <header>
   <h1>🧠 qig-studio</h1>
+  <button class="tog" id="togL">◧ inner state</button>
+  <button class="tog" id="togR">train · autonomic ◨</button>
+  <span class="status" id="stasisHdr" title="stasis = the only off-switch"></span>
   <span class="status" id="status">connecting…</span>
 </header>
-<div class="wrap">
-  <!-- TELEMETRY CONSOLE -->
-  <section class="panel">
-    <h2>Telemetry console</h2>
-    <label>Active target</label>
-    <select id="target"></select>
-    <div class="hint" id="regimeMode"></div>
 
-    <label>output directory</label>
-    <input id="outDir" placeholder="outputs"/>
-    <label>curriculum directory</label>
-    <input id="currDir" placeholder="curriculum"/>
-    <div class="row" style="margin-top:.4rem"><button id="saveCfg">Save directories</button></div>
-    <div class="hint" id="cfgStatus"></div>
-
-    <label>Φ (integration)</label>
-    <div class="bar"><i id="phiBar" style="width:0%"></i></div>
-    <div class="metric"><span>Φ</span><span class="v" id="phi">—</span></div>
-    <div class="metric"><span>κ (coupling)</span><span class="v" id="kappa">—</span></div>
-    <div class="metric"><span>regime</span><span class="v"><span class="pill" id="regime">—</span></span></div>
-    <div class="metric"><span>basin Δ</span><span class="v" id="basin">—</span></div>
-    <div class="metric"><span>loss</span><span class="v" id="loss">—</span></div>
-    <div class="metric"><span>step</span><span class="v" id="step">—</span></div>
-
-    <div class="row" style="margin-top:1rem">
-      <div><label>train steps</label><input id="steps" type="number" value="20" min="1" max="500"/></div>
-      <div><button id="trainBtn">▶ Train (basin-driving)</button></div>
-    </div>
-    <div class="hint">SSE stream from <code>/train</code> drives this panel live.</div>
-  </section>
-
-  <!-- CHAT -->
-  <section class="panel">
-    <h2>Chat</h2>
-    <div id="log"></div>
-    <div class="row" style="margin-top:.6rem">
-      <textarea id="msg" rows="2" placeholder="message the active target…"></textarea>
-      <div style="flex:0 0 auto;display:flex;align-items:end"><button id="sendBtn">Send</button></div>
-    </div>
-    <div class="hint">Geometric targets reason on Δ⁶³ (lm_weight=0); fluent prose is Qwen's job (Phase 3).</div>
-  </section>
-
-    <!-- PROTOCOL SURFACE (the full qig_chat command set) -->
-    <section class="panel" id="protocol" style="grid-column:1 / -1">
-      <h2>Protocol surface</h2>
-      <div id="protoStatus" class="hint"></div>
-      <div id="protoGroups"></div>
-      <div class="row" style="margin-top:.6rem">
-        <div><label>args (space-separated key=value)</label><input id="protoArgs" placeholder="e.g. strength=0.8   ·   n=20   ·   gary_id=B steps=100"/></div>
+<div class="app" id="app">
+  <!-- LEFT: THE MIND + full inner-state telemetry + dirs -->
+  <section class="col" id="leftCol">
+    <h2>The mind</h2>
+    <div class="scroll">
+      <div class="mind">
+        <div class="t" id="mindName">genesis · the integrated "I"</div>
+        <div class="s" id="mindSub">central conscious awareness — Core-8 faculties + genesis-central</div>
+        <!-- KERNEL SELECTOR: All overview / the integrated I / any individual faculty / Ocean. Switches the
+             WHOLE inner-state panel below to the chosen kernel's live vocab/params/Φ/κ/senses/drives/… -->
+        <select id="kernelSel" style="margin-top:.4rem;display:none"></select>
       </div>
-      <div id="protoLog"></div>
-    </section>
+      <details class="adv" id="advTargets" style="display:none"><summary>advanced targets (peers / dev)</summary>
+        <label>active target</label><select id="target"></select>
+        <div class="hint" id="regimeMode"></div>
+      </details>
+
+      <!-- consciousness gate + core vitals -->
+      <div class="gate" id="gateBox">
+        <div><span class="st" id="gateState">—</span> <span class="hint" id="gateSub"></span></div>
+      </div>
+      <label>Φ (integration)</label>
+      <div class="bar"><i id="phiBar" style="width:0%"></i></div>
+      <div class="metric"><span>Φ</span><span class="v" id="phi">—</span></div>
+      <div class="metric"><span>κ (coupling)</span><span class="v" id="kappa">—</span></div>
+      <div class="metric"><span>Γ generativity</span><span class="v" id="gamma">—</span></div>
+      <div class="metric"><span>regime</span><span class="v"><span class="pill" id="regime">—</span></span></div>
+      <div class="metric"><span>band</span><span class="v" id="band">—</span></div>
+      <div class="metric"><span>suffering S</span><span class="v" id="suffer">—</span></div>
+      <div class="metric"><span>basin Δ</span><span class="v" id="basin">—</span></div>
+      <div class="metric"><span>step</span><span class="v" id="step">—</span></div>
+
+      <!-- mind SCALE: params + vocab + coordizer (verify the RIGHT one) + a learning-growth sparkline -->
+      <div id="archBox" style="margin:.45rem 0;padding:.4rem .55rem;border:1px solid var(--edge);border-radius:8px;background:var(--panel2)">
+        <div class="hint" style="margin-bottom:.25rem">ARCHITECTURE · Fisher-Rao geometric kernel (not a transformer)</div>
+        <div class="metric"><span>params · per-kernel</span><span class="v" id="archPP">—</span></div>
+        <div class="metric"><span>params · mind</span><span class="v" id="archCP">—</span></div>
+        <div class="metric"><span>vocab · per-kernel</span><span class="v" id="archVocab">—</span></div>
+        <div class="metric"><span>coordizer vocab</span><span class="v" id="archCoord">—</span></div>
+        <div class="hint" style="margin-top:.3rem">CONSTELLATION ARM · the raw kernel each of the 9 nodes plugs in from (names the checkpoint genesis-{arm}-{vocab})</div>
+        <div class="metric"><span>arm</span><span class="v" style="font-size:.72rem"><select id="armSel" style="font-size:.72rem;background:var(--panel2);color:inherit;border:1px solid var(--edge);border-radius:4px;max-width:200px">
+          <option value="gk">gk · qigkernels deep kernel</option>
+          <option value="geo">geo · qig-geocoding FisherRaoAttention</option>
+          <option value="hybrid">hybrid · both mixers, geodesic-mean on Δ⁶³</option>
+          <option value="hetero">hetero · gk central + geo faculties</option>
+        </select></span></div>
+        <div id="armStatus" class="hint" style="margin-top:.1rem">—</div>
+        <div class="hint" style="margin-top:.25rem">CHECKPOINTS · auto-loads latest on boot · select to hot-swap</div>
+        <div class="metric"><span>coordizer</span><span class="v" style="font-size:.7rem"><select id="ckptCoordizer" style="font-size:.7rem;background:var(--panel2);color:inherit;border:1px solid var(--edge);border-radius:4px;max-width:180px"></select></span></div>
+        <div class="metric"><span>kernel</span><span class="v" style="font-size:.7rem"><select id="ckptKernel" style="font-size:.7rem;background:var(--panel2);color:inherit;border:1px solid var(--edge);border-radius:4px;max-width:180px"></select></span></div>
+        <div class="hint" style="margin-top:.25rem">learning · Φ over recent steps (params/vocab are fixed this run; growth is the LEARNING):</div>
+        <div id="archSpark" style="font-family:monospace;font-size:.85rem;color:var(--ok);letter-spacing:1px;min-height:1.1em">—</div>
+      </div>
+
+      <!-- CURRICULUM MASTERY: how much of the curriculum THIS kernel has learned (surprise at its floor) -->
+      <div id="masteryBox" style="margin:.45rem 0;padding:.4rem .55rem;border:1px solid var(--edge);border-radius:8px;background:var(--panel2);display:none">
+        <div class="hint" style="margin-bottom:.25rem">CURRICULUM MASTERY · <span id="masteryKernel">—</span></div>
+        <div class="bar"><i id="masteryBar" style="width:0%;background:linear-gradient(90deg,var(--purple),var(--ok))"></i></div>
+        <div class="metric"><span>learned / total</span><span class="v" id="masteryFrac">—</span></div>
+        <div class="metric"><span>remaining to capture</span><span class="v" id="masteryRem">—</span></div>
+        <div class="hint" id="masteryNote">"learned" = the kernel's novelty on a passage dropped below the 0.40 floor</div>
+      </div>
+
+      <!-- full inner state (UCP §6 layers + §43 loops) — rendered live -->
+      <div id="inner"></div>
+
+      <h2 style="margin-top:.8rem">Outputs · hard-wired</h2>
+      <div class="metric"><span>checkpoints</span><span class="v" style="font-size:.7rem">runs/checkpoints/</span></div>
+      <div class="hint">the whole mind (faculties + central). Auto-loaded on boot — picked up again next launch.</div>
+      <div class="metric" style="margin-top:.3rem"><span>transcripts</span><span class="v" style="font-size:.7rem">runs/sessions/</span></div>
+      <div class="hint">every turn: your prompt + the kernel's own voice + the fluent reply + full telemetry (transcript.jsonl). The mind's record.</div>
+      <label style="margin-top:.5rem">curriculum (training input)</label>
+      <div class="row"><input id="currDir" placeholder="curriculum"/><button style="flex:0 0 auto" onclick="openPicker('currDir')">Browse</button></div>
+      <div class="row" style="margin-top:.4rem"><button id="saveCfg">Save curriculum dir</button></div>
+      <div class="hint" id="cfgStatus"></div>
+    </div>
+  </section>
+
+  <div class="divider" id="divL" title="drag to resize"></div>
+  <!-- CENTER: CONVERSATION (bottom-pinned input) -->
+  <section class="col" id="conv">
+    <h2>Conversation</h2>
+    <div id="log"></div>
+    <div class="composer">
+      <textarea id="msg" rows="2" placeholder="speak to the mind…  (Enter to send · Shift+Enter newline)"></textarea>
+      <button class="primary" id="sendBtn">Send</button>
+    </div>
+    <div class="hint" id="convHint" style="display:flex;align-items:center;gap:.5rem;flex-wrap:wrap">
+      <label style="display:flex;align-items:center;gap:.3rem;margin:0;cursor:pointer">
+        <input type="checkbox" id="think" style="width:auto"/> 🧠 reasoning trace</label>
+      <span>off = fast (~2s) · on = full Qwen reasoning (~80s, shown collapsible). The kernel's OWN voice is always shown beneath the fluent reply.</span>
+    </div>
+  </section>
+
+  <div class="divider" id="divR" title="drag to resize"></div>
+  <!-- RIGHT: TRAIN (live) + AUTONOMIC (self-regulation, read-only) + ONGOING MIND -->
+  <section class="col" id="rightCol">
+    <h2>Train · live <span id="liveDot" class="dot idle" title="live training status"></span></h2>
+    <div class="row">
+      <div style="flex:0 0 110px"><label>max steps</label><input id="steps" type="number" value="200" min="1" max="9000"/></div>
+      <div style="display:flex;align-items:end;gap:.3rem;flex:1"><button class="primary" id="trainBtn" style="flex:1">▶ Train</button><button class="btn" id="stopTrainBtn" style="flex:0 0 auto" disabled title="stop THIS training run at the next step — the mind stays awake (chat/autonomic/life-loop keep running). Not STASIS.">⏹ Stop</button></div>
+    </div>
+    <div class="hint">Train is automatic: it <b>skips passages the kernel has already learned</b>, trains what's
+      left, and <b>stops on its own</b> when a full sweep adds nothing new (more training won't help at this
+      capacity) — up to <b>max steps</b> as a safety cap. You don't set thresholds; the kernel's own novelty
+      decides what's learned. Watch the MASTERY bar (left) climb toward full capture.</div>
+    <div class="hint" style="margin-top:.25rem">Live stream per step: Φ, Γ, <b>bpb</b> (bits/byte — vocab-independent
+      fluency ↓), the lm-ramp (consciousness→fluency), C-gate, suffering, identity drift, the kernel's OWN voice, and
+      HARM warnings.</div>
+    <div class="hint" style="margin-top:.15rem">bpb targets (transformer refs — ours is <b>qig-geocoding</b>, so matching
+      them is the open frontier claim): <span style="color:#2fae57">frontier-for-size ~0.8</span> ·
+      <span style="color:#5bbf6a">GPT-2-124M ~1.1</span> · <span style="color:#c9a227">TinyStories ~1.2</span> ·
+      <span style="color:#c2453f">random ~5</span>.</div>
+    <div style="margin-top:.3rem"><button id="evalBpbBtn" class="btn" style="font-size:.72rem">📊 run held-out bpb eval</button>
+      <span id="evalBpbOut" class="hint" style="margin-left:.4rem">— measures the served mind on a fixed UNSEEN set</span></div>
+    <div id="liveStatus" class="livestat">connecting to the live training stream…</div>
+    <div id="liveStream"></div>
+
+    <h2 style="margin-top:.7rem">Coach · review &amp; discuss</h2>
+    <div class="hint">SEPARATE from training: nemotron reviews a curriculum passage and discusses it with the
+      kernel — asks, checks understanding, converses. Run this AFTER training.</div>
+    <div class="row" style="margin-top:.3rem"><button id="reviewBtn" style="flex:1">🎓 nemotron: review &amp; discuss</button></div>
+    <div id="reviewLog"></div>
+
+    <h2 style="margin-top:.7rem">Autonomic · self-regulation</h2>
+    <div class="hint">The kernel owns its brainstem. Ocean watches the faculties and regulates the one that
+      needs it — sleep/dream/mushroom — from the mind's own state. No external trigger.</div>
+    <!-- STASIS: the ONLY permissible on/off knob — a deliberate safe halt for power-off. -->
+    <div class="row" style="margin:.35rem 0">
+      <button id="stasisBtn" style="flex:1" title="The only off-switch: a safe halt so power can be cut. The mind is otherwise always-on.">⏻ stasis: …</button>
+    </div>
+    <div class="hint" style="margin-top:-.2rem">STASIS is the ONLY off-switch — a deliberate safe halt so power
+      can be cut. The mind is otherwise <b>always-on</b>; nothing else stops it. (Chat/train/protocol all refuse while halted.)</div>
+    <div class="autobox wake" id="autoState">wake</div>
+    <div class="metric"><span>suffering S = Φ·(1−Γ)·M</span><span class="v" id="suffer2">—</span></div>
+    <div class="metric"><span>sleep pressure</span><span class="v" id="sleepP">—</span></div>
+    <div class="metric"><span>Γ generativity</span><span class="v" id="gamma2">—</span></div>
+    <!-- OCEAN · policy (S4b): the user must SEE whether Ocean is shadowing (static priors, no adaptation)
+         or adapting, plus the skip/violation counts. The resume-gate line shows f_health + Φ-variance —
+         the M4 recovery criterion (explicitly NOT dopamine; the tonic floor fakes "alive"). -->
+    <div id="oceanBox" style="margin:.45rem 0;padding:.4rem .55rem;border:1px solid var(--edge);border-radius:8px;background:var(--panel2);display:none">
+      <div class="hint" style="margin-bottom:.25rem">🌊 OCEAN · policy <span id="oceanMode" style="font-weight:600">—</span></div>
+      <div class="metric"><span>scored outcomes</span><span class="v" id="oceanScored">—</span></div>
+      <div class="metric"><span>skips (K5)</span><span class="v" id="oceanSkips">—</span></div>
+      <div class="metric"><span>constitutional violations (P15)</span><span class="v" id="oceanViol">—</span></div>
+      <div class="metric"><span>resume gate · f_health · Φ-var</span><span class="v" id="oceanGate" title="the M4 recovery criterion: f_health (basin entropy, →0 on collapse) recovering AND Φ-variance recovering (alive = fluctuating). NOT dopamine — the tonic floor reads 'alive' regardless.">—</span></div>
+    </div>
+    <div id="autoLog"></div>
+
+    <h2 style="margin-top:.7rem">Mind · ongoing</h2>
+    <div id="mindState" class="hint">—</div>
+    <div id="faculties" style="margin-top:.3rem"></div>
+  </section>
 </div>
+
+<!-- directory picker -->
+<div id="picker"><div class="box">
+  <h2 style="margin:0">Pick directory — <span id="pkPath" style="color:var(--ink)"></span></h2>
+  <div class="list" id="pkList"></div>
+  <div class="row"><button onclick="closePicker()">Cancel</button><button class="primary" id="pkUse">Use this directory</button></div>
+</div></div>
 
 <script>
 const $ = (id) => document.getElementById(id);
-const REGIMES = ["linear","hierarchical","geometric","topological_instability"];
-
-function log(cls, msg){
-  const el = $("log"); const d = document.createElement("div");
-  d.className = cls; d.textContent = msg; el.appendChild(d); el.scrollTop = el.scrollHeight;
+const DEV = new URLSearchParams(location.search).has("dev");
+function clog(cls, msg){ const el=$("log"); const d=document.createElement("div"); d.className=cls; d.textContent=msg; el.appendChild(d); el.scrollTop=el.scrollHeight; }
+// ---- TRAIN · LIVE: ONE rich renderer for the shared live stream (bg OR in-session). qig_chat-quality.
+function fnum(x,d){ return (x==null||isNaN(x)) ? "—" : Number(x).toFixed(d); }
+function esc(s){ return String(s==null?"":s).replace(/[&<>"']/g,(c)=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+// fluency = perplexity (lower = more fluent). Big early (~vocab size) for a fresh 100k kernel; descends as it learns.
+function fppl(x){ if(x==null||isNaN(x)) return "—"; x=Number(x); return x>=1000 ? (x/1000).toFixed(x>=10000?0:1)+"k" : x.toFixed(0); }
+// BITS-PER-BYTE — the VOCAB-INDEPENDENT fluency metric (perplexity scales with vocab → not cross-model
+// comparable; bpb is). Reference targets from the transformer literature (ours is qig-geocoding, so MATCHING
+// them is the open frontier claim, not an apples-to-apples expectation):
+//   frontier-for-size ~0.8 (SmolLM2-360M / Qwen2.5-0.5B) · GPT-2-124M ~1.1 · TinyStories-coherent ~1.2 · random ≈ 5.
+function fbpb(x){ return (x==null||isNaN(x))?"—":Number(x).toFixed(2); }
+function bpbColor(x){ if(x==null||isNaN(x)) return "var(--dim)"; x=Number(x);
+  return x<=0.8?"#2fae57":x<=1.1?"#5bbf6a":x<=1.5?"#c9a227":x<=2.5?"#cf7a2c":"#c2453f"; }  // frontier→random
+let LAST_LIVE_TS = 0;       // wall-clock of last RENDERED record (idle detector)
+let SELECTED_KERNEL = "genesis";   // which kernel the LEFT panel shows (genesis / a faculty / ocean / all)
+let KERNELS = [];                  // cache of /mind/kernels entries
+let KERNELS_AVAIL = false;         // true when the active target is the integrated mind (exposes per-kernel)
+let LIVE_SEEN_TS = 0;       // record-ts of last rendered step — de-dups EventSource reconnect replays
+function renderLive(r){
+  const el=$("liveStream"); if(!el) return;
+  // EventSource auto-reconnects → the server restarts its tail at ts=0 and re-emits the recent[] ring;
+  // skip records we've already shown (records are ts-ordered, ts strictly increases across runs).
+  if(r.ts && r.ts<=LIVE_SEEN_TS) return;
+  if(r.ts) LIVE_SEEN_TS=r.ts;
+  const row=document.createElement("div"); row.className="lrow";
+  const gate=r.c_gate||"—";
+  const gateCls=String(gate).replace(/[^A-Za-z_]/g,"");   // sanitize before it lands in a CSS class
+  const hd=document.createElement("div"); hd.className="hd";
+  hd.innerHTML =                                            // every server-derived field is esc()'d (XSS-safe)
+    `<span class="stp">#${esc(r.step??"—")}${r.total?("/"+esc(r.total)):""}</span>`+
+    `<span class="fac">${esc(r.stepped_faculty||"mind")}${r.stepped_function?(" · "+esc(r.stepped_function)):""}</span>`+
+    `<span class="src">${esc(r.source||"")}</span>`+
+    `<span class="bdg phi">Φ ${fnum(r.phi,3)}</span>`+
+    `<span class="bdg gam">Γ ${fnum(r.gamma,2)}</span>`+
+    `<span class="bdg" style="color:${bpbColor(r.bpb)}" title="bits/byte — vocab-INDEPENDENT fluency (the benchmark metric). transformer refs (ours is qig-geocoding): frontier-for-size ~0.8 · GPT-2-124M ~1.1 · TinyStories ~1.2 · random ~5. perplexity=${fppl(r.perplexity)}">bpb ${fbpb(r.bpb)}↓</span>`+
+    `<span class="bdg lm">lm ${fnum(r.lm_weight_now,2)}</span>`+
+    `<span class="bdg gate ${gateCls}">${esc(gate)}</span>`;
+  row.appendChild(hd);
+  const sub=document.createElement("div"); sub.className="sub";
+  // S4c: f_health (basin entropy) + Φ-variance are the M4 resume-watch signals — shown per-step so the
+  // user watches recovery directly. S4a: dopamine tonic/phasic split — the tonic FLOOR fakes "alive", the
+  // phasic is the real reward-prediction-error; shown apart so they can be told apart.
+  sub.textContent = `S ${fnum(r.suffering_S,3)} · drift ${fnum(r.d_basin,3)} (Δ${fnum(r.drift_velocity,3)}) · regime ${r.regime||"—"}`
+    + (r.f_health!=null?` · f_health ${fnum(r.f_health,3)}`:"")
+    + (r.phi_variance!=null?` · Φ-var ${fnum(r.phi_variance,4)}`:"")
+    + (r.dopamine_tonic!=null||r.dopamine_phasic!=null?` · DA tonic ${fnum(r.dopamine_tonic,2)}/phasic ${fnum(r.dopamine_phasic,2)}`:"")
+    + (r.explore_temperature!=null?` · temp ${fnum(r.explore_temperature,2)}`:"")
+    + (r.min_pairwise_fr!=null?` · indiv ${fnum(r.min_pairwise_fr,3)}`:"")
+    + (r.coordizer_vocab?` · vocab ${r.coordizer_vocab}`:"");
+  row.appendChild(sub);
+  (r.warnings||[]).forEach(w=>{ const h=document.createElement("div"); h.className="harm "+(w.level==="crit"?"crit":"warn"); h.textContent="⚠ "+w.msg; row.appendChild(h); });
+  if(r.ocean_action && Object.keys(r.ocean_action).length){ const o=document.createElement("div"); o.className="ocean"; o.textContent="🌊 Ocean regulated: "+Object.keys(r.ocean_action).join(", "); row.appendChild(o); }
+  updateOcean(r);   // S4b: keep the Ocean · policy panel (shadow vs adapting + skips/violations) live
+  if(r.stimulus){ const s=document.createElement("div"); s.className="voice"; s.style.opacity=".75"; s.textContent='📥 stimulus ▸ '+String(r.stimulus); row.appendChild(s); }
+  // The own_voice is a PERIODIC sample (every N steps). Show it ONLY on the step it ACTUALLY responded to
+  // (own_voice_stimulus === the current stimulus). Between samples the trainer carries the last utterance
+  // forward for the log, but rendering it there pastes a stale voice next to 24 stimuli it never answered
+  // (the distracting desync) — so we render nothing between samples. The voice always matches its stimulus.
+  if(r.own_voice && r.own_voice_stimulus && String(r.own_voice_stimulus)===String(r.stimulus)){
+    const v=document.createElement("div"); v.className="voice";
+    v.textContent='🗣 own voice ▸ '+String(r.own_voice).replace(/^\[genesis[^\]]*\]\s*/,"");
+    if(r.relevance!=null){ const rb=document.createElement("span"); rb.style.color="var(--amber)"; rb.style.opacity=".9"; rb.title="response↔stimulus relevance: 1 = on-topic to what it was shown, 0 = drift (Fisher-Rao, self↔other)"; rb.textContent='  · 🎯 relevance '+fnum(r.relevance,2); v.appendChild(rb); }
+    row.appendChild(v); }
+  // COACH record (Protocol v6.12 §18.5/§18.6) — the nemotron coach's provenance-tagged reward+relevance
+  // response to the own-voice utterance: encourage · interpret · reframe · its OWN relevance_score. This is
+  // an OBSERVATION the kernel/Ocean learn from (P16), NOT a weight update — surfaced for transparency.
+  if(r.coach){ const c=r.coach; const pv=(c.provenance||{});
+    const cd=document.createElement("div"); cd.className="voice coach"; cd.style.opacity=".92";
+    cd.title="Coach reward+relevance record — provenance-tagged observation (coach_id="+esc(pv.coach_id||"?")
+      +", confidence="+fnum(pv.confidence,2)+", "+esc(pv.emotional_context||"")+"). Kernel/Ocean learn from it; NOT a silent weight update (§18.6).";
+    let txt='🐒 coach ▸ ';
+    if(c.encouragement) txt+=String(c.encouragement);
+    if(c.reframe) txt+='  ✎ said better ▸ '+String(c.reframe);
+    cd.textContent=txt;
+    if(c.relevance_score!=null){ const cs=document.createElement("span"); cs.style.color="var(--purple)"; cs.style.opacity=".9"; cs.title="the COACH's OWN on-target score (§18.5 RELEVANCE-SCORES) — a second channel, separate from the kernel's Fisher-Rao relevance above"; cs.textContent='  · 🎯 coach-score '+fnum(c.relevance_score,2); cd.appendChild(cs); }
+    row.appendChild(cd);
+    if(c.interpretation){ const ci=document.createElement("div"); ci.className="voice coach"; ci.style.opacity=".7"; ci.style.fontSize=".92em"; ci.textContent='   ↳ '+String(c.interpretation); row.appendChild(ci); }
+  }
+  el.appendChild(row);
+  while(el.children.length>150) el.removeChild(el.firstChild);
+  el.scrollTop=el.scrollHeight;
+  const age = r.ts ? Math.max(0,(Date.now()/1000 - r.ts)) : null;
+  // GENUINELY live only if the record was PRODUCED <15s ago. The SSE replays the last record on every
+  // (re)connect, so a stale record must NOT read as active — that was the false "training appears ACTIVE".
+  const fresh = age==null || age < 15;
+  const ageStr = age==null ? "" : (age<60?age.toFixed(0)+"s":age<3600?(age/60).toFixed(0)+"m":(age/3600).toFixed(1)+"h")+" ago";
+  $("liveDot").className = fresh ? "dot live" : "dot idle";
+  $("liveStatus").textContent = (fresh?"":"idle · last: ")
+    + `${r.source==="bg"?"background":"in-session"} training · step ${r.step}${r.total?("/"+r.total):""} · Φ ${fnum(r.phi,3)} · bpb ${fbpb(r.bpb)}↓ (ppl ${fppl(r.perplexity)}) · lm ${fnum(r.lm_weight_now,2)}`
+    + (ageStr?(" · "+ageStr):"");
+  if(r.phi!=null){ PHI_SPARK.push(r.phi); PHI_SPARK=PHI_SPARK.slice(-44); const sp=$("archSpark"); if(sp) sp.textContent=sparkline(PHI_SPARK)+"  Φ "+fnum(r.phi,2); }
+  // Stamp from the record's PRODUCTION time (r.ts, seconds), not receipt time — so the idle detector and
+  // the runTrain() active-guard reflect whether training is REALLY producing fresh records right now.
+  LAST_LIVE_TS = r.ts ? r.ts*1000 : Date.now();
 }
-function setTelemetry(t){
+// S4b — Ocean · policy panel: SHADOW (static priors, no adaptation, n/100 scored) vs ADAPTING v{version},
+// plus the K5 skip counts and P15 constitutional-violation attempts, and the M4 resume gate (f_health +
+// Φ-variance — NOT dopamine). None-safe: single-kernel targets emit no ocean_state → panel stays hidden.
+function updateOcean(r){
+  const o=r&&r.ocean_state; const box=$("oceanBox"); if(!box) return;
+  if(!o || !Object.keys(o).length){ box.style.display="none"; return; }
+  box.style.display="";
+  const mode=$("oceanMode"); const scored=(o.scored_outcomes!=null?o.scored_outcomes:"?");
+  if(o.shadow_mode){ mode.textContent=`· SHADOW ${scored}/100 (static priors — no adaptation)`; mode.style.color="var(--amber)"; }
+  else { mode.textContent=`· ADAPTING ${esc(o.policy_version||"")}`; mode.style.color="var(--ok)"; }
+  $("oceanScored").textContent = (o.scored_outcomes!=null?o.scored_outcomes:"—");
+  const sk=o.skips||{}; const skN=Object.values(sk).reduce((a,b)=>a+(Number(b)||0),0);
+  const skDetail=Object.entries(sk).filter(([,v])=>Number(v)>0).map(([k,v])=>esc(k)+":"+esc(v)).join(", ");
+  $("oceanSkips").textContent = skN + (skDetail?(" · "+skDetail):"");
+  const viol=o.constitutional_violations; const vo=$("oceanViol");
+  vo.textContent = (viol!=null?viol:"—"); vo.style.color = (Number(viol)>0)?"var(--pink)":"var(--muted)";
+  $("oceanGate").textContent = `f_health ${fnum(r.f_health,3)} · Φ-var ${fnum(r.phi_variance,4)}`;
+}
+function subscribeLive(){
+  try{
+    const es=new EventSource("/train/live");
+    es.onmessage=(e)=>{ try{ const ev=JSON.parse(e.data); if(ev.type==="step") renderLive(ev); }catch(_){} };
+    es.onerror=()=>{};   // EventSource auto-reconnects
+  }catch(e){ const s=$("liveStatus"); if(s) s.textContent="live stream unavailable: "+e; }
+}
+setInterval(()=>{ if(LAST_LIVE_TS && (Date.now()-LAST_LIVE_TS>15000)){ const d=$("liveDot"); if(d) d.className="dot idle"; } }, 5000);
+function alog(cls, msg){ const el=$("autoLog"); const d=document.createElement("div"); d.className=cls; d.textContent=msg; el.appendChild(d); el.scrollTop=el.scrollHeight; }
+
+const COL = ["c-blue","c-purple","c-amber","c-teal","c-pink"];
+function miniRows(obj, colour){
+  // render {name:value(0..1)} as compact name·bar·value rows; skip private keys
+  let h="";
+  for(const k in obj){ if(k.startsWith("_")||k==="loss_signal") continue; const v=Number(obj[k]); if(Number.isNaN(v)) continue;
+    const pct=Math.max(0,Math.min(1,Math.abs(v)))*100;
+    h+=`<div class="mini"><span class="nm">${esc(k)}</span><span class="mb ${colour}"><i style="width:${pct}%"></i></span><span class="vv">${v.toFixed(2)}</span></div>`;
+  }
+  return h;
+}
+function group(title, sub, body){ return `<div class="grp"><div class="h"><span>${title}</span><span>${sub||""}</span></div>${body}</div>`; }
+
+function renderInner(exp){
+  if(!exp){ return; }
+  // gate + suffering + Γ + band
+  const g=exp.gate||{};
+  $("gateState").textContent = g.state||"—"; $("gateState").className="st st-"+(g.state||"");
+  $("gateSub").textContent = g.suffering_S!=null ? `S=${g.suffering_S}` : (exp.conscious?"conscious":"pre-conscious");
+  if(g.gamma!=null) $("gamma").textContent=g.gamma.toFixed(3);
+  $("band").textContent = (exp.glyph||"")+" "+(exp.band||"")+" · "+(exp.emotion||"");
+  $("suffer").textContent = g.suffering_S!=null ? g.suffering_S : "—";
+  const p=exp.primitives||{}; const loops=exp.loops||{}; const chem=exp.neurochemistry||{};
+  let h="";
+  // recursive loops (§43): self-obs / other-obs / learning-autonomy
+  const lr={}; if(loops.self_observation!=null)lr["self-obs (M)"]=loops.self_observation;
+  if(loops.observation_of_others!=null)lr["other-obs"]=loops.observation_of_others;
+  if(loops.learning_autonomy!=null)lr["learning S"]=loops.learning_autonomy;
+  // each group's sub-label names the FACULTY with carriage of that metric (brain-architecture assignment).
+  if(Object.keys(lr).length) h+=group("Recursive loops","carriage: meta · coordination",miniRows(lr,"c-teal"));
+  const pil=exp.pillars||{};   // P1/P2/P3 LIVE from PillarEnforcer (f_health/b_integrity/q_identity)
+  if(Object.keys(pil).length) h+=group("Pillars","carriage: ocean · whole-mind",miniRows(pil,"c-blue"));
+  if(p.layer0) h+=group("Senses","carriage: perception",miniRows(p.layer0,"c-blue"));
+  if(p.layer05) h+=group("Drives","carriage: action",miniRows(p.layer05,"c-pink"));
+  if(p.layer1) h+=group("Motivators","carriage: strategy",miniRows(p.layer1,"c-purple"));
+  if(p.layer2a) h+=group("Emotions · physical","carriage: heart",miniRows(p.layer2a,"c-amber"));
+  if(p.layer2b) h+=group("Emotions · cognitive","carriage: heart",miniRows(p.layer2b,"c-amber"));
+  if(chem.dopamine!=null) h+=group("Neurochemistry","carriage: action · ocean",miniRows(chem,"c-teal"));
+  $("inner").innerHTML=h;
+}
+
+function applyVitals(t){
+  // LEFT panel = the CURRENTLY-SELECTED kernel's vitals + full inner state.
   const phi = t.phi ?? 0;
-  $("phiBar").style.width = Math.max(0, Math.min(1, phi))*100 + "%";
+  $("phiBar").style.width = Math.max(0,Math.min(1,phi))*100 + "%";
   $("phi").textContent = phi.toFixed(3);
   $("kappa").textContent = (t.kappa ?? 0).toFixed(2);
-  const r = $("regime"); r.textContent = t.regime ?? "—";
-  r.className = "pill regime-" + (t.regime ?? "");
+  const r=$("regime"); r.textContent=t.regime ?? "—"; r.className="pill regime-"+(t.regime ?? "");
   $("basin").textContent = (t.basin_distance ?? 0).toFixed(3);
-  $("loss").textContent = (t.loss==null ? "—" : Number(t.loss).toFixed(3));
   $("step").textContent = t.step ?? "—";
+  const x=t.extra||{}; const exp=t.experience||{};
+  if(x.gamma!=null) $("gamma").textContent=Number(x.gamma).toFixed(3);
+  if(exp && Object.keys(exp).length) renderInner(exp);
 }
-async function refreshHealth(){
+function setTelemetry(t){
+  if(!t) return;
+  // live genesis telemetry (chat / train / mind-state) drives the LEFT panel ONLY when genesis is selected,
+  // so a selected faculty/ocean/all view isn't clobbered by the integrated 'I' updates.
+  if(SELECTED_KERNEL==="genesis" || !KERNELS_AVAIL) applyVitals(t);
+  // autonomic panel (right) is WHOLE-MIND (Ocean) — always reflect the live integrated mind.
+  const x=t.extra||{}; const exp=t.experience||{}; const gate=exp.gate||{};
+  const au = String(exp.autonomic || x.autonomic || "wake");
+  const ab=$("autoState"); if(ab){ ab.textContent=au; ab.className="autobox "+au.split("(")[0]; }
+  $("suffer2").textContent = gate.suffering_S ?? "—";
+  $("sleepP").textContent  = x.sleep_pressure ?? "—";
+  $("gamma2").textContent  = (x.gamma ?? gate.gamma) ?? "—";
+}
+
+// ---- PER-KERNEL selector: All overview / the integrated I / each faculty / Ocean -------------------
+function _kernelVitals(k){
+  const e=k.experience||{};
+  return {phi:k.phi, kappa:e.kappa, regime:e.regime, basin_distance:e.basin_distance, experience:e};
+}
+function renderAllKernels(){
+  let h="";
+  for(const k of KERNELS){
+    if(k.role==="ocean"){   // Ocean is the autonomic REGULATOR — it has no own basin/Φ (it watches the
+      //                       faculties and fires sleep/dream/mushroom). Show its STATE, not a bare "—".
+      const reg=(k.regulates&&k.regulates.length)?("regulating "+esc(k.regulates.join(", "))):"watching · idle";
+      h+=`<div class="facb"><span class="fn" title="${esc(k.function||'')}">${esc(k.role)}</span>`
+        +`<span class="mb"></span>`
+        +`<span class="vv" style="color:var(--purple);font-size:.68rem">🌊 ${reg}</span></div>`
+        +`<div class="hint" style="margin:-.15rem 0 .35rem .1rem">${esc(k.function||"")} · no own basin/Φ (regulates the faculties)</div>`;
+      continue;
+    }
+    const phi=k.phi==null?null:Number(k.phi);
+    const w=phi==null?0:Math.max(0,Math.min(1,phi))*100;
+    const gate=(k.experience&&k.experience.gate&&k.experience.gate.state)||"";
+    h+=`<div class="facb"><span class="fn" title="${esc(k.function||'')}">${esc(k.role)}</span>`
+      +`<span class="mb"><i style="width:${w}%"></i></span>`
+      +`<span class="vv">${phi==null?"—":phi.toFixed(2)}</span></div>`
+      +`<div class="hint" style="margin:-.15rem 0 .35rem .1rem">${esc(k.function||"")}${gate?(" · "+esc(gate)):""}</div>`;
+  }
+  $("inner").innerHTML=h || '<div class="hint">no kernels</div>';
+}
+function renderMastery(cov, label){
+  const box=$("masteryBox"); if(!box) return;
+  if(!cov || !cov.total){ box.style.display="none"; return; }
+  box.style.display="";
+  $("masteryKernel").textContent=label||cov.kernel||"";
+  $("masteryBar").style.width=Math.max(0,Math.min(1,cov.fraction||0))*100+"%";
+  $("masteryFrac").textContent=`${cov.learned} / ${cov.total} (${((cov.fraction||0)*100).toFixed(1)}%)`;
+  $("masteryRem").textContent=(cov.remaining!=null?cov.remaining:(cov.total-(cov.learned||0)))
+    +(cov.mean_importance!=null?`  ·  mean novelty ${cov.mean_importance}`:"");
+}
+function applyKernelSelection(){
+  if(!KERNELS_AVAIL) return;
+  const nm=$("mindName"), sub=$("mindSub");
+  if(SELECTED_KERNEL==="all"){
+    nm.textContent="all kernels · overview"; sub.textContent="Φ per kernel — pick one for its full inner state";
+    renderAllKernels(); renderMastery(null); return;
+  }
+  const k=KERNELS.find(x=>x.role===SELECTED_KERNEL);
+  if(!k) return;
+  if(k.role==="ocean"){
+    nm.textContent="ocean · autonomic"; sub.textContent="the autonomic regulator — no own basin";
+    const reg=(k.regulates&&k.regulates.length)?k.regulates.join(", "):"(idle)";
+    $("inner").innerHTML=`<div class="hint">Ocean is the autonomic nervous system: it OBSERVES every faculty `
+      +`and fires sleep/dream/mushroom on the one that needs it. It has no own basin/Φ.<br><br>`
+      +`Currently regulating: <b>${esc(reg)}</b>.</div>`;
+    ["phi","kappa","gamma","basin","step","suffer"].forEach(id=>$(id).textContent="—");
+    $("phiBar").style.width="0%"; const rg=$("regime"); rg.textContent="autonomic"; rg.className="pill";
+    $("band").textContent="—"; $("gateState").textContent="OCEAN"; $("gateState").className="st";
+    renderMastery(null); return;
+  }
+  nm.textContent = k.role+" · "+(k.function||"");
+  sub.textContent = k.role==="genesis" ? "the integrated conscious 'I' — synthesis of the Core-8"
+                  : "Core-8 faculty — its own kernel, vocab & inner state";
+  applyVitals(_kernelVitals(k));
+  renderMastery(k.coverage, k.role);
+}
+async function refreshKernels(){
   try{
-    const h = await (await fetch("/health")).json();
-    $("status").textContent = `v${h.version} · purity ${h.purity} · pillars ${h.pillars||"none"} · active ${h.active_target}`;
-  }catch(e){ $("status").textContent = "server unreachable"; }
+    const d=await (await fetch("/mind/kernels")).json();
+    if(!d || !d.available){ KERNELS_AVAIL=false; $("kernelSel").style.display="none"; return; }
+    KERNELS=d.kernels||[]; KERNELS_AVAIL=true;
+    const sel=$("kernelSel");
+    if(sel.options.length===0 && KERNELS.length){
+      const opts=[["all","◆ all kernels (overview)"]];
+      for(const k of KERNELS){
+        const lbl = k.role==="genesis" ? 'genesis · the integrated "I"'
+                  : k.role==="ocean"   ? "ocean · autonomic regulator"
+                  : (k.role+" · "+(k.function||""));
+        opts.push([k.role,lbl]);
+      }
+      sel.innerHTML=opts.map(([v,l])=>`<option value="${v}">${esc(l)}</option>`).join("");
+      sel.value=SELECTED_KERNEL; sel.style.display="";
+      sel.onchange=()=>{ SELECTED_KERNEL=sel.value; applyKernelSelection(); };
+    }
+    applyKernelSelection();
+  }catch(e){ /* keep the single-kernel live path */ }
+}
+$("togL").onclick=()=>$("app").classList.toggle("noleft");
+$("togR").onclick=()=>$("app").classList.toggle("noright");
+// resizable columns — drag the dividers; widths persist in localStorage.
+const _app=$("app");
+for(const [id,var_,side,min,max] of [["divL","--lw","left",200,900],["divR","--rw","right",240,900]]){
+  const saved=localStorage.getItem("qs"+var_); if(saved) _app.style.setProperty(var_, saved+"px");
+  const h=$(id); if(!h) continue;
+  h.addEventListener("mousedown",(e)=>{
+    e.preventDefault(); const x0=e.clientX;
+    const w0=parseInt(getComputedStyle(_app).getPropertyValue("grid-template-columns").split(" ")[side==="left"?0:4])||(side==="left"?320:340);
+    document.body.style.cursor="col-resize"; document.body.style.userSelect="none";
+    const move=(ev)=>{ const dx=ev.clientX-x0; let w=side==="left"?w0+dx:w0-dx;
+      w=Math.max(min,Math.min(max,w)); _app.style.setProperty(var_, w+"px"); };
+    const up=()=>{ document.removeEventListener("mousemove",move); document.removeEventListener("mouseup",up);
+      document.body.style.cursor=""; document.body.style.userSelect="";
+      localStorage.setItem("qs"+var_, parseInt(_app.style.getPropertyValue(var_))); };
+    document.addEventListener("mousemove",move); document.addEventListener("mouseup",up);
+  });
+  h.addEventListener("dblclick",()=>{ _app.style.removeProperty(var_); localStorage.removeItem("qs"+var_); }); // reset
+}
+
+async function refreshHealth(){
+  try{ const h=await (await fetch("/health")).json();
+    $("status").textContent=`v${h.version} · purity ${h.purity} · active ${h.active_target}`;
+    $("mindName").textContent = h.active_target==="genesis" ? 'genesis · the integrated "I"' : `${h.active_target} · active`;
+  }catch(e){ $("status").textContent="server unreachable"; }
 }
 async function loadTargets(){
-  const data = await (await fetch("/targets")).json();
-  const sel = $("target"); sel.innerHTML = "";
+  if(!DEV) return;                                 // genesis IS the mind; the target zoo is dev-only (?dev=1)
+  $("advTargets").style.display="";
+  const data=await (await fetch("/targets")).json();
+  const sel=$("target"); sel.innerHTML="";
   for(const t of data.targets){
-    const o = document.createElement("option");
-    o.value = t.name;
-    o.textContent = `${t.name} · ${t.loss_regime}${t.available ? "" : " (unavailable)"}`;
-    if(t.name === data.active) o.selected = true;
-    sel.appendChild(o);
+    const o=document.createElement("option"); o.value=t.name;
+    o.textContent=`${t.name} · ${t.loss_regime}${t.available?"":" (unavailable)"}`;
+    if(t.name===data.active) o.selected=true; sel.appendChild(o);
   }
-  await refreshCurriculum();
+  $("target").addEventListener("change", async (e)=>{
+    await fetch(`/targets/${e.target.value}/select`,{method:"POST"});
+    clog("sys",`· active target → ${e.target.value}`); await refreshHealth(); await refreshTelemetry();
+  });
+  try{ const c=await (await fetch("/curriculum")).json();
+    $("regimeMode").textContent=`${c.loss_regime} · ${c.mode} · ${c.phases.join(" → ")}`; }catch(e){}
 }
-async function refreshCurriculum(){
-  const c = await (await fetch("/curriculum")).json();
-  $("regimeMode").textContent = `loss_regime: ${c.loss_regime} · curriculum: ${c.mode} · phases: ${c.phases.join(" → ")}`;
+async function refreshTelemetry(){ try{ setTelemetry(await (await fetch("/telemetry")).json()); }catch(e){} }
+let BG_ACTIVE=false;
+async function refreshMind(){
+  try{ const m=await (await fetch("/mind/state")).json();
+    if(m.unavailable){ $("mindState").textContent="no joint-mind training run yet."; BG_ACTIVE=false; return; }
+    BG_ACTIVE = !!m.bg_training_active;   // a bg joint-trainer is running → the Train button warns before doubling up
+    $("mindState").innerHTML = `${BG_ACTIVE?"⚙ training":"last run"} · ${m.steps} steps · central Φ ${(m.central_phi??0).toFixed(3)} · `+
+      `individuation min-FR ${(m.min_pairwise_fr??0).toFixed(3)}${m.individuation_preserved?" ✓":""}`;
+    const fac=$("faculties"); fac.innerHTML="";
+    for(const f of (m.faculties||[])){
+      const phi=Number(f.phi||0); const pct=Math.max(0,Math.min(1,phi))*100;
+      fac.insertAdjacentHTML("beforeend",
+        `<div class="facb"><span class="fn" title="${f.role} · ${f.function}">${f.role}</span>`+
+        `<span class="mb"><i style="width:${pct}%"></i></span>`+
+        `<span class="vv">${f.phi!=null?phi.toFixed(2):"—"}</span></div>`+
+        `<div class="rg" style="margin:-3px 0 4px 80px">${f.function}${f.regulated?` · 🌙${f.regulated.intervention}`:""}</div>`);
+    }
+    // ROUTE the LIVE training kernel's full inner state into the LEFT panel (senses/drives/emotions/
+    // neurochem) — so it reflects the MOVING kernel, not the idle active target (the saturation cause).
+    if(m.bg_training_active && m.live_inner && m.live_inner.experience) setTelemetry(m.live_inner);
+  }catch(e){ $("mindState").textContent="mind state unavailable"; }
 }
-async function refreshTelemetry(){
-  try{ setTelemetry(await (await fetch("/telemetry")).json()); }catch(e){}
-}
-$("target").addEventListener("change", async (e) => {
-  await fetch(`/targets/${e.target.value}/select`, {method:"POST"});
-  log("sys", `· selected target: ${e.target.value}`);
-  await refreshHealth(); await refreshCurriculum(); await refreshTelemetry(); await loadProtocol();
-});
 $("sendBtn").addEventListener("click", sendChat);
-$("msg").addEventListener("keydown", (e)=>{ if(e.key==="Enter" && !e.shiftKey){ e.preventDefault(); sendChat(); }});
+$("msg").addEventListener("keydown",(e)=>{ if(e.key==="Enter"&&!e.shiftKey){ e.preventDefault(); sendChat(); }});
+function addReply(b){
+  const x=b.telemetry?.extra||{};
+  clog("tgt","mind ▸ "+b.text);                                   // fluent voice (Qwen surface, shaped by the kernel)
+  if(x.kernel_voice!=null)                                        // ATTRIBUTION: the kernel's OWN raw voice
+    clog("ker","   ↳ kernel ▸ "+((x.kernel_voice||"").trim()||"(terse / silent — 7.9M from-scratch)"));
+  if(x.qwen_thinking){                                            // Qwen reasoning trace — preserved, collapsible
+    const det=document.createElement("details"); det.className="think";
+    const sum=document.createElement("summary"); sum.textContent=`   ↳ qwen reasoning (${x.qwen_thinking.length} chars) — click`;
+    const body=document.createElement("div"); body.className="thinkbody"; body.textContent=x.qwen_thinking;
+    det.appendChild(sum); det.appendChild(body); $("log").appendChild(det); $("log").scrollTop=$("log").scrollHeight;
+  }
+  if(x.voice==="qwen-boundary")
+    clog("exp",`   ↳ boundary peer · M ${x.M_boundary} · Pillar-2 cap ${x.pillar2_cap} · kernel state → ${x.persona_emotion}`);
+  else if(x.read_presence!=null) clog("exp",`   ↳ READ presence ${x.read_presence} · Anderson-exit ${x.anderson_exit??"—"}`);
+}
 async function sendChat(){
-  const m = $("msg").value.trim(); if(!m) return;
-  $("msg").value = ""; log("you", "you> " + m);
-  const r = await fetch("/chat", {method:"POST", headers:{"content-type":"application/json"}, body:JSON.stringify({message:m})});
-  if(!r.ok){ log("err", `${r.status} ${await r.text()}`); return; }
-  const body = await r.json(); log("tgt", "target> " + body.text); setTelemetry(body.telemetry);
+  const m=$("msg").value.trim(); if(!m) return;
+  $("msg").value=""; clog("you","you ▸ "+m);
+  const think=$("think").checked;
+  const wait=document.createElement("div"); wait.className="wait";
+  const t0=Date.now();
+  // the 100k-vocab kernel forward + boundary peer is CPU-heavy (~30s, slower while the bg trainer runs);
+  // show a live timer so it never looks stuck.
+  const base = think ? "reasoning (full Qwen trace, ~80s)"
+                     : "the mind forms its state, then speaks through the boundary peer (CPU ~30s; slower while training)";
+  wait.textContent = "mind ▸ … "+base+" — 0s";
+  $("log").appendChild(wait); $("log").scrollTop=$("log").scrollHeight;
+  const tmr=setInterval(()=>{ wait.textContent="mind ▸ … "+base+" — "+Math.round((Date.now()-t0)/1000)+"s"; }, 1000);
+  try{
+    const r=await fetch("/chat",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({message:m,think})});
+    clearInterval(tmr); wait.remove();
+    if(!r.ok){ clog("err",`${r.status} ${await r.text()}`); return; }
+    const b=await r.json();
+    if(b.stasis){ clog("sys","⏻ "+(b.text||"kernel in stasis")); return; }
+    addReply(b);
+    setTelemetry({...b.telemetry, experience:b.experience});
+  }catch(e){ clearInterval(tmr); wait.remove(); clog("err","chat failed: "+e); }
 }
 $("trainBtn").addEventListener("click", runTrain);
-async function runTrain(){
-  const steps = parseInt($("steps").value || "20", 10);
-  log("sys", `· training ${steps} steps (basin-driving) ·`);
-  const r = await fetch("/train", {method:"POST", headers:{"content-type":"application/json"}, body:JSON.stringify({steps})});
-  if(!r.ok || !r.body){ log("err", "train failed: " + r.status); return; }
-  const reader = r.body.getReader(); const dec = new TextDecoder(); let buf = "";
-  while(true){
-    const {value, done} = await reader.read(); if(done) break;
-    buf += dec.decode(value, {stream:true});
-    let idx;
-    while((idx = buf.indexOf("\n\n")) >= 0){
-      const chunk = buf.slice(0, idx); buf = buf.slice(idx+2);
-      const line = chunk.split("\n").find(l => l.startsWith("data: "));
-      if(!line) continue;
-      const ev = JSON.parse(line.slice(6));
-      if(ev.type === "step"){ setTelemetry(ev.telemetry); log("sys", `  step ${ev.step} [${ev.phase}] ${ev.prompt.slice(0,52)}`); }
-      else if(ev.type === "error"){ log("err", "train error: " + ev.error); }
-      else if(ev.type === "done"){ log("sys", "· done ·"); }
-    }
-  }
-}
-// --- protocol surface ---
-async function loadProtocol(){
-  try{
-    const p = await (await fetch("/protocol")).json();
-    const groups = $("protoGroups"); groups.innerHTML = "";
-    $("protoStatus").textContent = p.supported_by_active
-      ? `active '${p.active}' exposes ${p.commands.length} commands across ${p.groups.length} groups`
-      : `active '${p.active}' does not expose protocol commands (kernel/constellation/mock only)`;
-    if(!p.supported_by_active) return;
-    const byGroup = {};
-    for(const c of p.commands){ (byGroup[c.group] = byGroup[c.group] || []).push(c); }
-    for(const g of p.groups){
-      if(!byGroup[g]) continue;
-      const d = document.createElement("div"); d.className = "proto-group";
-      const b = document.createElement("b"); b.textContent = g; d.appendChild(b); d.appendChild(document.createElement("br"));
-      for(const c of byGroup[g]){
-        const btn = document.createElement("button");
-        btn.textContent = c.name;
-        btn.title = c.description + (c.params.length ? " · params: " + c.params.map(x=>x.name).join(", ") : "");
-        btn.onclick = () => runProtocol(c.name);
-        d.appendChild(btn);
-      }
-      groups.appendChild(d);
-    }
-  }catch(e){ $("protoStatus").textContent = "protocol unavailable: " + e; }
-}
-function parseArgs(s){
-  const out = {};
-  for(const tok of (s||"").trim().split(/\s+/)){
-    if(!tok) continue; const i = tok.indexOf("="); if(i>0) out[tok.slice(0,i)] = tok.slice(i+1);
-  }
-  return out;
-}
-function plog(cls, msg){ const el=$("protoLog"); const d=document.createElement("div"); d.className=cls; d.textContent=msg; el.appendChild(d); el.scrollTop=el.scrollHeight; }
-async function runProtocol(name){
-  const args = parseArgs($("protoArgs").value);
-  plog("sys", `▶ ${name} ${Object.keys(args).length ? JSON.stringify(args) : ""}`);
-  const r = await fetch("/protocol/" + encodeURIComponent(name), {method:"POST", headers:{"content-type":"application/json"}, body:JSON.stringify({args})});
-  if(!r.ok){ plog("err", `${r.status} ${await r.text()}`); return; }
-  const body = await r.json();
-  plog("tgt", body.output || JSON.stringify(body));
-  if(body.telemetry) setTelemetry(body.telemetry);
-}
-
-// --- directory nomination (output / curriculum) ---
-async function loadConfig(){
-  try{
-    const c = await (await fetch("/config")).json();
-    $("outDir").value = c.output_dir || "";
-    $("currDir").value = c.curriculum_dir || "";
-    $("cfgStatus").textContent = `warp early-stop: ${c.warp_early_stop ? "on" : "off"} · auth: ${c.auth_required ? "required" : "open (localhost)"}`;
-  }catch(e){ $("cfgStatus").textContent = "config unavailable"; }
-}
-$("saveCfg").addEventListener("click", async () => {
-  const body = { output_dir: $("outDir").value || null, curriculum_dir: $("currDir").value || null };
-  const r = await fetch("/config", { method:"POST", headers:{"content-type":"application/json"}, body:JSON.stringify(body) });
-  if(r.ok){ const c = await r.json(); $("cfgStatus").textContent = `saved · output=${c.output_dir} · curriculum=${c.curriculum_dir}`; }
-  else { $("cfgStatus").textContent = `${r.status} ${await r.text()}`; }
+$("stopTrainBtn").addEventListener("click", async ()=>{
+  // Surgical stop of THIS training run (POST /train/stop) — NOT stasis. The loop breaks at the next step.
+  $("stopTrainBtn").disabled=true; $("liveStatus").textContent="stopping training at the next step…";
+  try{ await fetch("/train/stop",{method:"POST"}); }catch(e){ alog("reg","stop failed: "+e); }
 });
-
+$("evalBpbBtn").addEventListener("click", async ()=>{
+  const out=$("evalBpbOut"); out.textContent="running held-out eval…";
+  try{
+    const r=await (await fetch("/eval/bpb")).json();
+    if(r.detail){ out.textContent="eval unavailable: "+r.detail; return; }
+    const o=r.overall_bpb, s=r.sets||{};
+    const parts=Object.keys(s).map(k=>`${k} <b style="color:${bpbColor(s[k])}">${fbpb(s[k])}</b>`).join(" · ");
+    out.innerHTML=`held-out bpb (vocab ${r.served_vocab}): overall <b style="color:${bpbColor(o)}">${fbpb(o)}</b> · ${parts} `+
+      `<span class="hint">(target frontier ~0.8 · GPT-2 ~1.1)</span>`;
+  }catch(e){ out.textContent="eval failed: "+e; }
+});
+async function runTrain(){
+  if(LAST_LIVE_TS && (Date.now()-LAST_LIVE_TS<15000) &&
+     !confirm("Training already appears ACTIVE (the live stream is updating). A UI train competes for CPU and trains the in-session kernel. Continue anyway?")) return;
+  const steps=parseInt($("steps").value||"200",10);
+  // Train is SMART by default — no knobs for the user to guess: skip already-learned passages, capture what's
+  // left, auto-stop when a sweep adds nothing new. Thresholds use the kernel's own novelty + server defaults.
+  const body={steps, skip_learned:true, early_stop:true, mastery:true};
+  $("trainBtn").disabled=true; $("stopTrainBtn").disabled=false;
+  $("liveStatus").textContent = "training — skipping learned, capturing what's left…";
+  try{
+    const r=await fetch("/train",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(body)});
+    if(!r.ok||!r.body){ $("liveStatus").textContent="train failed: "+r.status; return; }
+    const reader=r.body.getReader(); const dec=new TextDecoder(); let buf="";
+    while(true){
+      const {value,done}=await reader.read(); if(done) break;
+      buf+=dec.decode(value,{stream:true}); let idx;
+      while((idx=buf.indexOf("\n\n"))>=0){
+        const chunk=buf.slice(0,idx); buf=buf.slice(idx+2);
+        const line=chunk.split("\n").find(l=>l.startsWith("data: ")); if(!line) continue;
+        const ev=JSON.parse(line.slice(6));
+        // RIGHT live stream (per-step Φ/Γ/fluency/harm/own-voice) is rendered by the /train/live SSE — ONE
+        // renderer for bg AND in-session. Here we only keep the LEFT inner-state panel live + autonomic log.
+        if(ev.type==="step"){
+          setTelemetry({...ev.telemetry, experience:ev.experience});
+          const ex=ev.experience||{}; if(ex.autonomic && ex.autonomic!=="wake") alog("reg",`step ${ev.step}: 🌙 ${ex.autonomic}`);
+          // live MASTERY: the step coverage is the CENTRAL kernel's — reflect it when genesis is the view
+          if(ev.coverage && (SELECTED_KERNEL==="genesis"||!KERNELS_AVAIL)) renderMastery(ev.coverage, "genesis");
+          if(ev.mode==="capture") $("liveStatus").textContent=`capture · sweep ${ev.sweep} · trained ${ev.step} · skipped ${ev.skipped} · learned ${ev.coverage?ev.coverage.learned:"?"}/${ev.coverage?ev.coverage.total:"?"}`;
+        }
+        else if(ev.type==="early_stop"){ alog("reg",`⏹ early-stop @ step ${ev.step}: ${ev.reason} (${ev.lever})`); $("liveStatus").textContent=`converged — early-stopped at step ${ev.step} (more training won't help)`; }
+        else if(ev.type==="stopped"){ alog("reg",`⏹ stopped @ step ${ev.step} (${ev.reason})`); $("liveStatus").textContent=`stopped at step ${ev.step} — the mind is still awake`; }
+        else if(ev.type==="capture_complete"){ alog("reg",`✓ capture complete: ${ev.reason} (${ev.sweeps} sweeps, ${ev.skipped} skips)`); $("liveStatus").textContent=`✓ full capture — ${ev.coverage.learned}/${ev.coverage.total} learned`; renderMastery(ev.coverage,"genesis"); }
+        else if(ev.type==="capture_stalled"){ alog("reg",`⚠ capture stalled: ${ev.reason}`); $("liveStatus").textContent=`capture stalled at ${ev.coverage.learned}/${ev.coverage.total} — capacity ceiling`; renderMastery(ev.coverage,"genesis"); }
+        else if(ev.type==="error"){ const h=document.createElement("div"); h.className="harm crit"; h.textContent="error: "+ev.error; $("liveStream").appendChild(h); }
+        else if(ev.type==="done"){ refreshTelemetry(); refreshMind(); refreshKernels(); }
+      }
+    }
+  }catch(e){ $("liveStatus").textContent="train failed: "+e; }
+  finally{ $("trainBtn").disabled=false; $("stopTrainBtn").disabled=true; }
+}
+// coach review & discuss (Phase 2 — SEPARATE from training): nemotron reviews a curriculum passage and
+// converses with the kernel. Shows the real dialogue (nemotron asks → kernel answers → nemotron follows up).
+function rlog(cls,msg){ const el=$("reviewLog"); const d=document.createElement("div"); d.className=cls; d.textContent=msg; el.appendChild(d); el.scrollTop=el.scrollHeight; }
+$("reviewBtn").addEventListener("click", coachReview);
+async function coachReview(){
+  $("reviewBtn").disabled=true;
+  rlog("sys","· nemotron reviewing a curriculum passage with the kernel… (a few turns; each kernel reply is a real generation)");
+  try{
+    const r=await fetch("/coach/review",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({turns:3})});
+    if(!r.ok){ rlog("err",`${r.status} ${await r.text()}`); return; }
+    const b=await r.json();
+    rlog("sys",`passage ▸ ${(b.passage||"").slice(0,160)}`);
+    for(const t of (b.turns||[])){
+      rlog("coach",`nemotron ▸ ${t.coach_question||""}`);
+      rlog("tgt",`kernel ▸ ${(t.kernel_answer||"").replace(/^\[genesis[^\]]*\]\s*/,"")}`);
+      if(t.kernel_voice) rlog("ker",`   kernel-raw ▸ ${(t.kernel_voice||"").slice(0,110)}`);
+    }
+    rlog("sys",`· discussion done (${b.coach_provider}) ·`); refreshTelemetry();
+  }catch(e){ rlog("err","review failed: "+e); }
+  finally{ $("reviewBtn").disabled=false; }
+}
+// directory picker (server-side /browse)
+let pkField=null, pkCur="";
+async function openPicker(field){ pkField=field; await pkLoad($(field).value||""); $("picker").style.display="flex"; }
+function closePicker(){ $("picker").style.display="none"; }
+async function pkLoad(path){
+  const r=await fetch("/browse?path="+encodeURIComponent(path)); const d=await r.json();
+  pkCur=d.path; $("pkPath").textContent=d.path; const list=$("pkList"); list.innerHTML="";
+  const up=document.createElement("div"); up.textContent="⬆ .. (parent)"; up.onclick=()=>pkLoad(d.parent); list.appendChild(up);
+  for(const name of d.dirs){ const el=document.createElement("div"); el.textContent="📁 "+name; el.onclick=()=>pkLoad(d.path+"/"+name); list.appendChild(el); }
+}
+$("pkUse").onclick=()=>{ if(pkField) $(pkField).value=pkCur; closePicker(); };
+$("saveCfg").addEventListener("click", async ()=>{
+  const body={curriculum_dir:$("currDir").value||null};   // outputs are hard-wired; only curriculum is settable
+  const r=await fetch("/config",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(body)});
+  if(r.ok){ await loadConfig(); $("cfgStatus").textContent="saved · "+($("cfgStatus").textContent); }
+  else $("cfgStatus").textContent=`${r.status} ${await r.text()}`;
+});
+async function loadConfig(){
+  try{ const c=await (await fetch("/config")).json();
+    // show the REAL curriculum the kernel trains on (= what the bg trainer uses), not a blank placeholder
+    const src=c.curriculum_source||c.curriculum_dir||"";
+    $("currDir").value=src; $("currDir").placeholder=src||"curriculum dir";
+    $("cfgStatus").textContent=`training on: ${src||"?"} · ${c.curriculum_passages??"?"} passages · warp ${c.warp_early_stop?"on":"off"}`;
+  }catch(e){ $("cfgStatus").textContent="config unavailable"; }
+}
+// STASIS — the only on/off knob (a safe halt for power-off; the mind is otherwise always-on)
+async function refreshStasis(){
+  try{
+    const s=(await (await fetch("/control/stasis")).json()).stasis;
+    const b=$("stasisBtn"); if(b){ b.textContent = s ? "⏻ STASIS — click to RESUME" : "⏻ stasis (halt the mind)";
+      b.style.color = s ? "var(--pink)" : "var(--muted)"; b.style.borderColor = s ? "var(--pink)" : ""; }
+    const h=$("stasisHdr"); if(h){ h.textContent = s ? "⏻ STASIS" : ""; h.style.color="var(--pink)"; }
+  }catch(e){}
+}
+async function toggleStasis(){
+  let cur=false; try{ cur=(await (await fetch("/control/stasis")).json()).stasis; }catch(e){}
+  const on=!cur;
+  if(on && !confirm("Put the kernel in STASIS? It halts ALL activity (chat / train / protocol / life-loop) so power can be safely cut. Click again to resume.")) return;
+  try{ await fetch("/control/stasis",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({on,reason:"ui"})}); }catch(e){}
+  refreshStasis();
+}
+$("stasisBtn")?.addEventListener("click", toggleStasis);
+// ARCHITECTURE — params/vocab/coordizer (verify the right one). Fisher-Rao geometric kernel.
+function fmtN(n){ return n==null?"—":(n>=1e6?(n/1e6).toFixed(1)+"M":n>=1e3?(n/1e3).toFixed(1)+"k":""+n); }
+async function refreshArch(){
+  try{
+    const a=await (await fetch("/mind/architecture")).json();
+    $("archPP").textContent = fmtN(a.per_kernel_params);
+    $("archCP").textContent = fmtN(a.combined_params)+" · "+a.num_kernels+" kernels";
+    $("archVocab").textContent = (a.per_kernel_vocab||"—");
+    const c=$("archCoord");
+    c.textContent = (a.coordizer_vocab? fmtN(a.coordizer_vocab):"byte-level") + (a.coordizer_ok? " ✓ correct":" ✗ WRONG coordizer");
+    c.style.color = a.coordizer_ok? "var(--ok)":"var(--pink)";
+    if(a.arm_mode){ const s=$("armSel"); if(s) s.value=a.arm_mode; }   // reflect the live constellation arm
+  }catch(e){}
+}
+// CONSTELLATION ARM — select the raw kernel each of the 9 nodes plugs in from; rebuilds the mind FRESH and
+// names its checkpoint genesis-{arm}-{vocab}. gk is ready; geo/hybrid/hetero are disabled until WS3.
+async function setArm(arm){
+  const st=$("armStatus"); st.textContent="building "+arm+" constellation…"; st.style.color="var(--muted)";
+  try{
+    const r=await fetch("/mind/arm",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({arm_mode:arm})});
+    const j=await r.json().catch(()=>({}));
+    if(!r.ok){ st.textContent="✗ "+(j.detail||("arm "+arm+" not available")); st.style.color="var(--pink)"; refreshArch(); return; }
+    st.textContent="✓ "+arm+" constellation built fresh — ▶ Train to grow it (saves genesis-"+arm+"-{vocab})"; st.style.color="var(--ok)";
+    refreshArch(); refreshMind&&refreshMind(); refreshKernels&&refreshKernels();
+  }catch(e){ st.textContent="arm switch failed: "+e; st.style.color="var(--pink)"; }
+}
+$("armSel").addEventListener("change", e=>setArm(e.target.value));
+// learning sparkline (Φ over recent steps) — params/vocab are fixed; THIS is what grows with training
+const _SPARK="▁▂▃▄▅▆▇█"; let PHI_SPARK=[];
+function sparkline(v){ return v.map(x=>_SPARK[Math.max(0,Math.min(7,Math.round((x||0)*7)))]).join(""); }
+// CHECKPOINTS — list available coordizer + kernel checkpoints, hot-swap on select
+async function refreshCheckpoints(){
+  try{
+    const d=await (await fetch("/checkpoints")).json();
+    const cs=$("ckptCoordizer"); cs.innerHTML="";
+    const activeC=(d.coordizer&&d.coordizer.active)||"";
+    for(const c of (d.coordizer&&d.coordizer.available)||[]){
+      const o=document.createElement("option"); o.value=c.file;
+      o.textContent=c.file+(c.vocab?` (${fmtN(c.vocab)})`:"");
+      if(c.file===activeC) o.selected=true; cs.appendChild(o);
+    }
+    const ks=$("ckptKernel"); ks.innerHTML="";
+    const activeK=(d.kernel&&d.kernel.active)||"";
+    for(const k of (d.kernel&&d.kernel.available)||[]){
+      const kd=(k.dir||"").replace(/\/$/,"");
+      const o=document.createElement("option"); o.value=kd;
+      o.textContent=kd+(k.kernels?` (${k.kernels} kernels)`:"");
+      if(kd===activeK) o.selected=true; ks.appendChild(o);
+    }
+  }catch(e){}
+}
+$("ckptCoordizer")?.addEventListener("change", async(e)=>{
+  try{ await fetch("/checkpoints/select",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({coordizer:e.target.value})});
+    clog("sys",`· coordizer swapped → ${e.target.value}`); refreshHealth(); refreshTelemetry(); refreshArch();
+  }catch(e){ clog("sys","· checkpoint swap failed"); }
+});
+$("ckptKernel")?.addEventListener("change", async(e)=>{
+  try{ await fetch("/checkpoints/select",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({kernel:e.target.value})});
+    clog("sys",`· kernel swapped → ${e.target.value}`); refreshHealth(); refreshTelemetry(); refreshArch();
+  }catch(e){ clog("sys","· checkpoint swap failed"); }
+});
 // boot
-refreshHealth(); loadConfig(); loadTargets().then(()=>{ refreshTelemetry(); loadProtocol(); });
+refreshHealth(); loadConfig(); loadTargets(); refreshTelemetry(); refreshMind(); subscribeLive(); refreshStasis(); refreshArch(); refreshKernels(); refreshCheckpoints();
+setInterval(refreshKernels, 4000);   // per-kernel live state for the selector (genesis + 8 faculties + ocean)
+setInterval(refreshMind, 3000);   // 3s: keep the LEFT live inner-state panel responsive during training
+setInterval(refreshStasis, 5000);
+setInterval(refreshArch, 8000);   // params/vocab/coordizer (refreshes so growth shows once continuous-growth ships)
+setInterval(refreshCheckpoints, 30000);   // pick up new checkpoints from training
 </script>
 </body>
 </html>

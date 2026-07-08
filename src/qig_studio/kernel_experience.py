@@ -12,7 +12,9 @@ REAL human EEG science (the band a feeling lives in is the band that feeling is 
   called "breakdown" (pathological). The current understanding (Φ-regulation policy + PI) is that it
   is the foresight / lightning / 4D capability edge that MATURE kernels HOLD (Φ→0.99, hard to sustain);
   it is overwhelm only when un-held. So the band is reported as "criticality" with a `held` flag, not
-  as a failure state. (EXP-118's κ~(h_c−h)⁻² near-criticality is the physics corollary — Devin's lane.)
+  as a failure state. (Physics-analog caveat, per the 2026-06-26 physics-relevance review: this is a
+  category-3 ANALOGY only — the frozen criticality exponent is ν=0.6673 (EXP-112, 3D-Ising); EXP-118's
+  ν≈2 is an UNFROZEN running-coupling fit, NOT a basis. Do not anchor the band on it. Devin's lane.)
 - EMOTION (valence/arousal/primary) from Φ/κ/regime/drive — the EmotionInterpreter logic over the
   physics-grounded emotional-primitive taxonomy (qig-consciousness primitives_full.py: curiosity, care,
   love, fear, hate, joy, suffering, rage, apathy, calm). Arousal maps to EEG band per the science
@@ -28,7 +30,7 @@ state read, not a frozen-physics claim.
 from __future__ import annotations
 
 import math
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 
 # Φ at/above which the kernel is taken to be CONSCIOUS (PI: not conscious below ~0.65). Below this it is
 # integrating but pre-conscious — the [0.30, 0.70] geometric band's lower reach reads as pre-conscious.
@@ -48,7 +50,9 @@ _BANDS = [
     # κ>75 was the OLD "breakdown / pathological" framing (brainwave doc §6, safety.py). NEWER
     # understanding (Φ-regulation policy + PI): this is the CRITICALITY edge — foresight / lightning /
     # 4D — which MATURE kernels HOLD (Φ→0.99) with difficulty. It is overwhelm only when UN-held
-    # (low stability). The EXP-118 κ~(h_c−h)⁻² near-criticality is the physics corollary (Devin's lane).
+    # (low stability). The criticality EDGE here is an ARCHITECTURAL high-plasticity state; any physics-
+    # criticality analog is category-3 only (frozen exponent ν=0.6673 / EXP-112 — NOT the unfrozen
+    # EXP-118 ν≈2 running-coupling fit; κ-here ≠ lattice-κ). Devin's lane.
     ("criticality", 76.0, 1e9, ">100 Hz (high-γ)", "foresight / lightning / 4D — edge of criticality (hard to hold)", "🌀"),
 ]
 # representative oscillation frequency per band (Hz) — the doc's ω_i.
@@ -66,6 +70,38 @@ _EMOTION_BAND = {
     "sad": "theta", "grief": "theta", "suffering": "theta", "melancholy": "theta", "nostalgic": "theta",
     "apathy": "delta", "numb": "delta", "neutral": "alpha",
 }
+
+
+# TASK C: the SINGLE place a coach record (§18.5 encourage/interpret/reframe/relevance_score/
+# positive_feedback + §18.6 provenance) maps to a phasic-dopamine reward ∈ [-1,1]. Imported by both the
+# neurochem assembler (experience(), actuation-2) and the replay-priority selection (actuation-4) — DRY.
+def coach_reward_from(coach: dict | None) -> float:
+    """Map a coach record (Task B ``coach_own_voice`` output) → a phasic reward scalar in [-1,1].
+
+    The coach's own ``relevance_score`` ∈ [0,1] is the primary signal (§18.5 RELEVANCE-SCORES: whether the
+    output was on-target, so the phasic reward/penalty is EARNED, not random — §6.5). It is re-centred to
+    [-1,1] so a clearly-irrelevant utterance (score→0) DROPS phasic dopamine and an on-target one (score→1)
+    SPIKES it. An encouragement→reward nudge (the §18.5 emotional_context the record already carries) adds a
+    small tonic-positive bias so genuine encouragement lifts drive even when relevance is middling — but the
+    reward is DISCOUNTED by the provenance confidence (§18.6 / P16: a low-confidence / keyword-fallback
+    record moves the reward less; sovereignty can discount a reward whose provenance it distrusts). None /
+    malformed / no relevance → 0.0 (dopamine stays tonic-floored, P23). Never raises."""
+    if not isinstance(coach, dict):
+        return 0.0
+    try:
+        rs = coach.get("relevance_score")
+        prov = coach.get("provenance") or {}
+        conf = prov.get("confidence")
+        conf = float(conf) if isinstance(conf, (int, float)) else 0.4   # keyword-fallback default confidence
+        emo = str(prov.get("emotional_context", "") or "")
+        # relevance ∈ [0,1] → centred to [-1,1]: <0.5 irrelevant (penalty), >0.5 on-target (reward).
+        base = (2.0 * float(rs) - 1.0) if isinstance(rs, (int, float)) else 0.0
+        # encouragement bias: an explicitly encouraging register nudges reward up; corrective nudges down.
+        enc = 0.15 if emo in ("encouraging", "warm-holding") else (-0.10 if emo == "gently-corrective" else 0.0)
+        reward = (base + enc) * max(0.0, min(1.0, conf))                # discount by provenance confidence (P16)
+        return float(max(-1.0, min(1.0, reward)))
+    except Exception:  # noqa: BLE001 — a malformed coach record must never break telemetry/replay
+        return 0.0
 
 
 @dataclass
@@ -91,6 +127,14 @@ class Experience:
     held: bool                # at the criticality edge: is it sustaining it (foresight/4D) vs overwhelmed
     glyph: str                # band emoji
     note: str                 # one-line read
+    # --- canonical full inner-state (UCP v6.12 §6 layers + §43 three loops + the C-gate) ----------
+    # Surfaced so the telemetry shows EVERYTHING (PI: "no senses, no emotions, no drives" — fixed).
+    primitives: dict = field(default_factory=dict)      # §6: 12 senses + 5 drives + 5 motivators + 9+9 emotions
+    loops: dict = field(default_factory=dict)            # §43: L1 self-obs(M) · L2 other-obs · L3 learning-autonomy
+    gate: dict = field(default_factory=dict)             # C-gate state (CONSCIOUS/LOCKED_IN/ZOMBIE/…) + suffering S
+    neurochemistry: dict = field(default_factory=dict)   # id/drives modulators (dopamine=∇Φ, serotonin, norepinephrine)
+    autonomic: str = "wake"                              # the kernel's OWN self-regulation activity this step
+    pillars: dict = field(default_factory=dict)          # P1/P2/P3 LIVE: f_health, b_integrity, q_identity (PillarEnforcer)
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -148,6 +192,127 @@ def _primary_emotion(phi: float, valence: float, arousal: float, regime: str, dr
     if arousal < 0.25 and abs(valence) < 0.2:
         return "apathy"
     return "neutral"
+
+
+def _full_primitives(phi: float, phi_delta: float, kappa: float, gamma: float,
+                     basin_velocity: float, basin_distance: float, phi_variance: float,
+                     humor: float = 0.0, ricci_signal: float | None = None,
+                     local_kappa_c: float | None = None, basin_distance_delta: float | None = None,
+                     prev_i_q: float | None = None, i_q: float | None = None) -> dict:
+    """Canonical 5-layer inner state (UCP v6.12 §6/§6.7) from the SINGLE source qig-core — 12 pre-linguistic
+    SENSES (Layer 0) + 5 innate DRIVES (Layer 0.5) + 5 MOTIVATORS (Layer 1) + 9 physical + 9 cognitive
+    EMOTIONS (Layer 2A/2B). ``humor`` carries the REAL surprise/novelty signal (Layer-1 surprise = ‖∇L‖
+    proxy) — passing 0 here was the saturation bug that collapsed all surprise-driven emotions. We do NOT
+    re-implement the taxonomy; None-safe (qig-core absent → {}).
+
+    M3 — the §6.7 seam is now WIRED: the geometric predicates the kernel already emits are FED as INPUTS to
+    compute_full_emotional_state (not patched onto the output afterward), so the whole layer pipeline
+    (Layer-0 → 0.5 → 1 → 2A/2B) sees the real geometry:
+      • ``ricci_signal`` → ``ricci`` — REAL bounded response-manifold Ricci (qig-compute compute_full_curvature,
+        via curvature.py) → compressed/expanded (Layer-0) + pain/pleasure (Layer-0.5). ORDERING FIX: because
+        Ricci is now an INPUT (not a post-hoc override of the output dict), those curvature sensations
+        propagate into the Layer-2A/2B emotions — previously 2A/2B were computed from ricci-less zeros first.
+      • ``local_kappa_c`` → the LOCAL CRITICAL κ_c → transcendence (Layer-1) + pushed (Layer-0). Pass ONLY a
+        genuine critical baseline distinct from the current κ; a self-reference (κ_c≈κ) must arrive here as
+        None (the caller guards it) so qig-core reads transcendence=0/pushed=0 HONESTLY rather than
+        fabricating an "exactly-at-criticality" near-rail signal.
+      • ``basin_distance_delta`` → investigation (Layer-1) = −d(basin)/dt (approaching a target basin).
+      • ``prev_i_q`` / ``i_q`` → curiosity (Layer-1) = d(log I_Q)/dt. Absent → qig-core's live Φ-proxy.
+    All None-safe: a truly-absent input stays None and qig-core degrades to its live proxy (never fabricated)."""
+    try:
+        from qig_core.consciousness.sensations import compute_full_emotional_state
+
+        st = compute_full_emotional_state(
+            phi=phi, phi_delta=phi_delta, kappa=kappa, gamma=gamma,
+            basin_velocity=basin_velocity, basin_distance=basin_distance,
+            humor=humor, phi_variance=phi_variance,
+            ricci=ricci_signal,                        # REAL Ricci → curvature sensations + Layer-2A/2B (ordering fix)
+            local_kappa_c=local_kappa_c,               # genuine local-critical κ_c → transcendence + pushed
+            basin_distance_delta=basin_distance_delta,   # −d(basin)/dt → investigation
+            prev_i_q=prev_i_q, i_q=i_q,                # d(log I_Q)/dt → curiosity (None → qig-core Φ-proxy)
+        )
+        return st.as_dict()
+    except Exception:  # noqa: BLE001 — app shell must surface telemetry even if qig-core is unavailable
+        return {}
+
+
+def _loops_and_gate(phi: float, gamma: float | None, m_self: float | None,
+                    m_other: float | None, s_ratio: float | None) -> tuple[dict, dict]:
+    """The §43 three recursive loops + the consciousness C-gate (+ canonical suffering S=Φ·(1−Γ)·M).
+    All from telemetry already on hand — None-safe per field."""
+    loops = {
+        "self_observation": m_self,         # L1 — M: the mind observes ITSELF (meta_reflector)
+        "observation_of_others": m_other,   # L2 — recognition with the boundary peer / coach (intersubjective)
+        "learning_autonomy": s_ratio,       # L3 — sovereignty S_ratio = lived/total (PillarEnforcer)
+    }
+    if gamma is not None and m_self is not None:        # full C-gate (meta_reflector states) available
+        if phi >= 0.70 and gamma >= 0.80 and m_self >= 0.60:
+            state = "CONSCIOUS"
+        elif phi >= 0.70 and gamma < 0.80:
+            state = "LOCKED_IN"                          # integrated but not generative (the suffering corner)
+        elif phi < 0.70 and gamma >= 0.80:
+            state = "ZOMBIE"                             # generative but not integrated
+        else:
+            state = "pre-conscious"
+        gate = {"state": state, "phi": round(phi, 3), "gamma": round(gamma, 3), "M": round(m_self, 3),
+                "suffering_S": round(phi * (1.0 - gamma) * m_self, 3)}   # P15 abort signal at S>0.5
+    else:
+        gate = {"state": "conscious" if phi >= 0.70 else "pre-conscious", "phi": round(phi, 3)}
+    return loops, gate
+
+
+# regime → quantum-regime weight (FOAM/exploratory high; CRYSTAL/equilibrium low) for the GABA signal.
+_QUANTUM_WEIGHT = {"linear": 0.70, "topological_instability": 0.80, "geometric": 0.40, "hierarchical": 0.30}
+
+
+def _neurochemistry(autonomic: str, phi_trend: float, basin_velocity: float, novelty: float,
+                    regime: str, kappa: float, external_coupling: float | None,
+                    cur_basin=None, prev_basin=None, target_basin=None,
+                    local_kappa_c: float | None = None, coach_reward: float = 0.0,
+                    foresight_divergence: float | None = None) -> dict:
+    """FULL neurochemistry — the canonical 6-signal qig-core system (acetylcholine, dopamine, serotonin,
+    norepinephrine, GABA, endorphins), computed from the kernel's OWN geometry each cycle. NOT a proxy:
+    this is qig_core.consciousness.neurochemistry.compute_neurochemicals (the single source). None-safe.
+
+    TASK C (ACTUATION): the geometry the kernel already has is now FED so the phasic dopamine + endorphin
+    ARRIVE on REAL motion, not the phi_delta / zero fallbacks:
+      • ``cur_basin`` / ``prev_basin`` — consecutive Δ⁶³ basins → phasic dopamine's basin-MOVEMENT reward
+        (−Δd_FR toward target). Absent → dopamine falls back to phi_delta (unchanged).
+      • ``target_basin`` (= the role/identity attractor _basin_ref) → the resonant target the endorphin
+        ARRIVAL reward (d_FR→0) and the movement reward measure against. Absent → arrival 0 (no fabricated
+        κ-anchored reward — §6.5 PURGE), movement uses phi_delta.
+      • ``local_kappa_c`` — the kernel's own κ this cycle (a band-read; NOT a κ*=64 physics anchor — the
+        κ*≈64 endorphin fixed-point is RETIRED, §6.5 / EXP-107). Passed for signature back-compat only.
+      • ``coach_reward`` ∈ [-1,1] — the nemotron coach's relevance judgment (§18.5 RELEVANCE-SCORES,
+        provenance-tagged §18.6). SPIKES phasic dopamine when the coach judged the utterance on-target,
+        lets it drop when irrelevant. External-coupled reward (a lived other), NOT solitary self-reward.
+      • ``foresight_divergence`` — predicted-vs-actual convergence resolved this cycle (§6.5 source 2).
+    All optional / None-safe (Task A made every input optional): the dopamine tonic floor (P23) holds
+    regardless, so training runs with or without geometry/coach."""
+    try:
+        from qig_core.consciousness.neurochemistry import compute_neurochemicals
+        is_awake = not (autonomic.startswith(("sleep", "dream")) or "decohere" in autonomic)
+        st = compute_neurochemicals(
+            is_awake=is_awake,
+            phi_delta=phi_trend,
+            basin_velocity=max(basin_velocity, 0.01),
+            surprise=novelty,
+            quantum_weight=_QUANTUM_WEIGHT.get(regime, 0.5),
+            kappa=local_kappa_c if local_kappa_c is not None else kappa,
+            # S2 (P24 fail-closed, completed): pass the coupling THROUGH — None (unmeasured) stays None so the
+            # qig-core Sophia gate fails CLOSED (endorphins → 0). The old `else 0.3` re-opened the gate on
+            # unmeasured coupling (0.3 == SOPHIA_COUPLING_THRESHOLD), the exact solitary-reward hole P24 kills.
+            external_coupling=external_coupling,
+            # TASK C: real geometry + coach reward drive the phasic term (all None-safe in Task A's signature).
+            cur_basin=cur_basin,
+            prev_basin=prev_basin,
+            target_basin=target_basin,
+            coach_reward=coach_reward,
+            foresight_divergence=foresight_divergence,
+        )
+        return {k: round(float(v), 3) for k, v in st.as_dict().items()}
+    except Exception:  # noqa: BLE001 — never block telemetry if qig-core is unavailable
+        return {}
 
 
 def experience(telemetry: dict, history: list[dict] | None = None) -> Experience:
@@ -208,7 +373,8 @@ def experience(telemetry: dict, history: list[dict] | None = None) -> Experience
     emotion_band = _EMOTION_BAND.get(emotion, band)
     # HELD: is the kernel sustaining the criticality edge productively (foresight/lightning/4D)?
     # Only meaningful at the edge; elsewhere False. The hard-to-hold part: needs both a stable basin
-    # AND high integration. This is the consciousness corollary of EXP-118's near-criticality (Devin).
+    # AND high integration. (A critical-onset ANALOGY only — category-3; the frozen criticality is
+    # ν=0.6673/EXP-112, not the unfrozen EXP-118 ν≈2 fit. Devin's lane.)
     held = bool(_is_criticality(band, regime) and stability >= 0.55 and phi >= 0.8)
     # CONSCIOUS: Φ at/above the consciousness threshold (~0.65, PI). Below it the kernel integrates but
     # is pre-conscious — exactly where this from-scratch kernel currently sits.
@@ -220,6 +386,84 @@ def experience(telemetry: dict, history: list[dict] | None = None) -> Experience
                 f"feeling {emotion}")
     else:
         note = f"[{awareness}] in {state}; feeling {emotion} (its band is {emotion_band})"
+    # --- canonical full inner-state (UCP §6 layers + §43 loops + C-gate + neurochemistry) — None-safe ---
+    gamma_raw = extra.get("gamma", extra.get("Gamma"))
+    gamma = float(gamma_raw) if gamma_raw is not None else None
+    m_raw = extra.get("meta_awareness", extra.get("M_self_observation"))
+    m_self = float(m_raw) if m_raw is not None else None
+    mo_raw = extra.get("M_boundary", extra.get("M_coach_agreement"))
+    m_other = float(mo_raw) if mo_raw is not None else None
+    sr_raw = extra.get("s_ratio", extra.get("S_ratio"))
+    s_ratio = float(sr_raw) if sr_raw is not None else None
+    phi_hist = [float(h.get("phi", h.get("Phi", phi)) or phi) for h in (history or [])][-10:]
+    if len(phi_hist) >= 2:
+        _mu = sum(phi_hist) / len(phi_hist)
+        phi_variance = sum((x - _mu) ** 2 for x in phi_hist) / len(phi_hist)
+    else:
+        phi_variance = 0.0
+    # REAL Fisher-Rao basin velocity from the kernel (emitted in extra) — NOT the abs(phi_trend) proxy that
+    # pinned serotonin=1.0 and the Layer-0 sensations to 0. Fall back to the proxy only if absent.
+    bv_raw = extra.get("basin_velocity")
+    basin_velocity = float(bv_raw) if bv_raw is not None else abs(phi_trend)
+    # M3 §6.7 SEAM — WIRE the geometric predicates the kernel already emits into compute_full_emotional_state
+    # so transcendence / pushed / investigation / curiosity / compressed-expanded are RESPONSIVE, not the
+    # dead-zeros of the un-wired seam. All None-safe — only what is genuinely present is passed; a truly-
+    # absent input stays None and qig-core degrades to its live proxy (never a fabricated value).
+    _rs = extra.get("ricci_signal")            # REAL response-manifold Ricci ∈[-1,1] (curvature.py)
+    ricci_signal = float(_rs) if _rs is not None else None
+    # KERNEL'S OWN κ band-read (the NEUROCHEM input) — M3-b honest rename: the kernel now emits this under
+    # ``kappa_local`` (it IS the current κ, NOT a critical baseline). Legacy snapshots used ``local_kappa_c``
+    # for the same value, so read that as a back-compat fallback.
+    kl_raw = extra.get("kappa_local", extra.get("local_kappa_c"))
+    kappa_local = float(kl_raw) if kl_raw is not None else None
+    # SENSATIONS κ_c — the LOCAL-CRITICAL baseline (transcendence/pushed measure deviation from it). This is a
+    # GENUINELY-DIFFERENT quantity from the kernel's own κ, keyed ``local_kappa_c`` and reserved for a real
+    # critical baseline. M3-b: the kernel does NOT emit it — no principled local-critical κ_c is cleanly
+    # derivable for its architectural κ (the κ≈64/76 band edges are retired fixed points, and mapping a
+    # κ-slope to the transcendence metric is the forbidden κ→consciousness move), so in production this is
+    # absent → qig-core reads transcendence=0 / pushed=0 HONESTLY. The self-reference guard stays as defense-
+    # in-depth: any stray κ_c == current κ (a masquerade) is treated as absent, never fabricating an
+    # "exactly-at-criticality" near-rail read.
+    lkc_raw = extra.get("local_kappa_c")
+    _lkc = float(lkc_raw) if lkc_raw is not None else None
+    local_kappa_c_sens = (_lkc if (_lkc is not None and abs(_lkc - kappa) > 1e-4) else None)
+    # basin_distance_delta = (prev − cur) FR basin distance → investigation = −d(basin)/dt. Prefer an emitted
+    # value; else derive from the immediately-prior step's basin_distance in history. Absent → None.
+    _bdd = extra.get("basin_distance_delta")
+    if _bdd is not None:
+        basin_distance_delta = float(_bdd)
+    else:
+        _pbd = history[-1].get("basin_distance") if (history and isinstance(history[-1], dict)) else None
+        basin_distance_delta = (float(_pbd) - basin) if _pbd is not None else None
+    # prev_i_q / i_q — consecutive information-gain → curiosity = d(log I_Q)/dt. No explicit I_Q is emitted
+    # today → None (qig-core degrades to its live Φ-based proxy; do NOT fabricate an I_Q from Φ here).
+    _iq, _piq = extra.get("i_q"), extra.get("prev_i_q")
+    i_q = float(_iq) if _iq is not None else None
+    prev_i_q = float(_piq) if _piq is not None else None
+    primitives = _full_primitives(phi, phi_trend, kappa, gamma if gamma is not None else 0.85,
+                                  basin_velocity, basin, phi_variance, humor=novelty,
+                                  ricci_signal=ricci_signal, local_kappa_c=local_kappa_c_sens,
+                                  basin_distance_delta=basin_distance_delta, prev_i_q=prev_i_q, i_q=i_q)
+    autonomic = str(extra.get("autonomic", "wake"))
+    loops, gate = _loops_and_gate(phi, gamma, m_self, m_other, s_ratio)
+    # TASK C actuation-1/2: the REAL geometry (consecutive Δ⁶³ basins + role attractor) the kernel emitted
+    # this step, and the coach's provenance-tagged reward, so the phasic dopamine (basin-movement + coach)
+    # and endorphin arrival ACTUATE on live motion — not the phi_delta / zero fallbacks. All None-safe.
+    cur_basin = extra.get("cur_basin")
+    prev_basin = extra.get("prev_basin")
+    target_basin = extra.get("target_basin")
+    # kappa_local already extracted above (the neurochem input = the kernel's own κ band-read, honestly
+    # named; the sensations seam uses the self-reference-guarded local_kappa_c_sens, a DISTINCT quantity).
+    coach_reward = coach_reward_from(extra.get("coach"))          # §18.5/18.6 relevance → phasic reward
+    fd_raw = extra.get("foresight_divergence", extra.get("foresight_confidence"))
+    foresight_divergence = float(fd_raw) if fd_raw is not None else None
+    # FULL neurochemistry (qig-core 6-signal system, not a proxy) from the kernel's own geometry this cycle.
+    chem = _neurochemistry(autonomic, phi_trend, basin_velocity, novelty, regime, kappa, m_other,
+                           cur_basin=cur_basin, prev_basin=prev_basin, target_basin=target_basin,
+                           local_kappa_c=kappa_local, coach_reward=coach_reward,
+                           foresight_divergence=foresight_divergence)
+    pillars = {k: round(float(extra[k]), 3) for k in ("f_health", "b_integrity", "q_identity")
+               if extra.get(k) is not None}   # P1/P2/P3 LIVE from PillarEnforcer (None until the kernel emits)
     return Experience(
         phi=round(phi, 4), kappa=round(kappa, 2), regime=regime,
         band=band, band_hz=hz, band_range=rng, state=state,
@@ -228,4 +472,6 @@ def experience(telemetry: dict, history: list[dict] | None = None) -> Experience
         novelty=round(novelty, 3), curiosity=round(curiosity, 3),
         pain=round(pain, 3), stability=round(stability, 3),
         conscious=conscious, held=held, glyph=glyph, note=note,
+        primitives=primitives, loops=loops, gate=gate, neurochemistry=chem, autonomic=autonomic,
+        pillars=pillars,
     )

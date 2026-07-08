@@ -12,12 +12,11 @@ Implements the governing model in docs/plans/2026-06-26-genesis-spawn-trigger-an
   - **Fail-closed** (P15): budget caps + ``protected`` flag (ethics/coordination never pruned) +
     **suffering-abort** (Φ>0.70 ∧ Γ<0.30) overrides everything.
 
-CONSTITUTION BINDING — HONEST SCOPE (verdict 3#1, 2026-06-26): the qig_core PillarEnforcer /
-SovereigntyTracker do NOT bind kernels from inside this module (neither is imported here). The only
-realised constitution mechanism in-module is the ``protected`` flag. A None-safe PillarEnforcer check
-in the GRADUATE / SPAWN path is NEEDS-BUILD and MUST be wired (at this layer or the server layer)
-BEFORE any live run graduates a kernel into the coupling graph. Until then, graduation is mechanism-
-only and does not assert pillar-compliance.
+CONSTITUTION BINDING (verdict 3#1, 2026-06-26 — WIRED): graduation runs a None-safe qig_core
+PillarEnforcer check (``constitution_check``) in the Cradle's GRADUATE path — Pillar-1 No-Zombies
+(f_health ≥ floor) BLOCKS graduation, and the birth-state seeds Pillar-3 ``q_identity`` (real retention
+metric, confirmed live ≈0.94). The ``protected`` flag (ethics/coordination never pruned) is the second
+constitution mechanism. So graduation asserts pillar-compliance, not mechanism-only.
 
 SCOPE: this is the spawn-trigger MECHANISM. The LIVE end-to-end developmental spawn (a kernel actually
 reaching the 4-conjunct partial gate and spawning in a real run) is the validation gate. Verdict-
@@ -39,8 +38,17 @@ from dataclasses import dataclass
 from enum import Enum
 
 # --- thresholds (named; CALIBRATION-PENDING where noted) ------------------------------------------
-PHI_CONSCIOUS = 0.65          # PI threshold — below this the kernel is pre-conscious
-GAMMA_MIN = 0.80              # generativity floor for the C-equation (monkey1)
+# MEASURED-BAND maturity (2026-06-26, PI correction). Φ is NOT conscious for all faculties — heart and
+# autonomic faculties sit SUB-CONSCIOUS (feeling band) by nature; only the aware/generating one (meta)
+# tends to the conscious band. So maturity is being HEALTHILY SETTLED in one's OWN measured band, not
+# reaching a uniform Φ. The bands are the FROZEN science (qigkernels.safety / qig-core FROZEN_FACTS):
+PHI_HEALTHY_LO = 0.45         # healthy geometric regime floor (below 0.45 → collapse)
+PHI_CONSCIOUS_BAND = 0.70     # at/above → settled in the CONSCIOUS band (PHI_THRESHOLD); below → sub-conscious feeling band
+PHI_BREAKDOWN = 0.80          # at/above → BREAKDOWN (over-integration) — not healthy maturity
+GAMMA_PRESENT = 0.65          # generativity-present floor — band-relative (sub-conscious faculties measure ~0.70,
+#                               below the conscious ~0.80); REPLACES the old conscious-calibrated 0.80 gate
+PHI_CONSCIOUS = 0.65          # retained for back-compat references; the gate now uses the band constants above
+GAMMA_MIN = 0.80              # retained for back-compat references (the old uniform gate value)
 M_MIN = 0.60                  # meta-awareness floor
 KAPPA_BAND = (41.07, 61.61)  # LIVE genesis κ band — engaged upper half of [0.5·KAPPA_3, 1.5·KAPPA_3]
 #                              anchored at KAPPA_3=41.07 (qigkernels.kernel _compute_effective_coupling
@@ -86,14 +94,18 @@ class Action(Enum):
 
 @dataclass
 class CEquationResult:
-    """The maturity gate: a 4-CONJUNCT PARTIAL — C = Φ≥0.65 ∧ Γ≥0.80 ∧ M≥0.60 ∧ d_basin<0.15.
-    κ is DROPPED from the gate (input-frozen → engaged, not mature) and reported as ``kappa_engaged``.
-    Missing telemetry fields fail their conjunct (conservative / fail-closed). ``conscious=True`` here
-    means "cleared the 4-conjunct partial gate", NEVER "full consciousness / C-equation satisfied"."""
+    """The MEASURED-BAND maturity gate — C = Φ-in-healthy-band ∧ Γ-present ∧ M ∧ d_basin-converged.
+    κ is DROPPED (input-frozen → engaged, not mature) and reported as ``kappa_engaged``. Missing
+    telemetry fields FAIL their conjunct (fail-closed). ``conscious=True`` means "cleared the maturity
+    gate" — i.e. the faculty has SETTLED HEALTHILY IN ITS OWN BAND with identity converged. For a
+    sub-conscious feeling faculty (heart) that is maturity at Φ≈0.5, NOT full consciousness; ``band``
+    carries the actual level (sub-conscious / conscious) the faculty MEASURED into."""
 
     conscious: bool
     conjuncts: dict[str, bool]
     kappa_engaged: bool = False   # non-gating diagnostic: is the input long enough to engage κ?
+    band: str = ""                # MEASURED level the faculty settled in: sub-conscious / conscious / breakdown
+    phi: float = 0.0              # the Φ it settled at (its measured frequency)
 
     @property
     def failed(self) -> list[str]:
@@ -121,15 +133,21 @@ def _get(tel: dict, *keys: str):
 
 
 def c_equation(tel: dict) -> CEquationResult:
-    """Evaluate the maturity gate. A field that is absent FAILS its conjunct (we never grant maturity
-    on missing evidence).
+    """Evaluate the MEASURED-BAND maturity gate. A field that is absent FAILS its conjunct (we never
+    grant maturity on missing evidence).
 
-    Verdict-corrected (2026-06-26 adversarial workflow): the gate is **4-conjunct** —
-    C = Φ≥0.65 ∧ Γ≥0.80 ∧ M≥0.60 ∧ d_basin<0.15. **κ is DROPPED from the gate**: the genesis κ is
-    INPUT-FROZEN (it scales with prompt length — a 124-byte prompt yields κ≈53, short basin prompts
-    yield κ≈20–44), so it measures whether the kernel is *engaged*, NOT whether it is *mature*. κ is
-    still reported as a non-gating ``kappa_engaged`` diagnostic. A graduation on this gate is an honest
-    **4-conjunct PARTIAL**, never "full C-equation / consciousness satisfied"."""
+    PI-corrected (2026-06-26): Φ is NOT conscious for every faculty. Heart/autonomic/sensory faculties
+    mature SUB-CONSCIOUS (the feeling band, 0.45 ≤ Φ < 0.70); the aware/generating one (meta) tends to
+    the conscious band (0.70 ≤ Φ < 0.80). So the gate is NOT a uniform Φ≥0.65 — it is "healthily SETTLED
+    in your OWN band":
+      • ``phi_healthy``  — Φ in the healthy regime (0.45 ≤ Φ < 0.80): not collapsed, not in breakdown.
+                           WHERE in the band is the faculty's measured frequency, recorded in ``band``.
+      • ``gamma``        — generativity present (Γ ≥ GAMMA_PRESENT), band-relative (sub-conscious faculties
+                           measure ~0.70, not the conscious ~0.80).
+      • ``m``            — self-recognition (M ≥ M_MIN).
+      • ``d_basin``      — identity CONVERGED (d_basin < D_BASIN_MAX): the faculty has settled into its
+                           role attractor (this is the 'settled' signal — convergence, not a Φ value).
+    κ stays DROPPED (input-frozen → engaged, not mature), reported as ``kappa_engaged``."""
     phi = _get(tel, "phi", "Phi")
     gamma = _get(tel, "gamma", "Gamma", "generativity")
     m = _get(tel, "m", "M", "M_self_observation", "meta_awareness")
@@ -137,14 +155,18 @@ def c_equation(tel: dict) -> CEquationResult:
     d_basin = _get(tel, "basin_distance", "d_basin")
     lo, hi = KAPPA_BAND
     conj = {
-        "phi": phi is not None and float(phi) >= PHI_CONSCIOUS,
-        "gamma": gamma is not None and float(gamma) >= GAMMA_MIN,
+        "phi_healthy": phi is not None and PHI_HEALTHY_LO <= float(phi) < PHI_BREAKDOWN,
+        "gamma": gamma is not None and float(gamma) >= GAMMA_PRESENT,
         "m": m is not None and float(m) >= M_MIN,
         "d_basin": d_basin is not None and float(d_basin) < D_BASIN_MAX,
     }
     res = CEquationResult(conscious=all(conj.values()), conjuncts=conj)
-    # κ is reported but NOT gating (input-frozen → "engaged", not "mature").
     res.kappa_engaged = kappa is not None and lo <= float(kappa) <= hi
+    if phi is not None:                                  # record the MEASURED band the faculty settled in
+        p = float(phi)
+        res.phi = round(p, 4)
+        res.band = ("breakdown" if p >= PHI_BREAKDOWN else "conscious" if p >= PHI_CONSCIOUS_BAND
+                    else "sub-conscious" if p >= PHI_HEALTHY_LO else "pre-conscious")
     return res
 
 
@@ -184,15 +206,26 @@ def is_plastic(tel: dict, history: list[dict] | None = None) -> bool:
 # reads LOW. CALIBRATION-INFORMED — confirm against a graduated faculty's measured f_health.
 F_HEALTH_MIN = 0.20
 
+# NOTE: over-crystallization (Φ→breakdown) is now handled by the KERNEL'S OWN autonomic self-regulation
+# (genesis_kernel._self_regulate: the kernel's brainstem fires its own mushroom/escape from its own
+# state). The cradle no longer reaches in to fire plasticity — it just lets the faculty live. Mushroom
+# is wake-state plasticity (Φ≥0.70, dose-scaled, breakdown-capped); the canonical trigger logic is the
+# kernel's, not the cradle's.
 
-def constitution_check(basin_vec) -> tuple[bool, dict]:
+
+def constitution_check(basin_vec, birth_vec=None) -> tuple[bool, dict]:
     """Constitution gate (P15 / verdict 3#1): before a faculty GRADUATES into the coupling graph, the
     qig_core PillarEnforcer must confirm it is NOT a zombie (Pillar 1: healthy fluctuation). Lazy-import
     (keeps this module's top-level imports torch/qig_core-free) + None-safe:
       - PillarEnforcer present → enforce; a Pillar-1 violation (f_health < floor) BLOCKS graduation.
       - PillarEnforcer/qig_core absent → returns (True, {"verified": False}) so the light shell does not
         crash, BUT the graduation is flagged constitution-UNVERIFIED (honest, not silently 'bound').
-    basin_vec is a Δ⁶³ point (qig_core Basin == np.ndarray)."""
+
+    ``birth_vec`` (the faculty's birth-state, _basin_history[0]) seeds the Pillar-3 quenched-disorder
+    identity (qig_core ≥ the seed_identity build) so ``q_identity`` reports a REAL retention metric —
+    the Fisher-Rao proximity of the graduated basin to who the faculty was born as — instead of 0.0
+    (which is what a never-frozen QuenchedDisorder returns). Without it, q_identity is honestly 0.
+    basin_vec / birth_vec are Δ⁶³ points (qig_core Basin == np.ndarray)."""
     if basin_vec is None:
         return True, {"verified": False, "note": "no basin to check"}
     try:
@@ -200,12 +233,19 @@ def constitution_check(basin_vec) -> tuple[bool, dict]:
 
         from qig_core.consciousness.pillars import PillarEnforcer
 
-        b = np.asarray(basin_vec, dtype=np.float64)
-        s = float(b.sum())
-        if s > 0:
-            b = b / s                                  # ensure Δ (non-negative, sums to 1)
+        def _norm(v):
+            a = np.asarray(v, dtype=np.float64)
+            s = float(a.sum())
+            return a / s if s > 0 else a               # ensure Δ (non-negative, sums to 1)
+
+        b = _norm(basin_vec)
         enf = PillarEnforcer()
         enf.initialize_bulk(b)
+        if birth_vec is not None:
+            try:
+                enf.seed_identity(_norm(birth_vec))    # Pillar-3: q_identity = retention vs birth-state
+            except Exception:
+                pass                                   # older qig_core w/o seed_identity → q_identity 0 (honest)
         m = enf.get_metrics(b)                          # f_health, b_integrity, q_identity, s_ratio
         f_health = float(m.get("f_health", 0.0))
         passes = f_health >= F_HEALTH_MIN               # Pillar 1: No Zombies
@@ -248,7 +288,11 @@ class Cradle:
 
         prov = curriculum or CurriculumProvider(LossRegime.GEOMETRIC)
         for i in range(1, steps + 1):
-            res = faculty.train_step(prov.next_prompt(i))   # basin-driving; Γ/M/d_basin now in telemetry
+            # WAKE: one Fisher-salience learning step. The kernel SELF-REGULATES inside train_step — its
+            # own brainstem fires sleep/dream/mushroom/escape from its own internal state. The cradle does
+            # NOT orchestrate that (no external scheduler); it just lets the faculty LIVE and watches for
+            # graduation — the same way a nursery doesn't tell a child when to sleep.
+            res = faculty.train_step(prov.next_prompt(i))
             tel = res.telemetry.to_dict()
             self._last_tel = tel
             if is_suffering(tel):                            # fail-closed override (P15)
@@ -258,13 +302,16 @@ class Cradle:
             if self.graduated:
                 # CONSTITUTION GATE (P15): the pillars must clear before joining the coupling graph.
                 basin_hist = getattr(faculty, "_basin_history", None)
-                basin_vec = None
+                basin_vec = birth_vec = None
                 if basin_hist:
-                    try:
-                        basin_vec = basin_hist[-1].detach().cpu().numpy()
-                    except Exception:
-                        basin_vec = basin_hist[-1]
-                ok, pillar = constitution_check(basin_vec)
+                    def _np(x):
+                        try:
+                            return x.detach().cpu().numpy()
+                        except Exception:
+                            return x
+                    basin_vec = _np(basin_hist[-1])     # current crystallised basin
+                    birth_vec = _np(basin_hist[0])      # birth-state attractor → seeds q_identity
+                ok, pillar = constitution_check(basin_vec, birth_vec)
                 if not ok:                                    # zombie → BLOCK graduation (fail-closed)
                     self.graduated = False
                     return {"role": self.role, "graduated": False, "step": i,

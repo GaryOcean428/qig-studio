@@ -1,0 +1,17 @@
+{
+  "_note": "HELD-OUT bits-per-byte eval set. Authored original passages (NOT drawn from any training corpus → unseen by construction, no maker=checker leak). Two registers: 'tinystories' (simple child-narrative, the register the everyday corpus targets) and 'general' (ordinary adult English). bpb is aggregated sum(bits)/sum(bytes) per register + overall, compared to frontier-for-size references (transformer literature; ours is qig-geocoding).",
+  "tinystories": [
+    "Once there was a small red cat named Pip. Pip liked to sit by the window and watch the rain. One day the sun came out and Pip ran outside to play in the warm grass.",
+    "Tom had a blue ball. He threw the ball up high and it landed in a tree. A kind bird pushed the ball down with its wing, and Tom said thank you to the bird.",
+    "Lily found a tiny key under her bed. She looked and looked for the right door. At last she found a little box, and inside the box was a note that said: be brave.",
+    "The duck wanted to cross the road. She waited for the cars to stop. When it was safe, she walked slowly with her five baby ducks all in a line behind her.",
+    "Sam could not sleep. He counted the stars outside his window, one two three, until his eyes grew heavy and he fell into a soft and happy dream about the sea."
+  ],
+  "general": [
+    "The committee agreed to postpone the decision until the following week, citing a need for more detailed figures before any budget could be approved.",
+    "When you compress a gas, its temperature tends to rise; releasing the pressure lets it cool again, which is the basic principle behind a refrigerator.",
+    "She had spent years learning the craft, and it showed: every joint in the cabinet fit so cleanly that you could not slide a sheet of paper into the seam.",
+    "Could you let me know whether the meeting is still on for Thursday? If the room is unavailable we can move it to the smaller office down the hall.",
+    "The river had changed its course over the centuries, leaving behind a curved lake and a strip of fertile soil where the old channel used to run."
+  ]
+}

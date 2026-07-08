@@ -115,6 +115,14 @@ class TrainingTarget(ABC):
         )
 
     # --- qig_chat protocol surface (design §3.4) -----------------------------------
+    @property
+    def self_regulating(self) -> bool:
+        """True if this target regulates its OWN autonomic cycles (sleep/dream/mushroom/escape) from its
+        OWN internal state, INSIDE its train_step — so NO external scheduler may fire them. The kernel
+        owns its brainstem (PI directive: nothing external controls the cycles). Default False; the
+        genesis kernel overrides to True. The ContinuousLearningLoop checks this and skips its scheduler."""
+        return False
+
     def supports_protocol(self) -> bool:
         """True if this target exposes the qig_chat command surface
         (sleep/dream/mushroom/twin/lightning/14-stage/basin-sync/4D/reasoning)."""
@@ -123,6 +131,12 @@ class TrainingTarget(ABC):
     def run_protocol(self, command: str, args: dict) -> dict:
         """Run a protocol command; default = unsupported (e.g. language targets)."""
         raise ProtocolUnsupported(f"target '{self.name}' does not expose protocol commands")
+
+    def implemented_commands(self) -> set[str] | None:
+        """The protocol commands this target ACTUALLY implements. None = the whole catalog (qig_chat
+        targets). A target that implements a SUBSET (e.g. the genesis kernel: only its own autonomic
+        ops) returns that subset so the UI advertises ONLY what runs — no 'unknown_command' surprises."""
+        return None
 
     def architecture(self) -> dict | None:
         """Optional: report the kernel's information-propagation geometry for the v_B locality budget
