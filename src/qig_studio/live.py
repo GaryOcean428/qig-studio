@@ -76,6 +76,7 @@ def step_record(*, step: int, total: int | None, ts: float, source: str,
                 ocean_action: dict[str, Any] | None = None, own_voice: str | None = None,
                 coordizer_vocab: int | None = None, drift_velocity: float | None = None,
                 faculty_phi: dict[str, Any] | None = None, stimulus: str | None = None,
+                own_voice_stimulus: str | None = None,
                 relevance: float | None = None, coach: dict[str, Any] | None = None,
                 ocean_state: dict[str, Any] | None = None, phi_variance: float | None = None,
                 explore_temperature: float | None = None, drive: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -148,7 +149,10 @@ def step_record(*, step: int, total: int | None, ts: float, source: str,
         "own_voice": own_voice,                        # the kernel's OWN learned voice (carried forward)
         "relevance": _f(relevance),                    # response↔stimulus relevance (1=on-topic, 0=drift; self↔other)
         "coach": coach,                                # provenance-tagged coach reward+relevance record (§18.6): encourage/interpret/reframe/relevance_score/positive_feedback + provenance tag
-        "stimulus": stimulus,                          # the passage the own_voice RESPONDED to (relevance check)
+        "stimulus": stimulus,                          # the CURRENT training passage THIS step (fresh every step)
+        "own_voice_stimulus": own_voice_stimulus,      # the passage the (periodic, every-N-steps) own_voice ACTUALLY
+        # responded to — pair the voice with THIS, not the current stimulus. Without it the display falsely implies the
+        # stale sampled voice was a per-step response to the current stimulus (the desync the PI observed 2026-07-04).
         "faculty_phi": faculty_phi or {},              # live per-faculty Φ (before the first checkpoint)
         "experience": experience or {},                # FULL inner state → left panel reflects the LIVE kernel
         "warnings": harm_warnings(telemetry, experience, min_pairwise_fr, drift_velocity),

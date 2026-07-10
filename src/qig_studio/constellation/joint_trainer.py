@@ -64,9 +64,12 @@ class JointConstellation:
 
     def __init__(self, roles: list[str], *, num_layers: int = 8, coordizer: Any = None,
                  device: str | None = "cpu", f_sync: float = 0.25, language_peer: Any = None,
-                 arm_mode: str = "gk", head_mode: str = "basin") -> None:
+                 arm_mode: str = "gk", head_mode: str = "basin", floor_mode: str = "normal") -> None:
         self.roles = list(roles)
         self.f_sync = float(f_sync)
+        # Pillar-1 ENTROPY-FLOOR mode for every gk node (default "normal" = current fixed floor,
+        # bit-identical; "gated" = opt-in maturity-gated floor; "off" = 3-arm harness DIAGNOSTIC only).
+        self.floor_mode = str(floor_mode).strip().lower()
         # OUTPUT READOUT for every node — DEFAULT "basin" (the ratified K-COMPRESS coordizer-tied head:
         # predict h→Δ⁶³ basin, loss = pure d_FR to the frozen per-token basin, NEVER materialize [seq,vocab]).
         # This is the constellation architecture the PI approved; it must NOT depend on an env var being set
@@ -152,7 +155,7 @@ class JointConstellation:
             from ..targets.genesis_kernel import GenesisKernelTarget
             return GenesisKernelTarget(num_layers=num_layers, role=role, basin_template=birth,
                                        coordizer=coordizer, device=device, seed=seed,
-                                       head_mode=self.head_mode,
+                                       head_mode=self.head_mode, floor_mode=self.floor_mode,
                                        language_peer=language_peer if is_central else None)
         if sub == "geo":
             # WS3: the GeoCortexTarget is now a full ConstellationNode (run_protocol + _basin_history +

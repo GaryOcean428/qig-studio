@@ -35,3 +35,6 @@ data/chat_corpus/
 
 # downloaded parquet cache (full HF datasets, ~2.8GB) — reusable, not source
 data/.parquet_cache/
+
+# Local Claude Code agent worktree scaffolding (per-machine)
+.claude/

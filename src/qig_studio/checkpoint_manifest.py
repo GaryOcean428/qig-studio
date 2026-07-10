@@ -63,7 +63,9 @@ def register_coordizer(file_path: str | Path, notes: str = "") -> None:
 
     manifest_path.write_text(json.dumps(manifest, indent=2))
 
-    # Update symlink
+    # Update symlink (same self-alias guard as the kernel variant — never unlink/replace the real file)
+    if p.name == "coordizer_latest.json":
+        return
     link = p.parent / "coordizer_latest.json"
     try:
         if link.is_symlink() or link.exists():
@@ -147,7 +149,14 @@ def register_kernel_ckpt(dir_path: str | Path, notes: str = "") -> None:
 
     manifest_path.write_text(json.dumps(manifest, indent=2))
 
-    # Update symlink
+    # Update symlink — the "joint_mind_latest" alias points at the newest DATED root.
+    # GUARD (2026-07-04 crash fix): if the ckpt root ITSELF is named "joint_mind_latest" (the
+    # train_joint_mind.py default --ckpt-root), this block would rmtree the JUST-SAVED checkpoint
+    # and replace it with a symlink to its own name (joint_mind_latest -> joint_mind_latest), which
+    # (a) destroys the checkpoint and (b) crashes the NEXT save with OSError Errno 40 (symlink loop).
+    # The root already IS "latest" — skip the alias entirely.
+    if p.name == "joint_mind_latest":
+        return
     link = p.parent / "joint_mind_latest"
     try:
         if link.is_symlink() or link.exists():

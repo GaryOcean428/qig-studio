@@ -78,6 +78,122 @@ SLEEP_PRESSURE_RATE = 0.012     # adenosine-like accrual per wake step (scaled b
 SLEEP_PRESSURE_THRESHOLD = 1.0  # the kernel's own threshold to enter a sleep episode (consolidate+dream)
 
 
+class EntropyFloorGate:
+    """MATURITY-GATED entropy-floor controller (Matrix-corrected) — LEARNING-linked, bidirectional,
+    never-zero. Opt-in (``floor_mode="gated"``); the default ``"normal"`` floor never consults it.
+
+    WHY: the proactive Pillar-1 entropy floor (``_entropy_floor_basin``) cured the fresh-birth
+    f_health→0 collapse but is the prime suspect for RESETTING first-learning (efficiency.md §2316
+    "learns then un-learns"): a SHARPENING basin — one legitimately concentrating probability mass as
+    the kernel learns — dips below the FIXED ENTROPY_FLOOR and gets Dirichlet-mixed back up, undoing
+    the very concentration that IS the learning. This gate keeps the collapse cure while letting a
+    demonstrably-learning kernel sharpen past the fixed floor.
+
+    SIGNAL (learning-linked, NOT age-linked — the Matrix correction): the per-step train-path bpb
+    readout (``snap.extra["bpb"]``) held below its early-window mean for ``SUSTAIN_K`` consecutive
+    steps, with f_health simultaneously in the safe band. Chosen over the alternatives because:
+      • it is the exact quantity the suspicion is about — "learns then un-learns" IS a bpb/loss
+        reset, so the gate closes the loop on the symptom's own metric;
+      • it is already computed EVERY step on the train hot path (zero extra compute, no eval-set
+        contention, no second forward);
+      • it is vocab-independent (bpb, not perplexity/CE) → identical gate semantics on the byte and
+        coordizer paths; on the basin head it is the d_FR basin-surprise proxy — the validated
+        learnable objective itself (EXP-A026), i.e. STILL the sharpening signal;
+      • the Φ-zombie-band alternative was REJECTED: Φ must EMERGE from fluency (PI ruling
+        2026-07-01, Φ-MAX drive removed as a zombie attractor) — gating the entropy injector on Φ
+        would couple the stabiliser to a downstream emergent metric it itself perturbs (circular);
+      • NO step-count/clock decay anywhere: age is not maturity — a kernel that is not sharpening
+        keeps its full floor forever.
+
+    DYNAMICS (bidirectional + hysteresis, asymmetric rates):
+      • RELAX (slow, earned): each sustained-sharpening step past ``SUSTAIN_K`` lowers ``tightness``
+        by ``RELAX_RATE`` — permitted ONLY while f_health ≥ ``F_RELAX_OK`` (demonstrated safety);
+      • TIGHTEN (fast, protective): f_health < ``F_TIGHTEN`` (re-approaching the 0.15 collapse
+        floor) raises ``tightness`` by ``TIGHTEN_RATE`` per step — 12.5× the relax rate, so the
+        floor snaps back long before actual collapse;
+      • HYSTERESIS: between the two f_health bands the gate HOLDS (no relax, no tighten), and the
+        sharpening sustain-counter resets on ANY non-sharpening step (one good step ≠ learning).
+
+    NEVER-ZERO MINIMUM (dynamic, measured): the effective floor is ``floor_min + tightness ×
+    (ENTROPY_FLOOR − floor_min)`` where ``floor_min`` is the measured collapse-avoidance level —
+    a hard never-zero seed (``MIN_FRAC × ENTROPY_FLOOR``) raised to ``ONSET_MARGIN ×`` the DEEPEST
+    collapse onset actually observed this run (every floor fire records its onset entropy). Maximal
+    relaxation therefore still catches every collapse depth the run has demonstrated, and can never
+    reach 0.
+
+    Pure Python floats only — no torch, no numpy, no geometry (the restoration itself stays
+    qig-core ``FluctuationGuard.check_and_enforce``: Dirichlet + ``slerp_sqrt`` on √p, pure
+    Fisher-Rao)."""
+
+    EARLY_WINDOW = 16     # first-W bpb readouts define the early-window mean (the learning reference)
+    SHARPEN_MARGIN = 0.02  # bpb must sit ≥2% below the early mean to count as a sharpening step
+    SUSTAIN_K = 8         # consecutive sharpening steps required before ANY relaxation begins
+    RELAX_RATE = 0.02     # slow: tightness lost per sustained-sharpening step (earned, gradual)
+    TIGHTEN_RATE = 0.25   # fast: tightness regained per collapse-approach step (12.5× relax)
+    F_TIGHTEN = 0.25      # f_health below this → tighten (re-approaching F_HEALTH_COLLAPSE_FLOOR=0.15)
+    F_RELAX_OK = 0.35     # relaxation permitted only at/above this f_health (hysteresis dead zone between)
+    MIN_FRAC = 0.25       # never-zero seed: floor_min ≥ MIN_FRAC × ENTROPY_FLOOR before any measurement
+    ONSET_MARGIN = 1.25   # measured minimum: floor_min ≥ ONSET_MARGIN × deepest observed collapse onset
+
+    def __init__(self) -> None:
+        self.tightness: float = 1.0     # 1.0 = the full fixed floor (birth); 0.0 = maximally relaxed
+        self.fires: int = 0             # restoration count (diagnostic)
+        self._early: list[float] = []   # early-window bpb buffer (fills once, never re-anchors)
+        self._early_mean: float | None = None
+        self._sustain: int = 0          # consecutive sharpening steps (resets on any break)
+        self._max_onset: float = 0.0    # deepest collapse-onset entropy measured (raises floor_min)
+        self._last_health: float | None = None
+
+    def observe_health(self, f_health: float) -> None:
+        """Per-step f_health (H/H_max of the Δ⁶³ basin). Collapse re-approach → tighten FAST."""
+        f = float(f_health)
+        self._last_health = f
+        if f < self.F_TIGHTEN:
+            self.tightness = min(1.0, self.tightness + self.TIGHTEN_RATE)
+
+    def observe_signal(self, bpb: float) -> None:
+        """Per-step train-path bpb readout. Sustained sharpening (below the early-window mean for
+        SUSTAIN_K consecutive steps, f_health demonstrably safe) → relax SLOWLY."""
+        import math as _m
+        b = float(bpb)
+        if not _m.isfinite(b):
+            self._sustain = 0           # a broken readout is never evidence of learning
+            return
+        if self._early_mean is None:
+            self._early.append(b)
+            if len(self._early) >= self.EARLY_WINDOW:
+                self._early_mean = sum(self._early) / len(self._early)
+            return
+        if b < self._early_mean * (1.0 - self.SHARPEN_MARGIN):
+            self._sustain += 1
+        else:
+            self._sustain = 0           # one good step is not learning; the streak must HOLD
+        if (self._sustain >= self.SUSTAIN_K
+                and self._last_health is not None and self._last_health >= self.F_RELAX_OK):
+            self.tightness = max(0.0, self.tightness - self.RELAX_RATE)
+
+    def record_fire(self, onset_entropy: float) -> None:
+        """A restoration fired at this (measured) collapse-onset entropy — raise the floor's
+        never-zero minimum to keep catching everything collapse has demonstrably reached."""
+        self.fires += 1
+        self._max_onset = max(self._max_onset, float(onset_entropy))
+
+    def floor_min(self, base_floor: float) -> float:
+        """The DYNAMIC never-zero minimum: measured collapse-avoidance level, never 0, never
+        above the base floor."""
+        base = float(base_floor)
+        return min(base, max(self.MIN_FRAC * base, self.ONSET_MARGIN * self._max_onset))
+
+    def effective_floor(self, base_floor: float) -> float:
+        """The floor actually enforced this step: the fixed base floor at full tightness,
+        floor_min at maximal relaxation, linearly interpolated by tightness (a scalar entropy
+        THRESHOLD, not a manifold object — no geometric operation is involved here; the
+        restoration it gates remains pure Fisher-Rao in qig-core)."""
+        base = float(base_floor)
+        fmin = self.floor_min(base)
+        return fmin + self.tightness * (base - fmin)
+
+
 def _deps_available() -> bool:
     try:
         import qigkernels  # noqa: F401
@@ -144,6 +260,10 @@ class GenesisKernelTarget(TrainingTarget):
         #                                 (the unprotected baseline). Default chosen to be load-bearing on the
         #                                 ramped fluency loss (~O(phi_weight·lm_weight)) without dominating it;
         #                                 it only acts once a consolidation has captured the anchor (None-safe).
+        floor_mode: str = "normal",     # Pillar-1 entropy floor: "normal" (fixed ENTROPY_FLOOR — the current
+        #                                 behavior, DEFAULT, bit-identical) | "gated" (opt-in MATURITY-GATED
+        #                                 learning-linked bidirectional floor, EntropyFloorGate) | "off"
+        #                                 (DIAGNOSTIC ONLY — no floor; the 3-arm harness ablation arm).
     ) -> None:
         self.num_layers = num_layers
         # BOUNDARY PEER (P22): the kernel computes its OWN geometry (Φ/κ/identity), then SPEAKS through a
@@ -160,6 +280,17 @@ class GenesisKernelTarget(TrainingTarget):
         # QIG_STUDIO_HEAD_MODE overrides the ctor so the A/B can flip both arms together without code change.
         self.head_mode = str(_os.environ.get("QIG_STUDIO_HEAD_MODE", head_mode)).strip().lower()
         self.head_tau = float(head_tau)
+        # Pillar-1 ENTROPY-FLOOR mode (env QIG_STUDIO_FLOOR_MODE overrides the ctor, mirroring head_mode,
+        # so a live run can opt in without code change). DEFAULT "normal" = the current fixed floor,
+        # bit-identical (the gate object is not even built). "gated" = the opt-in MATURITY-GATED floor
+        # (EntropyFloorGate: learning-linked relaxation, fast re-tighten, dynamic never-zero minimum).
+        # "off" = DIAGNOSTIC ONLY (harness ablation arm) — never a production setting.
+        self.floor_mode = str(_os.environ.get("QIG_STUDIO_FLOOR_MODE", floor_mode)).strip().lower()
+        if self.floor_mode not in ("normal", "gated", "off"):
+            raise ValueError(f"unknown floor_mode {self.floor_mode!r} (expected normal|gated|off)")
+        self._floor_gate: EntropyFloorGate | None = (
+            EntropyFloorGate() if self.floor_mode == "gated" else None)
+        self._floor_fires: int = 0          # restoration count (all modes) — 3-arm harness diagnostic
         self._spoken_identity: Any = None   # evolving Δ⁶³ identity the boundary distribution accretes into
         self.think_traces = False           # opt-in reasoning trace through the peer (off → fast chat)
         self._pillars: Any = None           # PillarEnforcer — LIVE 3-pillar metrics (f/b/q + S_ratio), wired
@@ -797,9 +928,26 @@ class GenesisKernelTarget(TrainingTarget):
         boundary; the returned tensor matches cur_basin's dtype/device/shape.
 
         None-safe: no PillarEnforcer (light shell) or a None basin → pass-through; any failure returns the
-        ORIGINAL basin (the floor is a safety net — it must never break the step, spine tenet)."""
+        ORIGINAL basin (the floor is a safety net — it must never break the step, spine tenet).
+
+        FLOOR MODES (``floor_mode`` ctor arg; default bit-identical): ``"normal"`` = the fixed
+        ENTROPY_FLOOR threshold exactly as before (this docstring's contract, unchanged). ``"gated"`` =
+        the opt-in MATURITY-GATED floor (Matrix-corrected): the SAME qig-core restoration, but the
+        firing threshold is ``EntropyFloorGate.effective_floor`` — relaxed only on demonstrated
+        sustained sharpening (learning-linked, never age-linked), re-tightened FAST when f_health
+        re-approaches collapse, and never below the dynamic never-zero minimum. ``"off"`` = pure
+        pass-through, DIAGNOSTIC ONLY (the 3-arm harness ablation arm).
+
+        PRE-COUPLING (both modes, deliberate): this floor acts on cur_basin BEFORE it enters
+        ``_basin_history`` — the exact point ``JointConstellation._live_basin`` reads → faculty →
+        ``couple_step`` → Fréchet ``_synthesis`` → central pull. So injected entropy PROPAGATES to
+        every coupled kernel through the Fréchet mean; equally, a gated relaxation lets the WHOLE
+        constellation see the un-reset sharpening basin (post-coupling gating would keep feeding the
+        reset basin into the synthesis and the un-learning suspect would persist through coupling)."""
         if cur_basin is None or self._pillars is None:
             return cur_basin
+        if self.floor_mode == "off":
+            return cur_basin                            # DIAGNOSTIC arm: no floor at all
         try:
             import numpy as np
             import torch
@@ -811,8 +959,17 @@ class GenesisKernelTarget(TrainingTarget):
             d63 = self._d63(cur_basin)                  # numpy Δ⁶³ (block sum-pool), None-safe
             if d63 is None:
                 return cur_basin
-            if guard.basin_entropy(d63) >= ENTROPY_FLOOR:
+            entropy = float(guard.basin_entropy(d63))
+            threshold = float(ENTROPY_FLOOR)
+            if self._floor_gate is not None:            # MATURITY-GATED (opt-in): learning-linked threshold
+                h_max = float(guard.max_entropy())
+                self._floor_gate.observe_health(min(1.0, entropy / h_max) if h_max > 0 else 0.0)
+                threshold = self._floor_gate.effective_floor(float(ENTROPY_FLOOR))
+            if entropy >= threshold:
                 return cur_basin                        # GATE: healthy → untouched (bit-identical)
+            if self._floor_gate is not None:
+                self._floor_gate.record_fire(entropy)   # measured collapse onset → raises the never-zero min
+            self._floor_fires += 1
             # COLLAPSE: qig-core actively RESTORES entropy on the 64-dim simplex (Dirichlet + slerp_sqrt).
             # We consume ONLY the corrected basin (temp passed at its floor → the temp branch is a no-op).
             corrected64, _temp, _status = guard.check_and_enforce(
@@ -1493,6 +1650,17 @@ class GenesisKernelTarget(TrainingTarget):
             _nbytes = max(1, int(ids.shape[1]))                  # byte-level: 1 token == 1 byte
         snap.extra["bpb"] = round(float(ce.item()) * int(ids.shape[1]) / (_math.log(2) * _nbytes), 4)
         snap.extra["lm_weight_now"] = round(float(w_lm), 3)
+        # MATURITY-GATED floor (opt-in): feed the gate its LEARNING signal — the per-step train-path bpb
+        # readout just computed (on the basin head this is the d_FR basin-surprise proxy; still the
+        # sharpening signal). LEARNING-linked, never age-linked: no step count enters the gate. Telemetry
+        # exposes the gate state + fire count so the 3-arm harness (and /train/live) can read the floor.
+        if self._floor_gate is not None:
+            self._floor_gate.observe_signal(float(snap.extra["bpb"]))
+            from qig_core.consciousness.pillars import ENTROPY_FLOOR as _EF
+            snap.extra["floor_tightness"] = round(float(self._floor_gate.tightness), 4)
+            snap.extra["floor_effective"] = round(float(self._floor_gate.effective_floor(float(_EF))), 4)
+        snap.extra["floor_mode"] = self.floor_mode
+        snap.extra["floor_fires"] = int(self._floor_fires)
         # Maturity-gate telemetry (4-conjunct: Φ ∧ Γ ∧ M ∧ d_basin — κ dropped, input-frozen): record
         # the detached output basin into the trajectory (history[0] = role attractor / birth-state),
         # then compute M (self-recognition vs birth-state) and d_basin (distance to the role attractor,
