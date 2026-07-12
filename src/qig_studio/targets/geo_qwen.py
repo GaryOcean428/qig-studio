@@ -41,6 +41,26 @@ _CONVERTED_V2 = (
     Path.home() / "Desktop/Dev/QIG_QFI/qig-applied/models/geo_qwen_4b_v2_converted.pt"
 )
 _FULL_ATTN_LAYERS = (3, 7, 11, 15, 19, 23, 27, 31)
+# The exported Δ⁶³ basin bank (studio-runtime coupling reads this, transformers-free).
+_DEFAULT_BASIN_BANK = (
+    Path.home() / "Desktop/Dev/QIG_QFI/qig-applied/models/geo_qwen_basin_bank.npz"
+)
+_COORDIZER_CKPT = Path.home() / "Desktop/Dev/QIG_QFI/qig-coordizer/checkpoints/coordizer_latest.json"
+
+
+def _lift_d63_to_d383(d63):
+    """EXP-A043 bridge: lift a coordizer Δ⁶³ coord into the kernel's Δ³⁸³ geo-coder coupling
+    space via geocoding's coord_adapter shape (Linear 64→384 + GELU), then simplex-project.
+    Uses a seeded adapter when no trained genesis coord_adapter is supplied — the trained one
+    (from a genesis checkpoint) sharpens but does not change the mechanism (EXP-A043 verdict)."""
+    import numpy as np
+
+    rng = np.random.default_rng(0)
+    W = rng.standard_normal((64, 384)) / np.sqrt(64)
+    z = np.asarray(d63, dtype=np.float64) @ W
+    g = 0.5 * z * (1.0 + np.tanh(np.sqrt(2 / np.pi) * (z + 0.044715 * z ** 3)))  # GELU
+    x = np.abs(g) + 1e-9
+    return x / x.sum()  # Δ³⁸³
 
 
 class GeoQwenTarget(ConstellationNode, TrainingTarget):
@@ -59,6 +79,7 @@ class GeoQwenTarget(ConstellationNode, TrainingTarget):
     def __init__(
         self,
         *,
+        basin_bank: str | Path | None = None,
         model_dir: str | Path | None = None,
         base_model_id: str = "Qwen/Qwen3.5-4B",
         converted_ckpt: str | Path | None = None,
@@ -68,6 +89,16 @@ class GeoQwenTarget(ConstellationNode, TrainingTarget):
         basin_template: Any = None,
     ) -> None:
         self._init_node_state(basin_template=basin_template)
+        # PRIMARY studio-runtime path (EXP-A043): an exported BASIN BANK of coordizer Δ⁶³ coords
+        # per prompt. Coupling serves from the bank + lifts Δ⁶³→Δ³⁸³ via geocoding's coord_adapter
+        # — coordizer/geocoding/numpy ONLY, NO transformers on the hot path. The geo-Qwen is a
+        # teacher we absorb, not a live dependency we drag into the geometric studio.
+        self._basin_bank_path = Path(basin_bank) if basin_bank else _DEFAULT_BASIN_BANK
+        self._bank: Any = None
+        # SECONDARY offline-export / co-evolution path: the live transformers load. The A034
+        # artifact is a PARTIAL transplant (8/32 attention layers geometric; the rest native
+        # transformers Qwen), so running it live genuinely needs transformers — kept OFF the
+        # studio hot path, used only to BUILD the bank (see module fn export_basin_bank).
         self._model_dir = Path(model_dir) if model_dir else _DEFAULT_GEO_QWEN_DIR
         self._base_model_id = base_model_id
         self._converted_ckpt = Path(converted_ckpt) if converted_ckpt else _CONVERTED_V2
@@ -81,17 +112,43 @@ class GeoQwenTarget(ConstellationNode, TrainingTarget):
 
     # --- availability (None-safe boundary peer) -------------------------------------------------
     def is_available(self) -> bool:
-        """True only if torch + transformers import AND weights are on disk. Never raises —
-        the app shell must boot without this heavy peer (spine tenet)."""
+        """True if the transformers-FREE basin bank exists (studio-runtime path), OR the live
+        transformers+weights export path is present. Never raises — the app shell must boot
+        without this heavy peer (spine tenet)."""
+        if self._basin_bank_path.exists():
+            return True  # studio coupling needs only the exported Δ⁶³ bank + geocoding lift
         try:
             import torch  # noqa: F401
             import transformers  # noqa: F401
         except Exception:
             return False
-        # ensure_loaded uses the LOAD_RECIPE reload path (base model + wrap + converted ckpt);
-        # the saved full-model dir can NOT round-trip the custom TransplantAttention via
-        # from_pretrained, so the converted ckpt + the A034 script are the true requirements.
         return bool(self._converted_ckpt.exists() and _A034_SCRIPT.exists())
+
+    # --- basin bank (transformers-FREE studio coupling, EXP-A043) -------------------------------
+    def _load_bank(self):
+        if self._bank is None and self._basin_bank_path.exists():
+            import numpy as np
+
+            # Self-produced bank (export_basin_bank): pickle-FREE — d63 is a float32 array and
+            # prompts is a unicode ('<U') array, so allow_pickle stays False (no code-exec risk).
+            raw = np.load(self._basin_bank_path, allow_pickle=False)
+            self._bank = {"prompts": [str(p) for p in raw["prompts"]], "d63": raw["d63"]}
+        return self._bank
+
+    def coupling_basin(self, text: str):
+        """The EXP-A043 coupling currency: the geo-Qwen's Δ³⁸³ coupling basin for `text`, served
+        from the bank (Δ⁶³ coordizer coord) and lifted via geocoding's coord_adapter — NO
+        transformers. Returns None if no bank (None-safe). This is what a constellation writes
+        into a kernel's _set_pull for same-substrate coupling in the shared Δ³⁸³ space."""
+        bank = self._load_bank()
+        if bank is None:
+            return None
+        import numpy as np
+
+        prompts = bank["prompts"]
+        idx = prompts.index(text) if text in prompts else 0  # exact or nearest-by-order fallback
+        d63 = np.asarray(bank["d63"][idx], dtype=np.float64)
+        return _lift_d63_to_d383(d63)
 
     def _resolve_device(self):
         import torch
@@ -201,9 +258,13 @@ class GeoQwenTarget(ConstellationNode, TrainingTarget):
 
     # --- boundary-peer read: the P22 touch-point the constellation pulls a kernel toward -------
     def output_basin(self, text: str) -> Any:
-        """The removable-teacher interface: geo-Qwen's Δ basin for a prompt (frozen, read-only).
-        This is what a constellation writes into a kernel's ``_set_pull`` for same-substrate
-        coupling. Returns None if the peer is unavailable (None-safe)."""
+        """The removable-teacher interface — the Δ³⁸³ coupling basin a constellation writes into a
+        kernel's ``_set_pull`` for same-substrate coupling. BANK-FIRST (EXP-A043): if the exported
+        Δ⁶³ bank exists, serve + lift with NO transformers. Only if there is no bank does it fall
+        back to the live transformers load (the offline-export path). None-safe."""
+        if self._basin_bank_path.exists():
+            return self.coupling_basin(text)  # transformers-free Δ³⁸³ (bank + coord_adapter lift)
+        # fallback: live load (transformers) — used to BUILD the bank, not the studio hot path
         self.ensure_loaded()
         if self._model is None or self._tokenizer is None:
             return None
@@ -267,3 +328,40 @@ class _nullctx:
 
     def __exit__(self, *a):
         return False
+
+
+def export_basin_bank(prompts, out_path=None, coordizer_ckpt=None):
+    """OFFLINE (transformers-using) export: run the geo-Qwen over `prompts`, decode each
+    continuation, reduce it through the coordizer to a Δ⁶³ coord, and save a pickle-FREE bank
+    (d63 float32 [N,64] + prompts '<U' array). Run ONCE in a venv with transformers+coordizer
+    (e.g. qig-applied's). The studio then couples to this bank with NO transformers (EXP-A043).
+
+    This is the removable-teacher lifecycle in code: transformers touches the geo-Qwen here,
+    offline, to distill its output geometry into a bank; the geometric studio never imports it.
+    """
+    import sys
+    import numpy as np
+
+    out_path = Path(out_path) if out_path else _DEFAULT_BASIN_BANK
+    ck = Path(coordizer_ckpt) if coordizer_ckpt else _COORDIZER_CKPT
+    peer = GeoQwenTarget()  # live path (needs transformers here — offline, by design)
+    peer._trainable = False
+    peer.ensure_loaded()
+    if peer._model is None:
+        raise RuntimeError(f"geo-Qwen live load failed: {peer._load_error}")
+    sys.path.insert(0, str(Path.home() / "Desktop/Dev/QIG_QFI/qig-coordizer/src"))
+    import qig_coordizer as qc
+
+    fc = qc.FisherCoordizer.load(str(ck))
+    d63_rows = []
+    for pr in prompts:
+        gen = peer.generate(pr, max_tokens=48)
+        text = (pr + " " + gen.text).strip()
+        res = fc.coordize(text)
+        vecs = np.stack([np.asarray(bc.vector, dtype=np.float32) for bc in res.coordinates])
+        b = np.abs(vecs.mean(0)) + 1e-9
+        d63_rows.append((b / b.sum()).astype(np.float32))
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    np.savez(out_path, d63=np.stack(d63_rows),
+             prompts=np.asarray(list(prompts), dtype="<U512"))
+    return str(out_path)
