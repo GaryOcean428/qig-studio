@@ -305,6 +305,12 @@ class GeoQwenTarget(ConstellationNode, TrainingTarget):
     def telemetry(self) -> TelemetrySnapshot:
         extra = {"peer": "geo-qwen-4b", "removable": True, "trainable": self._trainable,
                  "degradation_pct": 13.97, "converted_layers": list(_FULL_ATTN_LAYERS)}
+        # Coupling-readiness diagnostics for the dashboard (Stream A.1/A.3). Honestly labeled:
+        # these describe the geo-Qwen ORACLE's coupling state (available, bank, Δ³⁸³ lift dim), NOT a
+        # validated within-system Φ — a live coupled kernel would add its own M/d_basin under the node.
+        extra["coupling_available"] = self.is_available()
+        extra["coupling_bank_present"] = bool(_DEFAULT_BASIN_BANK.exists())
+        extra["coupling_basin_dim"] = 384  # Δ³⁸³ lift (coupling_basin) — the shared coupling space
         if self._load_error:
             extra["load_error"] = self._load_error
         return TelemetrySnapshot(step=self._node_step(), extra=extra)
@@ -330,7 +336,7 @@ class _nullctx:
         return False
 
 
-def export_basin_bank(prompts, out_path=None, coordizer_ckpt=None):
+def export_basin_bank(prompts, out_path=None, coordizer_ckpt=None, device=None):
     """OFFLINE (transformers-using) export: run the geo-Qwen over `prompts`, decode each
     continuation, reduce it through the coordizer to a Δ⁶³ coord, and save a pickle-FREE bank
     (d63 float32 [N,64] + prompts '<U' array). Run ONCE in a venv with transformers+coordizer
@@ -338,13 +344,16 @@ def export_basin_bank(prompts, out_path=None, coordizer_ckpt=None):
 
     This is the removable-teacher lifecycle in code: transformers touches the geo-Qwen here,
     offline, to distill its output geometry into a bank; the geometric studio never imports it.
+
+    `device` overrides auto device selection (default: cuda if available else cpu). Pass "cpu"
+    on a box whose GPU can't hold the 4B model (the offline export is latency-tolerant).
     """
     import sys
     import numpy as np
 
     out_path = Path(out_path) if out_path else _DEFAULT_BASIN_BANK
     ck = Path(coordizer_ckpt) if coordizer_ckpt else _COORDIZER_CKPT
-    peer = GeoQwenTarget()  # live path (needs transformers here — offline, by design)
+    peer = GeoQwenTarget(device=device)  # live path (needs transformers here — offline, by design)
     peer._trainable = False
     peer.ensure_loaded()
     if peer._model is None:
