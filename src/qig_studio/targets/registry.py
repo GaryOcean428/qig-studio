@@ -6,6 +6,7 @@ from .base import TargetInfo, TrainingTarget
 from .constellation_target import ConstellationTarget
 from .genesis_kernel import GenesisKernelTarget
 from .geo_cortex import GeoCortexTarget
+from .geo_qwen import GeoQwenTarget
 from .joint_mind import JointMindTarget
 from .kernel_target import KernelTarget
 from .mock_target import MockTarget
@@ -153,6 +154,9 @@ def default_registry(
     r.register(ConstellationTarget(checkpoint=constellation_checkpoint, device=device))
     r.register(qwen_peer)
     r.register(QwenModalTarget())
+    # geo-qwen: the EXP-A034 geometrized Qwen as a REMOVABLE same-substrate boundary peer
+    # (None-safe — is_available() False without the A034 artifact; never a fwd-pass dep).
+    r.register(GeoQwenTarget())
     chosen = default_target if default_target in r.names() else "mock"
     r.select(chosen)
     return r
