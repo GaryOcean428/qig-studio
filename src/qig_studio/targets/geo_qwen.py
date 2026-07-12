@@ -182,8 +182,14 @@ class GeoQwenTarget(ConstellationNode, TrainingTarget):
         return out.logits
 
     def _node_basin_from_logits(self, logits: Any):
-        """Vocab-width Δ basin — the SAME reduction GeoCortexTarget/ARM-B use: the P22 bridge
-        from the geo-Qwen's 248320-vocab output distribution to a Δ point the kernel couples to."""
+        """Vocab-width Δ basin — the SAME reduction GeoCortexTarget/ARM-B use.
+
+        RED-TEAM GAP (EXP-A043, 2026-07-12): this yields a point on the geo-Qwen's *Qwen-248320
+        BPE vocab* simplex. A kernel's basins live on the *coordizer* vocab (~100k, different
+        tokenization) or Δ⁶³ — a DIFFERENT space. Same-vocab coupling is only valid between two
+        nodes that share the Qwen vocab; cross-vocab geo-Qwen↔kernel coupling MUST route through
+        the coordizer basin map (qig-coordizer owns text↔Δ⁶³). Until EXP-A043 wires that bridge,
+        this currency is correct ONLY for Qwen-vocab peers, NOT for coordizer-vocab kernels."""
         import torch
 
         from qig_core.torch.geometry_simplex import to_simplex_prob
