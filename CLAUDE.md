@@ -42,4 +42,6 @@ Never make the shell hard-depend on torch.
 
 Work on `development`; `main` is default. Subagents RETURN DATA. PyPI publishing
 pre-authorized (correctness is the gate); NEVER echo `PYPI_TOKEN`. EXP citations
-verified vs registry.json (κ-sign crossing Δ≈√2, EXP-018; EXP-130 does NOT exist).
+verified vs registry.json (BKT κ-sign crossing Δ_c≈1.25 under the certified A1 camera, EXP-130 —
+supersedes EXP-018's uncertified Δ≈√2 prediction; the EXP-018 inverted band was killed as a
+finite-size BKT precursor, frozen-facts 1.08F rows 27–29).
