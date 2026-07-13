@@ -523,7 +523,11 @@ class GenesisKernelTarget(TrainingTarget):
             self._basin_ref_set = None
             return
         dev = self._basin_ref.device if self._basin_ref is not None else self._device
-        size = int(self.vocab_size)
+        # Project refs to the SAME width the basin `cur` lives in — mirrors the single-ref path (_ref_dim
+        # at ctor): basin head → 384-dim GEO-CODER hidden space; vocab/geometric heads → vocab width.
+        # (Hardcoding vocab_size silently mismatched basin-mode kernels: cur=384 vs ref=vocab → the set
+        # pull only ever ran on vocab-width byte kernels, never the real 384 basin.)
+        size = int(self.hidden_dim if self.head_mode == "basin" else self.vocab_size)
         refs = []
         for t in templates:
             tt = (t if isinstance(t, _t.Tensor) else _t.tensor(t, dtype=_t.float32)).to(dev).float()
