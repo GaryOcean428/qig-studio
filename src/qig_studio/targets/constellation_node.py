@@ -90,7 +90,10 @@ class ConstellationNode:
         ref = torch.as_tensor(np.asarray(self._basin_template_np, dtype=np.float32), device=dev)
         if ref.numel() != int(self.vocab_size):
             ref = self._resize_basin(ref, int(self.vocab_size))
-        self._basin_ref = to_simplex_prob(ref[None])[0].detach()
+        # simplex_floor=1e-3: keep the birth-state / pull reference DENSE (Duchi clamps sub-threshold
+        # coords to exactly 0 → zero d_FR Jacobian against a floored cur → dead single-basin pull + biased
+        # M). Symmetric with cur's floor (Devin lifeguard 2026-07-13; same fix as the SET refs).
+        self._basin_ref = to_simplex_prob(ref[None], simplex_floor=1e-3)[0].detach()
         self._basin_history = [self._basin_ref]   # birth-state attractor = history[0] (M reference)
 
     # --- the coupled-pull plumbing (constellation reads/writes these) ----------------------------------

@@ -453,7 +453,10 @@ class GenesisKernelTarget(TrainingTarget):
             ref = torch.as_tensor(np.asarray(self._basin_template_np, dtype=np.float32), device=dev)
             if ref.numel() != _ref_dim:               # template is Δ⁶³ (64) → project to the geo-coder / vocab Δ
                 ref = self._resize_basin(ref, _ref_dim)
-            self._basin_ref = to_simplex_prob(ref[None])[0].detach()   # [384] geo-coder | [vocab] geometric
+            # simplex_floor=1e-3: keep the birth-state / pull reference DENSE (Duchi zeros sub-threshold
+            # coords → zero d_FR Jacobian vs a floored cur → dead single-basin pull + biased M). Symmetric
+            # with cur's floor (Devin lifeguard 2026-07-13; same fix as the SET refs).
+            self._basin_ref = to_simplex_prob(ref[None], simplex_floor=1e-3)[0].detach()   # [384]|[vocab]
             self._basin_history = [self._basin_ref]    # birth-state attractor = history[0] (monkey1 M)
 
         # PILLARS (P1/P2/P3) wired from day one (brain-arch requirement) — the live 3-pillar metrics
