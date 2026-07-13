@@ -510,12 +510,16 @@ class GenesisKernelTarget(TrainingTarget):
         reps = (size + ref.numel() - 1) // ref.numel()
         return ref.repeat(reps)[:size].clamp_min(0.0)
 
-    def _set_pull_set(self, templates: "Any") -> None:
+    def _set_pull_set(self, templates: "Any", jl_seed: int = 15420) -> None:
         """EXP-A044: couple to a SET of geo-Qwen per-layer basins (nearest-member pull). Each template is
         resized to the vocab-width simplex and made a Δ point; the train_step pull then draws the output
         basin toward the CLOSEST member. This is the content-specific coupling reference — the 8 per-layer
         basins separate at d_FR~1.0 where a single token-averaged point collapses to ~0.15. Pass None/empty
-        to clear (falls back to single _basin_ref / solo). Mirrors ConstellationNode._set_pull_set."""
+        to clear (falls back to single _basin_ref / solo). Mirrors ConstellationNode._set_pull_set.
+
+        jl_seed fixes the JL reduction basis (default 15420 = production). Overridable ONLY so an experiment
+        can test basis-robustness across independent random projections (A044 multi-basis); the measurement
+        MUST use the same seed so pull-space == measure-space."""
         import torch as _t
         from qig_core.torch.geometry_simplex import to_simplex_prob
 
@@ -536,7 +540,7 @@ class GenesisKernelTarget(TrainingTarget):
                 # truncation, which discards all but the first `size` dims and collapses the per-layer
                 # content separation (measured: 2560->256 truncate 0.13 vs JL 0.34). The pull can only
                 # resolve matched-vs-mismatched if the reduction keeps the geo basins apart.
-                g = _t.Generator(device="cpu").manual_seed(15420)
+                g = _t.Generator(device="cpu").manual_seed(int(jl_seed))
                 P = (_t.randn(tt.numel(), size, generator=g) / (size ** 0.5)).to(dev)
                 r = tt @ P
             else:
