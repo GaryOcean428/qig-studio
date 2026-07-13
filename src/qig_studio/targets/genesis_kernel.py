@@ -534,7 +534,12 @@ class GenesisKernelTarget(TrainingTarget):
                 r = tt @ P
             else:
                 r = self._resize_basin(tt, size)
-            refs.append(to_simplex_prob(r[None])[0].detach())
+            # simplex_floor=1e-3: the Duchi projection clamps sub-threshold coords to EXACTLY 0 (zero
+            # Jacobian → DEAD pull gradient / birth-collapse — the measured cause of set-coupling non-
+            # convergence). Flooring keeps ref support dense so d_FR(cur, ref) has a live full-support
+            # gradient. Verified (A044 near-node falsifier): floor=0 stalls (d 1.16→1.14), floor=1e-3
+            # converges (1.16→0.003). Same fix the basin-head `cur` already uses (F6).
+            refs.append(to_simplex_prob(r[None], simplex_floor=1e-3)[0].detach())
         self._basin_ref_set = refs
 
     def _fit_basin_to_vocab(self, b: "Any") -> "Any":

@@ -126,7 +126,10 @@ class ConstellationNode:
                 r = tt.float() @ P
             else:
                 r = self._resize_basin(tt, size)
-            refs.append(to_simplex_prob(r[None])[0].detach())
+            # simplex_floor=1e-3: Duchi clamps sub-threshold coords to EXACTLY 0 (zero Jacobian → dead
+            # pull gradient). Flooring keeps ref support dense so d_FR(cur, ref) has a live gradient
+            # (A044 falsifier: floor=0 stalls, floor=1e-3 converges 1.16→0.003).
+            refs.append(to_simplex_prob(r[None], simplex_floor=1e-3)[0].detach())
         self._basin_ref_set = refs
 
     def _basin_pull_term(self, logits: "Any") -> "Any | None":
@@ -142,7 +145,7 @@ class ConstellationNode:
         # a single token-averaged point). Nearest-member keeps the set's structure (vs a centroid that
         # would re-collapse it). Pure Fisher-Rao on the simplex.
         if self._basin_ref_set is not None:
-            cur = to_simplex_prob(logits[0].mean(0))
+            cur = to_simplex_prob(logits[0].mean(0), simplex_floor=1e-3)  # floor: live near-vertex Jacobian
             dists = torch.stack([fisher_rao_distance_simplex(cur[None], r[None]).mean()
                                  for r in self._basin_ref_set])
             return dists.min()
