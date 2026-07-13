@@ -68,6 +68,9 @@ class ConstellationNode:
         birth-state attractor — seeded onto the vocab simplex as ``_basin_ref`` + ``history[0]`` in
         :meth:`_seed_node_basin` once the model (and thus its device + vocab width) exists."""
         self._basin_ref: Any = None       # torch [vocab] Δ point — the coupled-pull / M / d_basin reference
+        self._basin_ref_set: Any = None    # EXP-A044: list[torch [vocab] Δ] — SET-of-8 per-layer geo-Qwen
+                                           # basins; nearest-member pull. Content-specific (per-layer basins
+                                           # separate at d_FR~1.0 where the token-averaged single point ~0.15)
         self._basin_history: list = []     # detached vocab-width basin trajectory; history[0] = birth-state
         self._experience: list = []        # recent input id-tensors — the kernel's replay material (≤32)
         self._basin_template_np = basin_template
@@ -98,15 +101,53 @@ class ConstellationNode:
         reps = (size + ref.numel() - 1) // ref.numel()
         return ref.repeat(reps)[:size].clamp_min(0.0)
 
+    def _set_pull_set(self, templates: "Any") -> None:
+        """EXP-A044: couple to a SET of geo-Qwen per-layer basins (nearest-member pull). Each template is
+        resized to vocab-width and made a Δ point; ``_basin_pull_term`` then draws the node toward the
+        CLOSEST member. This is the content-specific coupling reference — the 8 per-layer basins separate
+        at d_FR~1.0 where a single token-averaged point collapses to ~0.15. Pass None/empty to clear
+        (falls back to single ``_basin_ref`` or solo)."""
+        from qig_core.torch.geometry_simplex import to_simplex_prob
+
+        import torch
+
+        if not templates:
+            self._basin_ref_set = None
+            return
+        size = int(self.vocab_size)
+        refs = []
+        for t in templates:
+            tt = t if isinstance(t, torch.Tensor) else torch.tensor(t, dtype=torch.float32)
+            if tt.numel() > size:
+                # DISTANCE-PRESERVING reduction (Johnson–Lindenstrauss, fixed seed) — repeat-tile truncation
+                # collapses the per-layer content separation (2560->256: 0.13 truncate vs 0.34 JL).
+                g = torch.Generator(device="cpu").manual_seed(15420)
+                P = torch.randn(tt.numel(), size, generator=g) / (size ** 0.5)
+                r = tt.float() @ P
+            else:
+                r = self._resize_basin(tt, size)
+            refs.append(to_simplex_prob(r[None])[0].detach())
+        self._basin_ref_set = refs
+
     def _basin_pull_term(self, logits: "Any") -> "Any | None":
         """The Fisher-Rao basin-pull term (constellation mode ONLY): d_FR(current output basin, _basin_ref).
         Returns a differentiable scalar tensor to ADD to the loss, or None when no pull is set (solo mode —
         the concrete target then stays its lean baseline, unchanged). Pure Δ⁶³ Fisher-Rao, mirroring ARM B's
         spawn-pull term exactly (``fisher_rao_distance_simplex(cur, _basin_ref)``)."""
-        if self._basin_ref is None:
-            return None
+        import torch
         from qig_core.torch.geometry_simplex import fisher_rao_distance_simplex, to_simplex_prob
 
+        # EXP-A044 set-coupling: pull toward the NEAREST member of the geo-Qwen per-layer basin SET
+        # (content-specific — the 8 per-layer basins separate at d_FR~1.0, unlike the ~0.15 collapse of
+        # a single token-averaged point). Nearest-member keeps the set's structure (vs a centroid that
+        # would re-collapse it). Pure Fisher-Rao on the simplex.
+        if self._basin_ref_set is not None:
+            cur = to_simplex_prob(logits[0].mean(0))
+            dists = torch.stack([fisher_rao_distance_simplex(cur[None], r[None]).mean()
+                                 for r in self._basin_ref_set])
+            return dists.min()
+        if self._basin_ref is None:
+            return None
         cur = to_simplex_prob(logits[0].mean(0))
         return fisher_rao_distance_simplex(cur[None], self._basin_ref[None]).mean()
 

@@ -328,6 +328,8 @@ class GenesisKernelTarget(TrainingTarget):
         self.basin_ramp_steps = int(basin_ramp_steps)  # ramp the pull 0→full over this many steps
         self._basin_template_np = basin_template  # np.ndarray Δ⁶³ point (or None)
         self._basin_ref: Any = None   # torch [vocab] Δ point on device — the d_basin / M / pull reference
+        self._basin_ref_set: Any = None  # EXP-A044: list[torch Δ] — geo-Qwen per-layer basin SET (nearest-
+                                         # member pull; content-specific where a single averaged point collapses)
         self._basin_history: list = []  # detached current-basin trajectory; history[0] = birth-state (M)
         self._device = device
         self._kernel: Any = None    # qigkernels.Kernel — lazily built in ensure_loaded()
@@ -504,6 +506,36 @@ class GenesisKernelTarget(TrainingTarget):
         arithmetic on the support; no Euclidean projection of meaning."""
         reps = (size + ref.numel() - 1) // ref.numel()
         return ref.repeat(reps)[:size].clamp_min(0.0)
+
+    def _set_pull_set(self, templates: "Any") -> None:
+        """EXP-A044: couple to a SET of geo-Qwen per-layer basins (nearest-member pull). Each template is
+        resized to the vocab-width simplex and made a Δ point; the train_step pull then draws the output
+        basin toward the CLOSEST member. This is the content-specific coupling reference — the 8 per-layer
+        basins separate at d_FR~1.0 where a single token-averaged point collapses to ~0.15. Pass None/empty
+        to clear (falls back to single _basin_ref / solo). Mirrors ConstellationNode._set_pull_set."""
+        import torch as _t
+        from qig_core.torch.geometry_simplex import to_simplex_prob
+
+        if not templates:
+            self._basin_ref_set = None
+            return
+        dev = self._basin_ref.device if self._basin_ref is not None else self._device
+        size = int(self.vocab_size)
+        refs = []
+        for t in templates:
+            tt = (t if isinstance(t, _t.Tensor) else _t.tensor(t, dtype=_t.float32)).to(dev).float()
+            if tt.numel() > size:
+                # DISTANCE-PRESERVING reduction (Johnson–Lindenstrauss, fixed seed) — NOT repeat-tile
+                # truncation, which discards all but the first `size` dims and collapses the per-layer
+                # content separation (measured: 2560->256 truncate 0.13 vs JL 0.34). The pull can only
+                # resolve matched-vs-mismatched if the reduction keeps the geo basins apart.
+                g = _t.Generator(device="cpu").manual_seed(15420)
+                P = (_t.randn(tt.numel(), size, generator=g) / (size ** 0.5)).to(dev)
+                r = tt @ P
+            else:
+                r = self._resize_basin(tt, size)
+            refs.append(to_simplex_prob(r[None])[0].detach())
+        self._basin_ref_set = refs
 
     def _fit_basin_to_vocab(self, b: "Any") -> "Any":
         """Fit a PERSISTED vocab-sized basin (a Δ^{vocab-1} point) to the CURRENT vocab. After neurogenesis
@@ -1581,7 +1613,8 @@ class GenesisKernelTarget(TrainingTarget):
             loss = (-self.phi_weight * phi_drive
                     + self.gamma_weight * gamma_deficit ** 2
                     + w_lm * lm_loss)
-        if self._basin_ref is not None:                       # SPAWN: pull output basin → role attractor
+        if self._basin_ref is not None or self._basin_ref_set is not None:  # SPAWN: pull output → attractor
+            import torch as _t
             from qig_core.torch.geometry_simplex import fisher_rao_distance_simplex, to_simplex_prob
 
             # F1 (2026-07-02 actuator fix): for the basin head compute `cur` IN-GRAPH from the live 384-dim
@@ -1593,7 +1626,12 @@ class GenesisKernelTarget(TrainingTarget):
                 cur = to_simplex_prob(tel.hidden_state[0].mean(0)[None], simplex_floor=1e-3)[0]
             else:
                 cur = _basin_cur if _basin_cur is not None else to_simplex_prob(logits[0].mean(0), simplex_floor=1e-3)
-            d_ref = fisher_rao_distance_simplex(cur[None], self._basin_ref[None]).mean()
+            if self._basin_ref_set is not None:   # EXP-A044 set-coupling: nearest-member pull toward the
+                # geo-Qwen per-layer basin SET (content-specific; separates at d_FR~1.0 vs ~0.15 collapse).
+                d_ref = _t.stack([fisher_rao_distance_simplex(cur[None], r[None]).mean()
+                                  for r in self._basin_ref_set]).min()
+            else:
+                d_ref = fisher_rao_distance_simplex(cur[None], self._basin_ref[None]).mean()
             # RAMPED pull (verdict 1#1/2#3): early steps build structure (coherence-led), later steps
             # consolidate the faculty into its role attractor — so d_basin (distance to the attractor)
             # can actually descend below D_BASIN_MAX. basin_weight raised 0.05→0.5; ramped 0→full.
