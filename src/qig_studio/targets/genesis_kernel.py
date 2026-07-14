@@ -646,6 +646,56 @@ class GenesisKernelTarget(TrainingTarget):
         n_pos = int(ids.shape[1]) - 1                                  # predicted positions (next-token)
         return mean_dfr * n_pos, max(1, n_pos)
 
+    def eval_text_top1(self, text: str) -> tuple[int, int]:
+        """HELD-OUT top-1 decode accuracy for one text (no grad, no training) — the τ-INVARIANT secondary
+        axis (EXP-GENESIS-BASIN-AB). Returns (n_correct, n_positions) so a caller can aggregate
+        sum(n_correct)/sum(n_positions). ``argmax(logits) == next-token`` where ``argmax(−d_FR/τ) ==
+        argmin d_FR == the decoded token`` — SCALE-FREE (τ cancels) and shared by the basin + geometric
+        heads (both emit ``[seq, vocab]`` scores via ``forward``), so it is the τ-invariant cross-check the
+        primary held-out d_FR axis needs. Same single forward as ``eval_text_fr``."""
+        import torch
+        self.ensure_loaded()
+        ids, coords = self._encode(text)
+        if ids.shape[1] < 2:
+            return 0, 0
+        with torch.no_grad():
+            logits, _ = self._kernel(ids, return_telemetry=True, coords=coords)
+            pred = logits[0, :-1].argmax(dim=-1)                        # [T-1] decoded next-token ids
+            n_correct = int((pred == ids[0, 1:]).sum().item())
+        n_pos = int(ids.shape[1]) - 1                                  # predicted positions (next-token)
+        return n_correct, max(1, n_pos)
+
+    def eval_text_axes(self, text: str) -> tuple[float, int, float, int, int]:
+        """SINGLE-FORWARD held-out eval → ALL THREE axes from ONE forward (compute-avoidance: eval_text_fr +
+        eval_text_bpb + eval_text_top1 each run their own kernel pass = 3× the forward; this runs it once and
+        derives all three from the SAME logits). Returns (tot_dFR, n_pos, tot_bits, n_bytes, n_correct):
+          primary   d_FR = fisher_rao_lm_loss(logits, ids) * n_pos     ([0,π])  — == eval_text_fr
+          Tier-2    bpb  = ce_nats * n_tok / ln2 , n_bytes             (ext-only) — == eval_text_bpb
+          secondary top1 = (argmax(logits) == next-token) count        (τ-inv)   — == eval_text_top1
+        Numerically IDENTICAL to the three separate methods (a deterministic no-grad forward gives identical
+        logits) — gated by an equivalence assert in the driver smoke, so same-ruler is preserved."""
+        import math as _m
+
+        import torch
+        import torch.nn.functional as F
+
+        from ..losses import fisher_rao_lm_loss
+        self.ensure_loaded()
+        ids, coords = self._encode(text)
+        if ids.shape[1] < 2:
+            return 0.0, 0, 0.0, 0, 0
+        with torch.no_grad():
+            logits, _ = self._kernel(ids, return_telemetry=True, coords=coords)
+            lg, tgt = logits[0, :-1], ids[0, 1:]
+            mean_dfr = float(fisher_rao_lm_loss(logits, ids))          # primary   (== eval_text_fr)
+            ce = float(F.cross_entropy(lg, tgt))                       # Tier-2    (== eval_text_bpb)
+            n_correct = int((lg.argmax(dim=-1) == tgt).sum().item())   # secondary (== eval_text_top1)
+        n_pos = int(ids.shape[1]) - 1
+        n_tok = int(ids.shape[1])
+        nbytes = (len(self.coordizer.decode(ids[0].tolist()).encode("utf-8"))
+                  if self.coordizer is not None else n_tok)
+        return mean_dfr * n_pos, max(1, n_pos), ce * n_tok / _m.log(2), max(1, nbytes), n_correct
+
     def _snap(self, tel: Any, loss: float | None) -> TelemetrySnapshot:
         prev = self._last.phi
         phi = float(getattr(tel, "phi", 0.0) or 0.0)
