@@ -666,11 +666,27 @@ class GenesisKernelTarget(TrainingTarget):
         """Return (input_ids[1,seq], coords[1,seq,coord_dim] | None).
 
         coordizer present → coord_ids + their Δ⁶³ basin vectors (coords path);
-        else → raw bytes, coords=None (byte path, bit-identical to the original)."""
+        else → raw bytes, coords=None (byte path, bit-identical to the original).
+
+        ENCODE CACHE (v2 hotfix, 2026-07-15 — the missed avoidance lever): ``coordizer.encode``
+        measured ~0.78 s/prompt while the kernel forward+backward is ~0.03 s — re-encoding a
+        fixed training set every step was ~96% of wall (A100 ~13 s/optimizer-step at B=16).
+        Memoize the ID SEQUENCE per text (ids are deterministic for a frozen coordizer; the
+        tensors are rebuilt per call so device/graph semantics are unchanged — bit-identical
+        outputs, pure compute avoidance). Bounded FIFO so an unbounded corpus can't grow it."""
         if self.coordizer is not None:
-            ids = self.coordizer.encode(text or " ")[: _CTX]
-            if len(ids) < 2:
-                ids = (ids + [32, 32])[:2]
+            cache = getattr(self, "_encode_cache", None)
+            if cache is None:
+                cache = self._encode_cache = {}
+            key = text or " "
+            ids = cache.get(key)
+            if ids is None:
+                ids = self.coordizer.encode(key)[: _CTX]
+                if len(ids) < 2:
+                    ids = (ids + [32, 32])[:2]
+                if len(cache) >= 4096:                       # bounded: drop oldest (FIFO)
+                    cache.pop(next(iter(cache)))
+                cache[key] = ids
             return self._ids_to_tensors(ids)
         import torch
 
