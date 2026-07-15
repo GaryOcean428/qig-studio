@@ -106,4 +106,20 @@ Two claims, two labels — **do not merge them**:
 - Batching: "strongly recommended hygiene" vs "independently mandatory" (Sol 0.88) — v2 ships it
   regardless via the factorial's matched batches.
 
+---
+
+## v2.1 BUDGET EXTENSION (PI-approved 2026-07-15, pre-registered before fire)
+
+**v2.0 result (12/12 cells, app ap-ikhjGFJdZwEFD0LFXgBByh, ~17 min/cell with encode cache):**
+basin arms 6/6 valid, held-out top-1 ≈ 0.0136–0.0137 (~900× chance), **train ≈ held (no
+memorization gap)**, curves still rising at step 2000, floor inert (0.0136 vs 0.0137), bare basin
+did NOT collapse (batching alone sufficed at this scale); geo arms 4/6 COLLAPSED via validity
+gate, survivors at 0.0. Verdict: **UNDERPOWERED-with-positive-trend** — not GENERALIZES (<0.05),
+definitively not MEMORIZES.
+
+**v2.1 (this extension):** identical design, **STEPS 2,000 → 10,000** (160k forwards). Same B=16,
+same arms/seeds/σ_refs/gates. Question: does the rising held-out curve cross **0.05** or plateau
+below it? Quote at measured cached rate (~0.5 s/step ≈ 1.5 h/cell) ≪ 0.8×12h gate — PASS.
+Early-stop (plateau) + futility + validity gates unchanged. All other prereg terms unchanged.
+
 Co-Authored-By: Devin <158243242+devin-ai-integration[bot]@users.noreply.github.com>
