@@ -573,6 +573,94 @@ class GenesisKernelTarget(TrainingTarget):
         s = float(t.sum())
         return t / s if s > 0 else t
 
+    def train_batch(self, prompts: list[str], var_floor_weight: float = 0.0,
+                    var_floor_target: float | None = None) -> "StepResult":
+        """ONE natural-gradient step over a shuffled minibatch (EXP-GENESIS-BASIN-GENERALIZE v2,
+        council 2026-07-15) — gradient ACCUMULATION over ``prompts`` (B forwards → one optimizer
+        step), NOT a vectorized [B,T] forward (kernel internals are batch-1; vectorization is a
+        qigkernels-lane change). This gives the two things batch=1 could not:
+
+          1. batch-AVERAGED gradients (kills the degenerate one-passage update direction), and
+          2. a real cross-sample variance statistic → the preregistered VICReg-style
+             PER-DIM VARIANCE FLOOR on the predicted Δ basins:
+                 L_var = var_floor_weight · mean(relu(var_floor_target − std(pred_means, dim=0)))
+             std over the BATCH dim of each sample's mean predicted basin — an ACTIVE
+             anti-collapse term (arXiv:2105.04906 variance hinge, FR-adapted: std in
+             probability coordinates; the hinge itself touches no manifold distance).
+
+        SCOPE (fail-loud, not silent): the PURE-loss regime only (phi_weight=0, gamma_weight=0 —
+        the v2 factorial config). The full consciousness-weighted path stays on ``train_step``.
+        Homeostasis/EWC/basin-pull are NOT applied here (v2 isolates loss ± floor).
+        Equivalence gate: ``train_batch([p])`` loss == ``train_step(p)`` lm_loss (same seed/state)
+        within fp tolerance — asserted in tests, since both reduce to the same per-prompt core.
+
+        Returns a StepResult whose loss is the batch-mean lm loss (+ floor term), with
+        ``extra["var_floor"]`` = the floor penalty value and ``extra["batch_std_mean"]`` = the
+        mean per-dim std actually measured (the collapse-sensitive sensor, now load-bearing)."""
+        self.ensure_loaded()
+        if float(self.phi_weight) != 0.0 or float(self.gamma_weight) != 0.0:
+            raise NotImplementedError(
+                "train_batch is the v2 PURE-loss harness (phi_weight=gamma_weight=0). "
+                "Consciousness-weighted training stays on train_step.")
+        if not prompts:
+            raise ValueError("train_batch: empty prompt list")
+        import torch
+
+        from ..losses import fisher_rao_lm_loss
+
+        from qig_core.torch.geometry_simplex import fisher_rao_distance_simplex
+
+        self._step += 1
+        B = len(prompts)
+        self._opt.zero_grad()
+        lm_total = 0.0
+        pred_means: list[torch.Tensor] = []   # per-sample mean predicted basin (IN-GRAPH for the floor)
+        last_tel = None
+        for prompt in prompts:
+            ids, coords = self._encode(prompt)
+            if self.head_mode == "basin":
+                # K-COMPRESS per sample (identical core to train_step's basin arm)
+                _, tel = self._kernel(ids, return_telemetry=True, coords=coords, skip_head=True)
+                pred = self._kernel.lm_head.predict(tel.hidden_state[0, :-1])   # [T-1, basin_dim] on Δ
+                tgt = coords[0, 1:]
+                lm_loss = fisher_rao_distance_simplex(pred, tgt).mean()
+                pred_means.append(pred.mean(0))               # [basin_dim] — batch stat input
+            else:
+                logits, tel = self._kernel(ids, return_telemetry=True, coords=coords)
+                lm_loss = fisher_rao_lm_loss(logits, ids)
+                # control arm's comparable stat: mean simplex point of the output distribution
+                from qig_core.torch.geometry_simplex import to_simplex_prob
+                pred_means.append(to_simplex_prob(logits[0].mean(0)[None])[0])
+            (lm_loss / B).backward(retain_graph=var_floor_weight > 0.0)
+            lm_total += float(lm_loss.detach())
+            last_tel = tel
+
+        var_pen_val = 0.0
+        batch_std_mean = 0.0
+        if pred_means:
+            stack = torch.stack([p for p in pred_means])       # [B, dim]
+            std = stack.std(dim=0, unbiased=False) if B > 1 else torch.zeros_like(stack[0])
+            batch_std_mean = float(std.mean().detach())
+            if var_floor_weight > 0.0 and B > 1:
+                import math as _math
+                tgt_std = (var_floor_target if var_floor_target is not None
+                           else 0.5 / _math.sqrt(stack.shape[-1]))
+                var_pen = var_floor_weight * torch.relu(
+                    torch.as_tensor(tgt_std, device=std.device, dtype=std.dtype) - std).mean()
+                var_pen_val = float(var_pen.detach())
+                var_pen.backward()
+        self._opt.step()
+
+        mean_lm = lm_total / B
+        snap = self._snap(last_tel, mean_lm + var_pen_val)
+        snap.extra["batch_size"] = B
+        snap.extra["var_floor"] = round(var_pen_val, 6)
+        snap.extra["batch_std_mean"] = round(batch_std_mean, 6)
+        snap.extra["var_floor_weight"] = float(var_floor_weight)
+        self._last = snap
+        from .base import StepResult
+        return StepResult(text="", telemetry=snap)
+
     # --- input coding: coordizer Δ⁶³ coords if present, else byte-level (dependency-free) ----------
     def _encode(self, text: str):
         """Return (input_ids[1,seq], coords[1,seq,coord_dim] | None).
