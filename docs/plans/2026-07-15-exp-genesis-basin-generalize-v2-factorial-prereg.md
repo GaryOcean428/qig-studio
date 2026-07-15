@@ -51,11 +51,30 @@ Two claims, two labels — **do not merge them**:
 - **Validity gate (first-class):** per-dim variance / basin entropy above preregistered floor for
   an arm to be scoreable; a collapsed arm reports COLLAPSED, never "port off".
 - **Seeds:** ≥3 per cell for the screen (12 runs), ≥5 on the winning comparison if it matters.
-- **Budget:** ≤40k steps/arm, B=16–32, early-stop + futility; A100.
-- **Floor spec:** `L_var = λ · mean(relu(σ_target − std(pred_basin_batch, dim=0)))` on Δ⁶³
-  coordinates (sqrt-space std is FR-valid per qig-core exception); λ and σ_target frozen in this
-  doc before compute: **λ = 1.0, σ_target = 0.5/√64** (placeholder-band; confirm against
-  qig_anticollapse_design_note_20260714 at build; any change re-preregisters).
+- **Budget:** B=16, 2,000 optimizer steps (32k forwards ≈ 8.9 h/run, see Budget arithmetic);
+  early-stop + futility; A100.
+- **Floor spec (PRINCIPLED, frozen 2026-07-15):**
+  `L_var = λ · mean(relu(σ_target − std(pred_basin_batch, dim=0)))` on the batch of per-sample
+  mean predicted basins. **σ_target = 0.0076** — the FULL-VOCAB mean per-dim std of the frozen
+  coordizer basins (`coordizer_20260705_64k_v1.json`, 64,004 × 64, computed exactly, no sampling:
+  per-dim std range 0.0052–0.0122, mean 0.007600) = "maintain at least the natural spread of the
+  vocabulary basins." **λ = 1.0.** Any change to either value re-preregisters. (CCAa review
+  2026-07-15: the earlier 0.5/√64 placeholder was ad-hoc; superseded by this reference-derived
+  value BEFORE any compute.)
+- **Per-arm σ reference (grok red-team amendment, pre-compute):** σ_target = 0.0076 applies to the
+  BASIN arms (64-dim basin space, where it was derived). The GEO arms' prediction stats live on
+  the vocab simplex (~64k-dim) where that value is wrong-scale; their floor/collapse reference is
+  **σ_ref_geo = σ_target × 64/vocab** (dimension-scaled near-uniform approximation, FLAGGED as
+  approximation in every artifact). Collapse validity gate threshold = 0.1 × the arm's σ_ref
+  (hard collapse only — gating at 1.0×σ would auto-invalidate the bare arms and destroy the
+  factorial contrast), counted at EVAL boundaries, sustained ≥3 windows.
+- **Budget arithmetic (measured, not hoped):** v1 measured ≈1 s per single-passage
+  forward+backward on A100 (2L/192, CTX 256). Batching accumulates B forwards per optimizer
+  step, so wall scales with TOTAL FORWARDS, not steps. Frozen: **B = 16, 2,000 optimizer steps
+  = 32,000 forwards ≈ 8.9 h ≈ 0.74 × the 12 h timeout** (satisfies the ≤0.8× quote gate D4).
+  That is ~125 exposures/passage (vs v1's aspirational 500) — registered explicitly as the
+  exposure reduction; plateau early-stop + futility + validity gate keep it informative, and the
+  factorial's collapse contrast (floor ON vs OFF) is expected to separate well before budget.
 - **Interpretation matrix (pre-committed):**
   - A1 generalizes, A2 collapses → basin loss viable WITH floor (floor is part of the treatment); Stage-B earned.
   - A1 collapses too → regulated basin thesis itself in trouble (this would be the real re-evaluation).
