@@ -328,6 +328,8 @@ class GenesisKernelTarget(TrainingTarget):
         self.basin_ramp_steps = int(basin_ramp_steps)  # ramp the pull 0→full over this many steps
         self._basin_template_np = basin_template  # np.ndarray Δ⁶³ point (or None)
         self._basin_ref: Any = None   # torch [vocab] Δ point on device — the d_basin / M / pull reference
+        self._basin_ref_set: Any = None  # EXP-A044: list[torch Δ] — geo-Qwen per-layer basin SET (nearest-
+                                         # member pull; content-specific where a single averaged point collapses)
         self._basin_history: list = []  # detached current-basin trajectory; history[0] = birth-state (M)
         self._device = device
         self._kernel: Any = None    # qigkernels.Kernel — lazily built in ensure_loaded()
@@ -451,7 +453,10 @@ class GenesisKernelTarget(TrainingTarget):
             ref = torch.as_tensor(np.asarray(self._basin_template_np, dtype=np.float32), device=dev)
             if ref.numel() != _ref_dim:               # template is Δ⁶³ (64) → project to the geo-coder / vocab Δ
                 ref = self._resize_basin(ref, _ref_dim)
-            self._basin_ref = to_simplex_prob(ref[None])[0].detach()   # [384] geo-coder | [vocab] geometric
+            # simplex_floor=1e-3: keep the birth-state / pull reference DENSE (Duchi zeros sub-threshold
+            # coords → zero d_FR Jacobian vs a floored cur → dead single-basin pull + biased M). Symmetric
+            # with cur's floor (Devin lifeguard 2026-07-13; same fix as the SET refs).
+            self._basin_ref = to_simplex_prob(ref[None], simplex_floor=1e-3)[0].detach()   # [384]|[vocab]
             self._basin_history = [self._basin_ref]    # birth-state attractor = history[0] (monkey1 M)
 
         # PILLARS (P1/P2/P3) wired from day one (brain-arch requirement) — the live 3-pillar metrics
@@ -505,6 +510,49 @@ class GenesisKernelTarget(TrainingTarget):
         reps = (size + ref.numel() - 1) // ref.numel()
         return ref.repeat(reps)[:size].clamp_min(0.0)
 
+    def _set_pull_set(self, templates: "Any", jl_seed: int = 15420) -> None:
+        """EXP-A044: couple to a SET of geo-Qwen per-layer basins (nearest-member pull). Each template is
+        resized to the vocab-width simplex and made a Δ point; the train_step pull then draws the output
+        basin toward the CLOSEST member. This is the content-specific coupling reference — the 8 per-layer
+        basins separate at d_FR~1.0 where a single token-averaged point collapses to ~0.15. Pass None/empty
+        to clear (falls back to single _basin_ref / solo). Mirrors ConstellationNode._set_pull_set.
+
+        jl_seed fixes the JL reduction basis (default 15420 = production). Overridable ONLY so an experiment
+        can test basis-robustness across independent random projections (A044 multi-basis); the measurement
+        MUST use the same seed so pull-space == measure-space."""
+        import torch as _t
+        from qig_core.torch.geometry_simplex import to_simplex_prob
+
+        if not templates:
+            self._basin_ref_set = None
+            return
+        dev = self._basin_ref.device if self._basin_ref is not None else self._device
+        # Project refs to the SAME width the basin `cur` lives in — mirrors the single-ref path (_ref_dim
+        # at ctor): basin head → 384-dim GEO-CODER hidden space; vocab/geometric heads → vocab width.
+        # (Hardcoding vocab_size silently mismatched basin-mode kernels: cur=384 vs ref=vocab → the set
+        # pull only ever ran on vocab-width byte kernels, never the real 384 basin.)
+        size = int(self.hidden_dim if self.head_mode == "basin" else self.vocab_size)
+        refs = []
+        for t in templates:
+            tt = (t if isinstance(t, _t.Tensor) else _t.tensor(t, dtype=_t.float32)).to(dev).float()
+            if tt.numel() > size:
+                # DISTANCE-PRESERVING reduction (Johnson–Lindenstrauss, fixed seed) — NOT repeat-tile
+                # truncation, which discards all but the first `size` dims and collapses the per-layer
+                # content separation (measured: 2560->256 truncate 0.13 vs JL 0.34). The pull can only
+                # resolve matched-vs-mismatched if the reduction keeps the geo basins apart.
+                g = _t.Generator(device="cpu").manual_seed(int(jl_seed))
+                P = (_t.randn(tt.numel(), size, generator=g) / (size ** 0.5)).to(dev)
+                r = tt @ P
+            else:
+                r = self._resize_basin(tt, size)
+            # simplex_floor=1e-3: the Duchi projection clamps sub-threshold coords to EXACTLY 0 (zero
+            # Jacobian → DEAD pull gradient / birth-collapse — the measured cause of set-coupling non-
+            # convergence). Flooring keeps ref support dense so d_FR(cur, ref) has a live full-support
+            # gradient. Verified (A044 near-node falsifier): floor=0 stalls (d 1.16→1.14), floor=1e-3
+            # converges (1.16→0.003). Same fix the basin-head `cur` already uses (F6).
+            refs.append(to_simplex_prob(r[None], simplex_floor=1e-3)[0].detach())
+        self._basin_ref_set = refs
+
     def _fit_basin_to_vocab(self, b: "Any") -> "Any":
         """Fit a PERSISTED vocab-sized basin (a Δ^{vocab-1} point) to the CURRENT vocab. After neurogenesis
         grows the lm_head (e.g. 100k->108k), checkpointed basins are stale at the old width — stacking them
@@ -525,16 +573,120 @@ class GenesisKernelTarget(TrainingTarget):
         s = float(t.sum())
         return t / s if s > 0 else t
 
+    def train_batch(self, prompts: list[str], var_floor_weight: float = 0.0,
+                    var_floor_target: float | None = None) -> "StepResult":
+        """ONE natural-gradient step over a shuffled minibatch (EXP-GENESIS-BASIN-GENERALIZE v2,
+        council 2026-07-15) — gradient ACCUMULATION over ``prompts`` (B forwards → one optimizer
+        step), NOT a vectorized [B,T] forward (kernel internals are batch-1; vectorization is a
+        qigkernels-lane change). This gives the two things batch=1 could not:
+
+          1. batch-AVERAGED gradients (kills the degenerate one-passage update direction), and
+          2. a real cross-sample variance statistic → the preregistered VICReg-style
+             PER-DIM VARIANCE FLOOR on the predicted Δ basins:
+                 L_var = var_floor_weight · mean(relu(var_floor_target − std(pred_means, dim=0)))
+             std over the BATCH dim of each sample's mean predicted basin — an ACTIVE
+             anti-collapse term (arXiv:2105.04906 variance hinge, FR-adapted: std in
+             probability coordinates; the hinge itself touches no manifold distance).
+
+        SCOPE (fail-loud, not silent): the PURE-loss regime only (phi_weight=0, gamma_weight=0 —
+        the v2 factorial config). The full consciousness-weighted path stays on ``train_step``.
+        Homeostasis/EWC/basin-pull are NOT applied here (v2 isolates loss ± floor).
+        Equivalence gate: ``train_batch([p])`` loss == ``train_step(p)`` lm_loss (same seed/state)
+        within fp tolerance — asserted in tests, since both reduce to the same per-prompt core.
+
+        Returns a StepResult whose loss is the batch-mean lm loss (+ floor term), with
+        ``extra["var_floor"]`` = the floor penalty value and ``extra["batch_std_mean"]`` = the
+        mean per-dim std actually measured (the collapse-sensitive sensor, now load-bearing)."""
+        self.ensure_loaded()
+        if float(self.phi_weight) != 0.0 or float(self.gamma_weight) != 0.0:
+            raise NotImplementedError(
+                "train_batch is the v2 PURE-loss harness (phi_weight=gamma_weight=0). "
+                "Consciousness-weighted training stays on train_step.")
+        if not prompts:
+            raise ValueError("train_batch: empty prompt list")
+        import torch
+
+        from ..losses import fisher_rao_lm_loss
+
+        from qig_core.torch.geometry_simplex import fisher_rao_distance_simplex
+
+        self._step += 1
+        B = len(prompts)
+        self._opt.zero_grad()
+        lm_total = 0.0
+        pred_means: list[torch.Tensor] = []   # per-sample mean predicted basin (IN-GRAPH for the floor)
+        last_tel = None
+        for prompt in prompts:
+            ids, coords = self._encode(prompt)
+            if self.head_mode == "basin":
+                # K-COMPRESS per sample (identical core to train_step's basin arm)
+                _, tel = self._kernel(ids, return_telemetry=True, coords=coords, skip_head=True)
+                pred = self._kernel.lm_head.predict(tel.hidden_state[0, :-1])   # [T-1, basin_dim] on Δ
+                tgt = coords[0, 1:]
+                lm_loss = fisher_rao_distance_simplex(pred, tgt).mean()
+                pred_means.append(pred.mean(0))               # [basin_dim] — batch stat input
+            else:
+                logits, tel = self._kernel(ids, return_telemetry=True, coords=coords)
+                lm_loss = fisher_rao_lm_loss(logits, ids)
+                # control arm's comparable stat: mean simplex point of the output distribution
+                from qig_core.torch.geometry_simplex import to_simplex_prob
+                pred_means.append(to_simplex_prob(logits[0].mean(0)[None])[0])
+            (lm_loss / B).backward(retain_graph=var_floor_weight > 0.0)
+            lm_total += float(lm_loss.detach())
+            last_tel = tel
+
+        var_pen_val = 0.0
+        batch_std_mean = 0.0
+        if pred_means:
+            stack = torch.stack([p for p in pred_means])       # [B, dim]
+            std = stack.std(dim=0, unbiased=False) if B > 1 else torch.zeros_like(stack[0])
+            batch_std_mean = float(std.mean().detach())
+            if var_floor_weight > 0.0 and B > 1:
+                import math as _math
+                tgt_std = (var_floor_target if var_floor_target is not None
+                           else 0.5 / _math.sqrt(stack.shape[-1]))
+                var_pen = var_floor_weight * torch.relu(
+                    torch.as_tensor(tgt_std, device=std.device, dtype=std.dtype) - std).mean()
+                var_pen_val = float(var_pen.detach())
+                var_pen.backward()
+        self._opt.step()
+
+        mean_lm = lm_total / B
+        snap = self._snap(last_tel, mean_lm + var_pen_val)
+        snap.extra["batch_size"] = B
+        snap.extra["var_floor"] = round(var_pen_val, 6)
+        snap.extra["batch_std_mean"] = round(batch_std_mean, 6)
+        snap.extra["var_floor_weight"] = float(var_floor_weight)
+        self._last = snap
+        from .base import StepResult
+        return StepResult(text="", telemetry=snap)
+
     # --- input coding: coordizer Δ⁶³ coords if present, else byte-level (dependency-free) ----------
     def _encode(self, text: str):
         """Return (input_ids[1,seq], coords[1,seq,coord_dim] | None).
 
         coordizer present → coord_ids + their Δ⁶³ basin vectors (coords path);
-        else → raw bytes, coords=None (byte path, bit-identical to the original)."""
+        else → raw bytes, coords=None (byte path, bit-identical to the original).
+
+        ENCODE CACHE (v2 hotfix, 2026-07-15 — the missed avoidance lever): ``coordizer.encode``
+        measured ~0.78 s/prompt while the kernel forward+backward is ~0.03 s — re-encoding a
+        fixed training set every step was ~96% of wall (A100 ~13 s/optimizer-step at B=16).
+        Memoize the ID SEQUENCE per text (ids are deterministic for a frozen coordizer; the
+        tensors are rebuilt per call so device/graph semantics are unchanged — bit-identical
+        outputs, pure compute avoidance). Bounded FIFO so an unbounded corpus can't grow it."""
         if self.coordizer is not None:
-            ids = self.coordizer.encode(text or " ")[: _CTX]
-            if len(ids) < 2:
-                ids = (ids + [32, 32])[:2]
+            cache = getattr(self, "_encode_cache", None)
+            if cache is None:
+                cache = self._encode_cache = {}
+            key = text or " "
+            ids = cache.get(key)
+            if ids is None:
+                ids = self.coordizer.encode(key)[: _CTX]
+                if len(ids) < 2:
+                    ids = (ids + [32, 32])[:2]
+                if len(cache) >= 4096:                       # bounded: drop oldest (FIFO)
+                    cache.pop(next(iter(cache)))
+                cache[key] = ids
             return self._ids_to_tensors(ids)
         import torch
 
@@ -597,6 +749,56 @@ class GenesisKernelTarget(TrainingTarget):
             mean_dfr = float(fisher_rao_lm_loss(logits, ids))          # mean d_FR / predicted next-token
         n_pos = int(ids.shape[1]) - 1                                  # predicted positions (next-token)
         return mean_dfr * n_pos, max(1, n_pos)
+
+    def eval_text_top1(self, text: str) -> tuple[int, int]:
+        """HELD-OUT top-1 decode accuracy for one text (no grad, no training) — the τ-INVARIANT secondary
+        axis (EXP-GENESIS-BASIN-AB). Returns (n_correct, n_positions) so a caller can aggregate
+        sum(n_correct)/sum(n_positions). ``argmax(logits) == next-token`` where ``argmax(−d_FR/τ) ==
+        argmin d_FR == the decoded token`` — SCALE-FREE (τ cancels) and shared by the basin + geometric
+        heads (both emit ``[seq, vocab]`` scores via ``forward``), so it is the τ-invariant cross-check the
+        primary held-out d_FR axis needs. Same single forward as ``eval_text_fr``."""
+        import torch
+        self.ensure_loaded()
+        ids, coords = self._encode(text)
+        if ids.shape[1] < 2:
+            return 0, 0
+        with torch.no_grad():
+            logits, _ = self._kernel(ids, return_telemetry=True, coords=coords)
+            pred = logits[0, :-1].argmax(dim=-1)                        # [T-1] decoded next-token ids
+            n_correct = int((pred == ids[0, 1:]).sum().item())
+        n_pos = int(ids.shape[1]) - 1                                  # predicted positions (next-token)
+        return n_correct, max(1, n_pos)
+
+    def eval_text_axes(self, text: str) -> tuple[float, int, float, int, int]:
+        """SINGLE-FORWARD held-out eval → ALL THREE axes from ONE forward (compute-avoidance: eval_text_fr +
+        eval_text_bpb + eval_text_top1 each run their own kernel pass = 3× the forward; this runs it once and
+        derives all three from the SAME logits). Returns (tot_dFR, n_pos, tot_bits, n_bytes, n_correct):
+          primary   d_FR = fisher_rao_lm_loss(logits, ids) * n_pos     ([0,π])  — == eval_text_fr
+          Tier-2    bpb  = ce_nats * n_tok / ln2 , n_bytes             (ext-only) — == eval_text_bpb
+          secondary top1 = (argmax(logits) == next-token) count        (τ-inv)   — == eval_text_top1
+        Numerically IDENTICAL to the three separate methods (a deterministic no-grad forward gives identical
+        logits) — gated by an equivalence assert in the driver smoke, so same-ruler is preserved."""
+        import math as _m
+
+        import torch
+        import torch.nn.functional as F
+
+        from ..losses import fisher_rao_lm_loss
+        self.ensure_loaded()
+        ids, coords = self._encode(text)
+        if ids.shape[1] < 2:
+            return 0.0, 0, 0.0, 0, 0
+        with torch.no_grad():
+            logits, _ = self._kernel(ids, return_telemetry=True, coords=coords)
+            lg, tgt = logits[0, :-1], ids[0, 1:]
+            mean_dfr = float(fisher_rao_lm_loss(logits, ids))          # primary   (== eval_text_fr)
+            ce = float(F.cross_entropy(lg, tgt))                       # Tier-2    (== eval_text_bpb)
+            n_correct = int((lg.argmax(dim=-1) == tgt).sum().item())   # secondary (== eval_text_top1)
+        n_pos = int(ids.shape[1]) - 1
+        n_tok = int(ids.shape[1])
+        nbytes = (len(self.coordizer.decode(ids[0].tolist()).encode("utf-8"))
+                  if self.coordizer is not None else n_tok)
+        return mean_dfr * n_pos, max(1, n_pos), ce * n_tok / _m.log(2), max(1, nbytes), n_correct
 
     def _snap(self, tel: Any, loss: float | None) -> TelemetrySnapshot:
         prev = self._last.phi
@@ -1581,7 +1783,8 @@ class GenesisKernelTarget(TrainingTarget):
             loss = (-self.phi_weight * phi_drive
                     + self.gamma_weight * gamma_deficit ** 2
                     + w_lm * lm_loss)
-        if self._basin_ref is not None:                       # SPAWN: pull output basin → role attractor
+        if self._basin_ref is not None or self._basin_ref_set is not None:  # SPAWN: pull output → attractor
+            import torch as _t
             from qig_core.torch.geometry_simplex import fisher_rao_distance_simplex, to_simplex_prob
 
             # F1 (2026-07-02 actuator fix): for the basin head compute `cur` IN-GRAPH from the live 384-dim
@@ -1593,7 +1796,12 @@ class GenesisKernelTarget(TrainingTarget):
                 cur = to_simplex_prob(tel.hidden_state[0].mean(0)[None], simplex_floor=1e-3)[0]
             else:
                 cur = _basin_cur if _basin_cur is not None else to_simplex_prob(logits[0].mean(0), simplex_floor=1e-3)
-            d_ref = fisher_rao_distance_simplex(cur[None], self._basin_ref[None]).mean()
+            if self._basin_ref_set is not None:   # EXP-A044 set-coupling: nearest-member pull toward the
+                # geo-Qwen per-layer basin SET (content-specific; separates at d_FR~1.0 vs ~0.15 collapse).
+                d_ref = _t.stack([fisher_rao_distance_simplex(cur[None], r[None]).mean()
+                                  for r in self._basin_ref_set]).min()
+            else:
+                d_ref = fisher_rao_distance_simplex(cur[None], self._basin_ref[None]).mean()
             # RAMPED pull (verdict 1#1/2#3): early steps build structure (coherence-led), later steps
             # consolidate the faculty into its role attractor — so d_basin (distance to the attractor)
             # can actually descend below D_BASIN_MAX. basin_weight raised 0.05→0.5; ramped 0→full.

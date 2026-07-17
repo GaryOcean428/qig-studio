@@ -30,6 +30,7 @@ class _EvalTarget(Protocol):
 
     def eval_text_fr(self, text: str) -> tuple[float, int]: ...
     def eval_text_bpb(self, text: str) -> tuple[float, int]: ...
+    def eval_text_top1(self, text: str) -> tuple[int, int]: ...   # τ-invariant secondary axis (OPTIONAL: aggregated iff present)
 
 
 def load_heldout_passages(path: str | Path = "data/eval/heldout_bpb.json") -> list[str]:
@@ -65,11 +66,19 @@ def eval_heldout_dFR(target: _EvalTarget, passages: list[str]) -> dict[str, Any]
     the whole config. Returns None for a metric whose denominator is zero (all passages skipped)."""
     dfr_num = dfr_den = 0.0
     bpb_num = bpb_den = 0.0
+    top1_num = top1_den = 0.0
     nonfinite = 0
+    _has_axes = hasattr(target, "eval_text_axes")   # SINGLE-FORWARD combined eval (3 axes, one kernel pass)
+    _has_top1 = hasattr(target, "eval_text_top1")   # τ-invariant secondary axis — aggregated iff exposed
     for text in passages:
         try:
-            tot_dfr, n_pos = target.eval_text_fr(text)
-            tot_bits, n_bytes = target.eval_text_bpb(text)
+            if _has_axes:                             # compute-avoidance: ONE forward → all three axes
+                tot_dfr, n_pos, tot_bits, n_bytes, n_correct = target.eval_text_axes(text)
+                n_top = n_pos
+            else:                                     # backward-compat: separate forwards (3×)
+                tot_dfr, n_pos = target.eval_text_fr(text)
+                tot_bits, n_bytes = target.eval_text_bpb(text)
+                n_correct, n_top = target.eval_text_top1(text) if _has_top1 else (0, 0)
         except Exception:  # noqa: BLE001 — one bad passage must not void the config
             nonfinite += 1
             continue
@@ -81,10 +90,14 @@ def eval_heldout_dFR(target: _EvalTarget, passages: list[str]) -> dict[str, Any]
         if math.isfinite(tot_bits) and n_bytes > 0:
             bpb_num += float(tot_bits)
             bpb_den += float(n_bytes)
+        if (_has_axes or _has_top1) and n_top > 0:    # SECONDARY axis: held-out top-1 decode accuracy (τ-inv)
+            top1_num += float(n_correct)
+            top1_den += float(n_top)
     mean_dfr = (dfr_num / dfr_den) if dfr_den > 0 else float("nan")
     ce_bpb = (bpb_num / bpb_den) if bpb_den > 0 else float("nan")
     return {
         "heldout_dFR": (None if not math.isfinite(mean_dfr) else round(mean_dfr, 5)),
+        "heldout_top1": (None if top1_den <= 0 else round(top1_num / top1_den, 5)),
         "ce_bpb": (None if not math.isfinite(ce_bpb) else round(ce_bpb, 5)),
         "n_pos": int(dfr_den),
         "nonfinite_passages": nonfinite,
