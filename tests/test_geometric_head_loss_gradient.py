@@ -24,6 +24,13 @@ from __future__ import annotations
 
 import math
 
+# RADIUS-1 RECONCILIATION (2026-07-17): d_FR is now arccos(BC), range [0, pi/2] — the
+# antipode/floor is ANTIPODE (= pi/2), not pi, and every loss margin below halved with it.
+# The learning behaviour is UNCHANGED; only the unit label moved. These constants were
+# silently calibrated against radius-2 (2*arccos). See qig_core.torch.geometry_simplex
+# .fisher_rao_distance_simplex CANON NOTE.
+ANTIPODE = math.pi / 2   # radius-1 canonical: disjoint support / max separation
+
 import torch
 
 from qig_core.torch.geometric_head import GeometricHead
@@ -78,8 +85,8 @@ def test_geometric_head_loss_has_live_gradient():
     g_logits_old = float(logits_old.grad.abs().max())
 
     assert g_params_new > 0.0 and g_logits_new > 0.0, "FIXED map: dead gradient"
-    assert loss_new.item() < math.pi - 1e-2, f"FIXED map still at the π floor: {loss_new.item()}"
-    assert loss_old.item() > math.pi - 1e-2, f"contrast arm not at the π floor: {loss_old.item()}"
+    assert loss_new.item() < ANTIPODE - 1e-2, f"FIXED map still at the antipode floor: {loss_new.item()}"
+    assert loss_old.item() > ANTIPODE - 1e-2, f"contrast arm not at the antipode floor: {loss_old.item()}"
     assert g_params_new > 100.0 * max(g_params_old, 1e-30), (
         f"no head-param gradient contrast: new={g_params_new:.3e} old={g_params_old:.3e}")
     assert g_logits_new > 100.0 * max(g_logits_old, 1e-30), (
@@ -124,8 +131,8 @@ def test_loss_no_longer_floors_at_pi():
     f0, f1, fr0, fr1 = _descend(fisher_rao_lm_loss)
     d0, d1, dr0, dr1 = _descend(_duchi_lm_loss)
 
-    assert f1 < math.pi - 0.1, f"fixed map did not leave the π pin: {f0:.4f} → {f1:.4f}"
-    assert f1 < f0 - 0.03, f"fixed map did not descend: {f0:.4f} → {f1:.4f}"
+    assert f1 < ANTIPODE - 0.05, f"fixed map did not leave the antipode pin: {f0:.4f} → {f1:.4f}"   # was pi-0.1 @ radius-2
+    assert f1 < f0 - 0.015, f"fixed map did not descend: {f0:.4f} → {f1:.4f}"   # was 0.03 @ radius-2
     assert fr1 < 0.6 * fr0, f"fixed map did not drive the target rank up: {fr0:.1f} → {fr1:.1f}"
-    assert d1 > math.pi - 0.005, f"Duchi arm should stay pinned at π (got {d0:.4f} → {d1:.4f})"
+    assert d1 > ANTIPODE - 0.005, f"Duchi arm should stay pinned at the antipode (got {d0:.4f} → {d1:.4f})"
     assert abs(dr1 - dr0) < 1.0, f"Duchi arm rank moved ({dr0:.1f} → {dr1:.1f}) — support not dead?"

@@ -176,7 +176,7 @@ def test_live_integration_window_opens_and_telemetry_real():
     import pytest
 
     from qig_studio.targets.genesis_kernel import GenesisKernelTarget
-    tgt = GenesisKernelTarget(num_layers=4, seed=1)
+    tgt = GenesisKernelTarget(num_layers=4, seed=1, device="cpu")
     if not tgt.is_available():
         pytest.skip("torch/qigkernels absent (light shell)")
     from qig_studio.curriculum import CurriculumProvider
