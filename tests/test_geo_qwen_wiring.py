@@ -33,7 +33,12 @@ def test_wiring():
     # [6] None-safe reads on unavailable peer: return, not crash
     r = t.generate("hello", max_tokens=4)
     assert r.text == ""
-    assert t.output_basin("hello") is None
+    # output_basin returns None when BOTH the basin bank AND the model are absent.
+    # If the default basin bank exists on disk (exported offline), it correctly serves
+    # from the bank (transformers-free path) — that IS the designed hot path.
+    ob = t.output_basin("hello")
+    import numpy as np
+    assert ob is None or (isinstance(ob, np.ndarray) and ob.shape[0] > 0 and abs(float(ob.sum()) - 1.0) < 1e-4)
 
     # [7] telemetry / info / architecture callable + declare removability
     assert t.telemetry().extra.get("removable") is True

@@ -3,6 +3,8 @@ absent — never assign a dead 'cuda' device string that torch cannot place tens
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 import torch
 
@@ -11,7 +13,7 @@ from qig_coordizer import FisherCoordizer
 from qig_studio.constellation.joint_trainer import JointConstellation
 from qig_studio.development import PROTOMAP_ORDER
 
-_COORDIZER = "../qig-coordizer/checkpoints/coordizer_20260701_8k_v1.json"
+_COORDIZER = str(Path(__file__).resolve().parents[2] / "qig-coordizer" / "checkpoints" / "coordizer_latest.json")
 
 
 def _all_tensor_devices(obj, _seen=None, _depth=0):

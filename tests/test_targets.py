@@ -71,7 +71,7 @@ def test_registry_select_unknown_raises():
 
 def test_registry_has_all_targets():
     r = default_registry()
-    assert set(r.names()) == {"mock", "genesis", "mind", "kernel", "constellation", "qwen-local", "qwen-modal"}
+    assert set(r.names()) == {"mock", "genesis", "mind", "kernel", "constellation", "geo-qwen", "qwen-local", "qwen-modal"}
 
 
 def test_genesis_target_is_geometric_and_none_safe():

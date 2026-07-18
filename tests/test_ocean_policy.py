@@ -445,5 +445,47 @@ def test_pending_is_bounded_over_a_long_run():
     assert f"r:{_PENDING_MAX + 599}" in " ".join(pol._pending.keys())
 
 
+# ==================================================================================================
+# 8. DECONFLICTION — Layer 0 (kernel) > Layer 2 (Ocean): kernel acted → Ocean skips auto-fire
+# ==================================================================================================
+def test_deconflict_kernel_already_acted_skips_auto_fire():
+    """When the kernel self-regulated this step (autonomic != "wake"), Ocean must NOT auto-fire
+    run_protocol — it downgrades to a suggestion record with deconflict metadata."""
+    tel = _Tel(phi=0.6, kappa=64.0, basin_distance=0.42,
+               extra={"d_basin": 0.42, "autonomic": "sleep(consolidate)",
+                      "drive": {"dopamine": 0.4, "boredom": 0.2, "curiosity": 0.3}})
+    ocean, kernels, hist = _ocean_with_kernel(tel)
+    acted = ocean.regulate(kernels, hist)
+    rec = acted.get("action", {})
+    assert kernels["action"].fired == [], "Ocean must NOT fire when kernel already self-regulated"
+    assert rec.get("auto_fired") is False
+    assert rec.get("deconflict") == "sleep(consolidate)"
+    assert ocean.skips.get("deconflict_kernel_acted", 0) == 1
+
+
+def test_deconflict_wake_allows_auto_fire():
+    """When the kernel is in wake state (autonomic == "wake"), Ocean proceeds normally —
+    auto-fire above the divergence floor is NOT blocked by deconfliction."""
+    tel = _Tel(phi=0.6, kappa=64.0, basin_distance=0.42,
+               extra={"d_basin": 0.42, "autonomic": "wake",
+                      "drive": {"dopamine": 0.4, "boredom": 0.2, "curiosity": 0.3}})
+    ocean, kernels, hist = _ocean_with_kernel(tel)
+    acted = ocean.regulate(kernels, hist)
+    rec = acted.get("action", {})
+    assert kernels["action"].fired, "wake state must NOT block Ocean auto-fire"
+    assert rec.get("auto_fired") is True
+    assert "deconflict" not in rec
+
+
+def test_deconflict_absent_autonomic_key_treated_as_wake():
+    """No autonomic key in telemetry → treated as wake (no deconfliction block)."""
+    tel = _Tel(phi=0.6, kappa=64.0, basin_distance=0.42,
+               extra={"d_basin": 0.42,
+                      "drive": {"dopamine": 0.4, "boredom": 0.2, "curiosity": 0.3}})
+    ocean, kernels, hist = _ocean_with_kernel(tel)
+    acted = ocean.regulate(kernels, hist)
+    assert kernels["action"].fired, "missing autonomic key must be treated as wake (no block)"
+
+
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-v"]))

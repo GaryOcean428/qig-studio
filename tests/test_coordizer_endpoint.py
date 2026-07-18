@@ -20,14 +20,15 @@ import time
 import pytest
 from fastapi.testclient import TestClient
 
-# qig_coordizer (the trainer) is the only hard dep for the build; gate on it (None-safe app shell).
-_HAVE_COORDIZER = True
+# qig_coordizer (the trainer) + pyarrow (HF parquet reads) are hard deps for the build.
+_HAVE_DEPS = True
 try:  # pragma: no cover - import guard
     import qig_coordizer  # noqa: F401
+    import pyarrow  # noqa: F401
 except Exception:  # pragma: no cover
-    _HAVE_COORDIZER = False
+    _HAVE_DEPS = False
 
-pytestmark = pytest.mark.skipif(not _HAVE_COORDIZER, reason="qig_coordizer absent (None-safe app shell)")
+pytestmark = pytest.mark.skipif(not _HAVE_DEPS, reason="qig_coordizer or pyarrow absent")
 
 
 def test_balance_has_seven_hf_datasets() -> None:
