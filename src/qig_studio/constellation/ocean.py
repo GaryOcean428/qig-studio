@@ -33,6 +33,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from ..governance.authority_chain import faculty_already_acted
 from .ocean_policy import (
     DOPAMINE_FLOOR,
     PHI_DREAM_THRESHOLD,
@@ -219,6 +220,20 @@ class OceanAutonomic:
             repeat = self._repeat_count.get(role, 0)
             dec = self.policy.decide(ctx, repeat_count=repeat, tick=self._tick)
             self._last_decisions.append(dec.to_dict())
+
+            # DECONFLICTION (authority chain Layer 0 > Layer 2): if the kernel already
+            # self-regulated this step (autonomic != "wake"), Ocean downgrades to suggestion
+            # at most — never double-fires on a faculty that already acted.
+            extra = getattr(tel, "extra", None) or {}
+            if dec.tier == "act" and dec.auto_fire and faculty_already_acted(extra):
+                self.skips.setdefault("deconflict_kernel_acted", 0)
+                self.skips["deconflict_kernel_acted"] += 1
+                acted[role] = {"suggestion": dec.arm, "tier": "suggest", "reason": dec.reason,
+                               "signature": dec.signature, "function": function_of(role),
+                               "auto_fired": False, "decision_id": dec.decision_id,
+                               "policy_version": dec.policy_version, "shadow": self.policy.shadow_mode,
+                               "deconflict": str(extra.get("autonomic", ""))}
+                continue
 
             # the witness ladder: only the ACT tier fires run_protocol, and only above the floor / breaker.
             if dec.tier == "act" and dec.auto_fire:
