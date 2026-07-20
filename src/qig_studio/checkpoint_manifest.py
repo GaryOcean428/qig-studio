@@ -17,7 +17,8 @@ def _coordizer_manifest_path() -> Path:
     env = os.environ.get("QIG_STUDIO_COORDIZER_OUT_DIR")
     if env:
         return Path(env) / "MANIFEST.json"
-    return Path(__file__).resolve().parents[2] / ".." / "qig-coordizer" / "checkpoints" / "MANIFEST.json"
+    from ._paths import sibling_pkg
+    return sibling_pkg("qig-coordizer") / "checkpoints" / "MANIFEST.json"
 
 
 def _kernel_manifest_path() -> Path:

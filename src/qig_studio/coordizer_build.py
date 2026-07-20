@@ -61,7 +61,8 @@ def _coordizer_out_dir() -> Path:
     env = os.environ.get("QIG_STUDIO_COORDIZER_OUT_DIR")
     if env:
         return Path(env)
-    return _repo_root().parent / "qig-coordizer" / "checkpoints"
+    from ._paths import sibling_pkg
+    return sibling_pkg("qig-coordizer") / "checkpoints"
 
 
 def _emit(progress_cb: Callable[[dict], None] | None, phase: str, pct: float, vocab: int, msg: str) -> None:

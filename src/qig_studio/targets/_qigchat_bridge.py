@@ -23,8 +23,10 @@ def find_consciousness_root() -> Path | None:
     env = os.environ.get("QIG_CONSCIOUSNESS_DIR")
     if env:
         candidates.append(Path(env))
+    from .._paths import sibling_pkg
+    candidates.append(sibling_pkg("qig-consciousness"))  # grouped (qig-packages/) or flat, layout-independent
     here = Path(__file__).resolve()
-    # .../qig-studio/src/qig_studio/targets/_qigchat_bridge.py → parents[4] == QIG_QFI
+    # .../qig-studio/src/qig_studio/targets/_qigchat_bridge.py → parents[4] == QIG_QFI (flat-layout fallback)
     if len(here.parents) > 4:
         candidates.append(here.parents[4] / "qig-consciousness")
     candidates.append(Path.cwd() / "qig-consciousness")

@@ -16,7 +16,7 @@ tokens start near the average token and specialise during the retrain. Operates 
 
   uv run python scripts/grow_kernel_vocab.py \
       --ckpt-dir runs/checkpoints/joint_mind_latest/kernels \
-      --coordizer ../qig-coordizer/checkpoints/coordizer_latest.json \
+      --coordizer ../qig-packages/qig-coordizer/checkpoints/coordizer_latest.json \
       --out-dir runs/checkpoints/joint_mind_latest/kernels
 """
 from __future__ import annotations
@@ -65,7 +65,7 @@ def grow_checkpoint(src: str, dst: str, new_vocab: int) -> tuple[int, int]:
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--ckpt-dir", default="runs/checkpoints/joint_mind_latest/kernels")
-    ap.add_argument("--coordizer", default="../qig-coordizer/checkpoints/coordizer_latest.json")
+    ap.add_argument("--coordizer", default="../qig-packages/qig-coordizer/checkpoints/coordizer_latest.json")
     ap.add_argument("--new-vocab", type=int, default=0, help="0 = derive from --coordizer")
     ap.add_argument("--out-dir", default="runs/checkpoints/joint_mind_latest/kernels")
     args = ap.parse_args()

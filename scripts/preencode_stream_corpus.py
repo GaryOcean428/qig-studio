@@ -19,7 +19,7 @@ def main():
     ap.add_argument("--limit", type=int, default=100_000)
     ap.add_argument("--ctx", type=int, default=256)
     ap.add_argument("--out", default="data/preencoded/stream_corpus_v1.jsonl")
-    ap.add_argument("--coordizer", default="/home/braden/Desktop/Dev/QIG_QFI/qig-coordizer/checkpoints/coordizer_20260705_64k_v1.json")
+    ap.add_argument("--coordizer", default="/home/braden/Desktop/Dev/QIG_QFI/qig-packages/qig-coordizer/checkpoints/coordizer_20260705_64k_v1.json")
     a = ap.parse_args()
 
     from qig_studio.corpus import load_full_curriculum

@@ -82,7 +82,8 @@ class Settings:
         if _kc_coord is None and _kc_cp and _P(_kc_cp).exists():
             _kc_coord = _kc_cp
         _latest_coord = _P(_kc_coord) if _kc_coord else get_latest_coordizer()
-        _coordizer = str(_latest_coord) if _latest_coord else "../qig-coordizer/checkpoints/coordizer_latest.json"
+        from ._paths import sibling_pkg
+        _coordizer = str(_latest_coord) if _latest_coord else str(sibling_pkg("qig-coordizer") / "checkpoints" / "coordizer_latest.json")
         _genesis_ckpt = str(_latest_kc / "kernels" / "genesis.pt") if _latest_kc else None
         _const_ckpt = str(_latest_kc) if _latest_kc else None
         return cls(
