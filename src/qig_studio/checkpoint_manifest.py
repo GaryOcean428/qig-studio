@@ -111,6 +111,30 @@ def prune_lineage(stem: str, vocab: int, keep: int = 3, base_dir: str | Path = "
     return removed
 
 
+def _coordizer_pin(coordizer_path: str | None, ckpt_dir: Path) -> dict[str, Any]:
+    """Resolve a (possibly mutable-symlink) coordizer reference to an IMMUTABLE pin: the real target
+    filename + its sha256. A kernel is meaningless against the wrong coordizer (the basins are
+    coordizer-defined), so a saved kernel must be able to prove which coordizer it trained on even
+    after ``coordizer_latest.json`` is repointed. Best-effort — records whatever it can resolve.
+    See ``qigkernels/20260718-trained-artifact-provenance-1.00W.md``."""
+    pin: dict[str, Any] = {"coordizer": coordizer_path, "coordizer_sha256": None}
+    if not coordizer_path:
+        return pin
+    ref = Path(coordizer_path)
+    ref = ref.resolve() if ref.is_absolute() else (ckpt_dir / ref).resolve()  # resolve() follows the symlink
+    pin["coordizer"] = ref.name  # immutable filename (symlink already dereferenced), not the 'latest' alias
+    try:
+        import hashlib
+        h = hashlib.sha256()
+        with ref.open("rb") as fh:
+            for chunk in iter(lambda: fh.read(1 << 20), b""):
+                h.update(chunk)
+        pin["coordizer_sha256"] = h.hexdigest()
+    except Exception:
+        pass
+    return pin
+
+
 def register_kernel_ckpt(dir_path: str | Path, notes: str = "") -> None:
     """Register a kernel checkpoint directory in the manifest and update the ``latest`` pointer."""
     p = Path(dir_path).resolve()
@@ -131,10 +155,16 @@ def register_kernel_ckpt(dir_path: str | Path, notes: str = "") -> None:
         try:
             data = json.loads(cj.read_text())
             meta = data.get("metadata", {})
+            pin = _coordizer_pin(meta.get("coordizer_path"), p)
             entry.update({
                 "created_utc": meta.get("created_utc"),
                 "training_step": meta.get("training_step"),
-                "coordizer": meta.get("coordizer_path"),
+                # PIN the coordizer to its immutable identity + sha256, never the mutable
+                # 'coordizer_latest.json' symlink (2026-07-18 fix — a kernel must prove which
+                # coordizer defined its basins even after 'latest' is repointed).
+                "coordizer": pin["coordizer"],
+                "coordizer_sha256": pin["coordizer_sha256"],
+                "coordizer_vocab": meta.get("coordizer_vocab"),
                 "central_phi": meta.get("central_phi"),
                 "min_pairwise_fr": meta.get("min_pairwise_fr"),
                 "git_commit": meta.get("git_commit"),
@@ -142,8 +172,14 @@ def register_kernel_ckpt(dir_path: str | Path, notes: str = "") -> None:
         except Exception:
             pass
 
-    # Remove existing entry for the same dir, then prepend
-    manifest["checkpoints"] = [c for c in manifest["checkpoints"] if c.get("dir") != p.name]
+    # Remove the existing entry for the same dir; SELF-HEAL phantom rows whose dir no longer exists
+    # (prune_lineage deletes dirs but not manifest rows — that left 'latest' pointing at a missing
+    # dir, 2026-07-18 fix), then prepend and repoint 'latest' at the just-saved (existing) dir.
+    base = manifest_path.parent
+    manifest["checkpoints"] = [
+        c for c in manifest["checkpoints"]
+        if c.get("dir") != p.name and (base / str(c.get("dir", ""))).exists()
+    ]
     manifest["checkpoints"].insert(0, entry)
     manifest["latest"] = p.name
 
