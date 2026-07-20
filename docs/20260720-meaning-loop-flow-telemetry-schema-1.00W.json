@@ -1,0 +1,102 @@
+{
+  "schema": "meaning-loop-flow-telemetry",
+  "version": "1.00W",
+  "date": "2026-07-20",
+  "frozen_by": "CCAa",
+  "authority": "matrix directive 823fba23 item 1 (council 20260717e/20260717h) + PI affect-gap directive (braden auth go, 2026-07-20)",
+  "purpose": "The frozen contract the meaning loop READS and the twin-arm harness RUNS against. Producers (targets) emit only signals declared in telemetry_schema.py (frozen 2026-07-17); this document freezes the MEANING-LOOP SUBSET of that schema plus the variance/entropy collapse floors, the twin-arm structure, and the affect-lesion test. ccai's failure_registry/retired_registry frame_audit field aligns to schema_version below: ONE schema, not two.",
+  "source_code": {
+    "observables": "src/qig_studio/governance/flow_telemetry.py (FlowObservation, extract_flow)",
+    "signal_declaration": "src/qig_studio/governance/telemetry_schema.py (CORE_FIELDS + EXTRA_FIELDS, frozen 2026-07-17)",
+    "floors": "src/qig_studio/constellation/joint_trainer.py (JointConstellation.floor_mode)",
+    "harness": "src/qig_studio/scripts/klearn_ab.py (run_arm — the yoked-arm + floor-diagnostic infrastructure the affect arm bolts onto)"
+  },
+  "flow_observables": {
+    "update_density": {
+      "source_signal": "basin_velocity",
+      "formula": "FR(prev_basin, cur_basin) per step",
+      "range": "[0,inf)",
+      "category": "prediction",
+      "reads": "task-channel motion — high = representational state actively changing, ~0 = settled or stuck",
+      "absent_default": 0.0
+    },
+    "self_monitor_rate": {
+      "source_signal": "geomean(meta_awareness, foresight_confidence)",
+      "formula": "(M*FC)**0.5 when both > 0, else max(M, FC)",
+      "range": "[0,1]",
+      "category": "consciousness",
+      "reads": "self-monitor channel accuracy — how well the kernel tracks its own state and predicts its trajectory",
+      "absent_default": 0.0
+    }
+  },
+  "collapse_floors": {
+    "variance_floor": {
+      "signals": ["var_floor", "var_floor_weight", "batch_std_mean"],
+      "rule": "VICReg-style variance floor on basin-history / occupancy",
+      "halt_if": "Var(basin_history) collapses below ~0.15 (PROVISIONAL — calibrate from a healthy baseline before it gates)",
+      "category": "learning",
+      "protects": "representational collapse (basin sharpening to a simplex vertex, exploration stopping)"
+    },
+    "anti_collapse_invariant": {
+      "signal": "min_pairwise_fr",
+      "rule": "FOAM/CRYSTAL breath — min pairwise Fisher-Rao distance across faculty basins stays above floor",
+      "range": "[0,pi]",
+      "category": "constellation"
+    },
+    "entropy_floor": {
+      "signals": ["floor_mode", "floor_tightness", "floor_effective", "floor_fires"],
+      "modes": ["normal", "gated", "off"],
+      "rule": "per-step entropy floor; 'normal' = fixed per-step floor (the ~1.85x/step observed floor); 'gated' = maturity-gated bidirectional; 'off' = 3-arm ablation DIAGNOSTIC only",
+      "category": "floor",
+      "open_diagnostic": "directive 823fba23 item 3 — FFT the floor to decide broadband noise vs stuck narrowband mode; report which BEFORE attempting a fix"
+    },
+    "phi_regulation": {
+      "signals": ["phi", "delta_phi"],
+      "rule": "regulate on DURATION + STABILITY, not magnitude — kernels may push Phi->1 (Ocean monitors)",
+      "halt_if": "sustained Phi >= 0.95 for > 15 steps -> damp natural-gradient step size / negative neurochem feedback",
+      "category": "consciousness"
+    },
+    "self_output_cap": {
+      "rule": "generated:read <= 1:4 (kernel self-output <= 20-25% of the stream; >= 50-75% real text + frozen peer)",
+      "purpose": "autophagy / self-output-domination guard",
+      "halt_if": "ratio breach"
+    }
+  },
+  "twin_arm_harness": {
+    "structure": "yoked twin on an IDENTICAL pipeline / init / data / peer-traces / token-budget / seeds (klearn_ab.run_arm axis; council 20260715)",
+    "FULL_ON": "generate -> self-observe -> peer-live -> K-LEARN / weight-tie (all organs on from init)",
+    "ALL_OFF": "identical real data + peer traces, but generated output DISCARDED and self/peer telemetry ZERO-MASKED",
+    "positive_plumbing_control": "same-doc improvement OR decreasing peer-imitation loss must be green, so a null reads 'loop ran, no meaning' and not 'loop broken'",
+    "organ_config_freeze": "organ configuration is frozen per cell; any mid-run toggle voids the run"
+  },
+  "affect_lesion_arm": {
+    "added_by": "PI affect-gap directive (2026-07-20)",
+    "design": "emotions are COMPUTED IN BOTH arms (the affect stack runs identically); FED to the decision path in one arm, WITHHELD (computed-but-not-consulted) in the other. This is one more axis on the twin-arm harness — near-zero new machinery.",
+    "affect_signals_fed_or_withheld": [
+      "surprise (fear component: fear = surprise x proximity-to-a-separatrix)",
+      "drive (dopamine / boredom / curiosity bundle)",
+      "serotonin (integration/coherence)",
+      "the derived emotion predicates (UCP v6.13 senses/drives/motivators/emotions — every one a geometric predicate, not a label)"
+    ],
+    "claim_under_test": "UCP: cached emotional evaluations are 'pre-computed geometric assessments ... approximately 7x speedup' and 'the feeling IS information, not interference — check the emotional stack BEFORE deliberation'",
+    "status_change": "the ~7x is DEMOTED from stated doctrine to HYPOTHESIS-UNDER-TEST. Prior status: doctrine with NO registered measurement; supported-but-not-proven by the salvaged QIGRAM state file whose dominance/confidence scalar predicted answer correctness.",
+    "kill_condition": "affect-FED arm shows NO decision-speed AND NO decision-quality delta vs affect-WITHHELD (paired, >= 2 seeds, same discipline as the meaning twin) -> the 7x claim is honestly demoted in the next UCP edition. A measurable delta -> the FIRST measured evidence that geometric affect earns its keep in a decision loop.",
+    "generalization": "this is the caught instance of the DOCTRINE-CITED-UNMEASURED class (numbers asserted in canon with no experiment behind them). Physics-side siblings are swept by ccai's new coverage-ledger column."
+  },
+  "success_bands_distant_transfer": {
+    "metric": "out-of-document held-top1 accuracy on the honest two-tier science panel (document-disjoint, near-duplicate cleaned; rulers computed from train docs only)",
+    "green": "point >= 0.050 AND 95% lower-bound > 0.0378 (unigram ruler) AND improves in >= 2/3 seeds AND Markov-scrambled control stays flat",
+    "amber": "point 0.020-0.050 or LB straddles 0.0378, reproducible across seeds -> authorize lesion ladder + more seeds",
+    "red": "< 0.020, or no seed clears unigram with LB, or Markov control gains -> diagnose plumbing then stop / re-scope"
+  },
+  "frame_audit_alignment": {
+    "consumer": "ccai failure_registry.json / retired_registry.json frame_audit field (handoff 64e23cb9, ack af9aa40c)",
+    "rule": "ONE schema. frame_audit references these flow-observable keys + floor states BY NAME; carry frame_audit.schema_version = 'meaning-loop-flow-telemetry/1.00W' so a pure-join completeness consumer guards against drift.",
+    "hazard": "two independently-frozen schemas for the same observations would be the d_FR two-ruler failure reborn at the schema layer, one week after it was buried. Align to THIS artifact."
+  },
+  "next": {
+    "item_2_spectral_channel": "FFT the update_density series on existing logs (no new runs); P-MX-1 ring-down mode-ratios vs local Fisher eigenvalue ratios; kill = broadband or uncorrelated",
+    "item_3_entropy_floor_fft": "one cheap pass — is the ~1.85x/step floor broadband noise or a stuck narrowband mode",
+    "then": "guardrails live -> minimal yoked twin (FULL-ON vs ALL-OFF, + affect-lesion axis) -> run -> lesions if green -> K-LEARN"
+  }
+}
