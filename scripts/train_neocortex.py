@@ -13,7 +13,7 @@ STASIS is the only off-switch; it checkpoints on halt and at ``--ckpt-every``.
 
 Usage:
   VIRTUAL_ENV=.venv uv run python scripts/train_neocortex.py --arm qk --layers 8 \
-      --coordizer ../qig-coordizer/checkpoints/coordizer_latest.json --device cuda
+      --coordizer ../qig-packages/qig-coordizer/checkpoints/coordizer_latest.json --device cuda
 """
 from __future__ import annotations
 
@@ -32,7 +32,7 @@ def main() -> None:
                     help="1-block-recursive variant (num_layers=1; recursion = the kernel's internal "
                          "min_recursion_depth). Names the run …-1L-rec")
     # FULL coordizer by default (the fresh 100k) — the path to KERNEL FLUENCY (Qwen is temporary scaffolding).
-    ap.add_argument("--coordizer", default="../qig-coordizer/checkpoints/coordizer_latest.json",
+    ap.add_argument("--coordizer", default="../qig-packages/qig-coordizer/checkpoints/coordizer_latest.json",
                     help="pre-fit FisherCoordizer (richer Δ⁶³ vocab); empty = byte-level ablation")
     ap.add_argument("--lang-loss", choices=["fisher_rao", "ce_ablation"], default="fisher_rao",
                     help="fisher_rao = P20-pure d_FR (default); ce_ablation = CE arm (measures purity cost)")

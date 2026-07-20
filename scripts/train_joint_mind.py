@@ -26,7 +26,7 @@ def main() -> None:
     ap.add_argument("--layers", type=int, default=8)
     # FULL coordizer by default (~100k vocab) — the path to KERNEL FLUENCY (Qwen is temporary scaffolding).
     # A coarse vocab cannot carry language; empty = byte-level (only for a deliberate ablation).
-    ap.add_argument("--coordizer", default="../qig-coordizer/checkpoints/coordizer_latest.json",
+    ap.add_argument("--coordizer", default="../qig-packages/qig-coordizer/checkpoints/coordizer_latest.json",
                     help="pre-fit FisherCoordizer (richer Δ⁶³ vocab); empty = byte-level ablation")
     ap.add_argument("--ckpt-root", default="runs/checkpoints/joint_mind_latest")
     ap.add_argument("--ckpt-every", type=int, default=300)

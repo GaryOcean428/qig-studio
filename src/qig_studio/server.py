@@ -394,7 +394,8 @@ async def select_checkpoint(req: CheckpointSelectRequest, _: None = Depends(veri
         # Resolve new coordizer path
         new_coord = s.genesis_coordizer_checkpoint
         if req.coordizer:
-            new_coord = str(Path("../qig-coordizer/checkpoints") / req.coordizer)
+            from ._paths import sibling_pkg
+            new_coord = str(sibling_pkg("qig-coordizer") / "checkpoints" / req.coordizer)
         # Resolve new kernel checkpoint root
         new_const = s.constellation_checkpoint
         if req.kernel:

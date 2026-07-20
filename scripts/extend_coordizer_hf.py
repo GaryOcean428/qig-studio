@@ -55,7 +55,7 @@ def _fertility(coordizer, probes: list[str]) -> float:
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--coordizer", default="../qig-coordizer/checkpoints/coordizer_latest.json")
+    ap.add_argument("--coordizer", default="../qig-packages/qig-coordizer/checkpoints/coordizer_latest.json")
     ap.add_argument("--out", default="")  # auto: coordizer_{YYYYMMDD}_{vocab}v{N}.json
     ap.add_argument("--add-vocab", type=int, default=5000, help="merges to ADD on top of the current vocab")
     ap.add_argument("--max-bytes", type=int, default=20_000_000, help="cap the HF corpus (CPU/disk safety)")

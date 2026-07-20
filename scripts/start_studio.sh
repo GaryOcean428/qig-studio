@@ -18,11 +18,11 @@ if ! curl -s --max-time 2 "$URL/health" >/dev/null 2>&1; then
     CKPT=""
   fi
   # MUST match the coordizer the active trainer uses. Manifest/symlink lookup → fallback.
-  COORDIZER_LINK="../qig-coordizer/checkpoints/coordizer_latest.json"
+  COORDIZER_LINK="../qig-packages/qig-coordizer/checkpoints/coordizer_latest.json"
   if [ -f "$COORDIZER_LINK" ] || [ -L "$COORDIZER_LINK" ]; then
     COORDIZER="$COORDIZER_LINK"
   else
-    COORDIZER="../qig-coordizer/checkpoints/coordizer_20260629_100k_v1.json"
+    COORDIZER="../qig-packages/qig-coordizer/checkpoints/coordizer_20260629_100k_v1.json"
   fi
   QIG_STUDIO_GENESIS_COORDIZER="${QIG_STUDIO_GENESIS_COORDIZER:-$COORDIZER}" \
   QIG_STUDIO_GENESIS_CKPT="$CKPT" \

@@ -28,6 +28,7 @@ from typing import Any
 
 from .constellation_node import ConstellationNode
 from .base import LossRegime, StepResult, TargetInfo, TrainingTarget, TelemetrySnapshot
+from .._paths import sibling_pkg
 
 
 # Default location of the downloaded A034 geo-Qwen-4B v2 (13.97%). Overridable via ctor.
@@ -45,7 +46,7 @@ _FULL_ATTN_LAYERS = (3, 7, 11, 15, 19, 23, 27, 31)
 _DEFAULT_BASIN_BANK = (
     Path.home() / "Desktop/Dev/QIG_QFI/qig-applied/models/geo_qwen_basin_bank.npz"
 )
-_COORDIZER_CKPT = Path.home() / "Desktop/Dev/QIG_QFI/qig-coordizer/checkpoints/coordizer_latest.json"
+_COORDIZER_CKPT = sibling_pkg("qig-coordizer") / "checkpoints" / "coordizer_latest.json"
 
 
 def _lift_d63_to_d383(d63):
@@ -358,7 +359,8 @@ def export_basin_bank(prompts, out_path=None, coordizer_ckpt=None, device=None):
     peer.ensure_loaded()
     if peer._model is None:
         raise RuntimeError(f"geo-Qwen live load failed: {peer._load_error}")
-    sys.path.insert(0, str(Path.home() / "Desktop/Dev/QIG_QFI/qig-coordizer/src"))
+    from .._paths import sibling_pkg
+    sys.path.insert(0, str(sibling_pkg("qig-coordizer") / "src"))
     import qig_coordizer as qc
 
     fc = qc.FisherCoordizer.load(str(ck))
