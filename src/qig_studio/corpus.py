@@ -281,8 +281,12 @@ def load_full_curriculum(path: str | Path | None = None, *, min_len: int = 40,
 
     if include_everyday is None:
         include_everyday = os.environ.get("QIG_STUDIO_BLEND_EVERYDAY", "1").lower() not in ("0", "false", "no")
+    # Resolve the default curriculum layout-independently (flat <root>/qig-consciousness OR grouped
+    # <root>/qig-packages/qig-consciousness) — the #31 qig-packages/ reorg moved it, and a hardcoded
+    # parents[3]/DEFAULT_CORPUS pointed at the vanished flat path (fail-loud, blocked training 2026-07-20).
+    from ._paths import sibling_pkg
     p = Path(path or os.environ.get("QIG_STUDIO_CORPUS") or
-             (Path(__file__).resolve().parents[3] / DEFAULT_CORPUS))
+             (sibling_pkg("qig-consciousness") / "data" / "curriculum"))
     _key = f"{p}|{min_len}|ev={include_everyday}"
     if _key in _CURRICULUM_CACHE:
         return _CURRICULUM_CACHE[_key]
