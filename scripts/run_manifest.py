@@ -100,8 +100,9 @@ def main() -> int:
     ap.add_argument("--tier", choices=["verdict", "training"], default="verdict")
     ap.add_argument("--run-type", choices=["arms_bakeoff", "conversation_acceptance"],
                     default="arms_bakeoff",
-                    help="arms_bakeoff = architecture verdict (teacher-free by design); "
-                         "conversation_acceptance = a kernel you can converse with (needs geo-Qwen + recall + memory)")
+                    help="arms_bakeoff = architecture verdict (design B, PI 2026-07-21b): geo-Qwen boundary "
+                         "teacher REQUIRED, GRADIENT teacher-free; conversation_acceptance = a kernel you can "
+                         "converse with (geo-Qwen + real recall + persistent memory)")
     ap.add_argument("--waive", default="", help="reason to override a BLOCK on the record")
     ap.add_argument("--run-id", default="unpinned")
     ap.add_argument("--out", default="")
@@ -114,9 +115,12 @@ def main() -> int:
     blocks: list[str] = []
     warns: list[str] = []
 
-    # 1. REQUIRED-WIRED components — SCOPED BY RUN TYPE (ruling f5ca185f): the arms bake-off is
-    # teacher-free by design, so geo-Qwen + recall are required only for the conversation test.
-    # The register's run_type_requirements is authoritative; fall back to the spec's flat list.
+    # 1. REQUIRED-WIRED components — SCOPED BY RUN TYPE. Design B (PI 2026-07-21b) CORRECTS the
+    # f5ca185f-era scoping: the arms bake-off's GRADIENT is teacher-free (lm_weight=0) but its BOUNDARY
+    # language_peer must be geo-Qwen (a plain-Qwen peer contaminated the killed run — registry.py:142 ->
+    # joint_trainer.py:159). So geo-Qwen (teacher_geometry_native) is REQUIRED for arms_bakeoff; only
+    # QIGRAM recall + persistent memory stay conversation-only. register.run_type_requirements is
+    # authoritative; fall back to the spec's flat list.
     rtr = register.get("run_type_requirements", {}).get(args.run_type, {})
     required = rtr.get("required_wired") or [r["component"] for r in spec.get("required_wired", [])]
     for comp in required:
@@ -129,6 +133,18 @@ def main() -> int:
         elif row.get("status") != "wired" or not row.get("on_acceptance_path", False):
             blocks.append(f"REQUIRED '{comp}' ({args.run_type}) is '{row.get('status')}' "
                           f"on_path={row.get('on_acceptance_path')} ({row.get('evidence','?')})")
+
+    # 1b. DECLARED-TEACHER guard (design B, PI 2026-07-21b): an arms_bakeoff VERDICT run must declare a
+    # GEO teacher. A plain-Qwen (qwen_local) boundary peer is the exact contamination that killed the
+    # prior run (registry.py:142 -> joint_trainer.py:159) and false-greened the gate; it must never do
+    # so again. The register pins the required teacher for the run type; enforce --teacher matches.
+    declared_req = rtr.get("declared_teacher")
+    if declared_req and args.run_type == "arms_bakeoff":
+        if "geo" not in (args.teacher or "").strip().lower():
+            blocks.append(
+                f"TEACHER MISMATCH: {args.run_type} verdict requires a geo teacher "
+                f"(register declared_teacher='{declared_req}'), got --teacher='{args.teacher or None}'. "
+                f"A plain-Qwen boundary peer contaminated the killed run — refused.")
 
     # 2. Package currency: installed >= min (stale pin is a launch blocker).
     minv = {k: v for k, v in spec.get("min_package_versions", {}).items() if not k.startswith("_")}
