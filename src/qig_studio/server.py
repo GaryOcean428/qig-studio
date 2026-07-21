@@ -1034,6 +1034,7 @@ async def _train_core(
                 relevance=(samp or {}).get("relevance"),  # how on-topic that generation was to the stimulus
                 coach=(samp or {}).get("coach"),        # provenance-tagged coach reward+relevance record (§18.6)
                 stimulus=stimulus,                      # the FULL training passage (UNtruncated) the step learned
+                own_voice_stimulus=stimulus,            # pair own_voice with the stimulus it actually answered
                 coordizer_vocab=getattr(target, "vocab_size", None)))
         except Exception:  # noqa: BLE001 — a live-log failure must not break training
             pass
@@ -1232,6 +1233,7 @@ async def train(req: TrainRequest, _: None = Depends(verify_key)) -> StreamingRe
                     drive=(td.get("extra") or {}).get("drive") or {},
                     own_voice=(sample or {}).get("output") if sample else None,
                     stimulus=stimulus,                  # the FULL training passage (UNtruncated) the step learned
+                    own_voice_stimulus=stimulus,        # pair own_voice with the stimulus it actually answered
                     coordizer_vocab=getattr(t, "vocab_size", None)))
             except Exception:  # noqa: BLE001 — a live-log failure must not break training
                 pass
