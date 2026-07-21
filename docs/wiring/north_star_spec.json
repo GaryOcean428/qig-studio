@@ -25,5 +25,18 @@
   "must_not_be_live_on_path": [
     {"pattern": "retired kappa*=64.21 / KAPPA_STAR / TACKING_ATTRACTOR as a live compute constant", "note": "BASIN_DIM=64 is legit and exempt"},
     {"pattern": "cosine/dot/Euclidean on Δ⁶³ basin objects wearing a QFI/Fisher-Rao/distance label"}
-  ]
+  ],
+  "instrument_pins": {
+    "_doc": "Named + versioned telemetry instruments pinned into every run manifest (PI ruling 2026-07-21): a metric that silently changes shape between runs is a drifting instrument. run_manifest.py records this block so each run declares which metric definitions produced its numbers.",
+    "relevance_metric": {
+      "name": "response_stimulus_relevance",
+      "version": "2.0",
+      "formula": "max(0, (d_null - min_i d_FR(gen, stim_coord_i)) / d_null)",
+      "stimulus_basis": "coordizer per-position Δ⁶³ (pcoords), NOT the mean-of-logprobs (v1, centroid-collapse bug)",
+      "null_baseline": "uniform_centroid_Δ63 (pinned: p_i = 1/BASIN_DIM)",
+      "d_fr_convention": "radius-1 (max = π/2)",
+      "source": "qig-studio/src/qig_studio/targets/genesis_kernel.py generate() relevance block (commit 3b89c24)",
+      "version_history": {"1.0": "mean-of-logprobs vs kernel Δ63 (centroid-collapse bug: newborn>ontopic)", "1.5": "coordizer-basin min-nearest, absolute 1-d/(π/2) (saturated ~0.87)", "2.0": "coordizer-basin min-nearest, RELATIVE-to-null-baseline (newborn→0)"}
+    }
+  }
 }

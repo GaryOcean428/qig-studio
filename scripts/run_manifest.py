@@ -187,6 +187,7 @@ def main() -> int:
         "required_min_packages": minv,
         "register_source": "docs/wiring/wiring_register.json",
         "north_star_source": "docs/wiring/north_star_spec.json",
+        "instrument_pins": spec.get("instrument_pins", {}),   # named+versioned telemetry metrics (PI 2026-07-21: no drifting instruments)
         "blocks": blocks,
         "warnings": warns,
         "waiver": args.waive or None,
