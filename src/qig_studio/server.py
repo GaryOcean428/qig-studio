@@ -967,7 +967,9 @@ async def _train_core(
             if coach is not None and (_ov_count == 1 or _ov_count % coach_every == 0):
                 try:
                     tel = {"phi": gr.telemetry.phi, "regime": getattr(gr.telemetry, "regime", None),
-                           "relevance": sx.get("relevance")}
+                           "relevance": sx.get("relevance"),
+                           "gen_d63": sx.get("gen_d63")}  # kernel's own Δ⁶³ output basin, for the geo_grade
+                                                          # THIRD grader (Deliverable B) — None-safe passthrough
                     samp["coach"] = await asyncio.get_event_loop().run_in_executor(
                         None, lambda: coach.coach_own_voice(stimulus, gr.text, tel))
                     # TASK C actuation-4 + M1: the coach reward → the kernel's REPLAY PRIORITY (P10 reward-

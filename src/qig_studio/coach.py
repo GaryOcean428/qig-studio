@@ -156,6 +156,7 @@ class DevelopmentalCoach:
         self.enabled = enabled
         self.llm = llm or OllamaLLM()
         self.cadence = max(1, cadence)
+        self._geo_qwen_cache: Any | None = "unset"  # lazy sentinel — see _get_geo_qwen (Deliverable B)
         self.phi_threshold = phi_threshold
         self.notes: list[CoachNote] = []
 
@@ -165,6 +166,22 @@ class DevelopmentalCoach:
 
     def _should_speak(self, step: int, stagnating: bool) -> bool:
         return self.enabled and (stagnating or step == 1 or step % self.cadence == 0)
+
+    def _get_geo_qwen(self) -> Any | None:
+        """Lazily construct the bank-backed :class:`GeoQwenTarget` peer used by the ``geo_grade``
+        THIRD grader (Deliverable B, PI directive 2026-07-21) — a geometry-native grade ALONGSIDE
+        (never replacing) this coach's own LLM ``relevance_score`` and the kernel's Fisher-Rao
+        ``relevance``. Cheap: ``GeoQwenTarget()`` only sets attributes; the actual basin bank
+        (numpy) is loaded lazily, once, on first ``_bank_d63`` call, and only if the exported bank
+        file exists on disk. None-safe: a construction failure (missing package, bad import) is
+        cached permanently as ``None`` — never retried every call, never raises."""
+        if self._geo_qwen_cache == "unset":
+            try:
+                from .targets.geo_qwen import GeoQwenTarget
+                self._geo_qwen_cache = GeoQwenTarget()
+            except Exception:  # noqa: BLE001 — geo_grade is best-effort telemetry, never load-bearing
+                self._geo_qwen_cache = None
+        return self._geo_qwen_cache
 
     def _keyword_interpret(self, text: str) -> str:
         """Honest fallback: clean + dedupe the kernel's ACTUAL output (no fabricated meaning)."""
@@ -405,6 +422,17 @@ class DevelopmentalCoach:
             }
             emotional_context = ("encouraging" if (record["relevance_score"] or 0.0) >= 0.5
                                  else "gently-corrective")
+
+        # geo_grade — THIRD grader (Deliverable B, PI directive 2026-07-21): geo-Qwen (the geometry-native
+        # DoD-2 teacher) grades this SAME turn, ADDITIONALLY to (never replacing) this coach's own
+        # ``relevance_score`` and the kernel's Fisher-Rao ``relevance`` (fr_relevance, read above for
+        # context). Pure Fisher-Rao, None-safe, bank-backed (honest None on a bank miss — see geo_grader.py).
+        # NOT wired into the training reward/gradient (kernel_experience.coach_reward_from still reads only
+        # relevance_score) — this is an additional graded signal surfaced in telemetry for now.
+        from .geo_grader import geo_grade_turn
+        geo_grade, geo_grade_note = geo_grade_turn(stimulus, tel.get("gen_d63"), self._get_geo_qwen())
+        record["geo_grade"] = geo_grade
+        record["geo_grade_note"] = geo_grade_note
 
         # PROVENANCE TAG (§18.6 / P16) — this is what makes the reward auditable + refusable, not programming.
         record["provenance"] = {
