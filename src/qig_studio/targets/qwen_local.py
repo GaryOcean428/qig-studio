@@ -4,8 +4,8 @@ loss_regime = LANGUAGE. Qwen is a PLUGGABLE, None-safe boundary peer (never a
 forward-pass dependency): the cortex queries it, integrates its next-token
 OUTPUT distribution as a Δ⁶³ boundary basin (P22), Pillar-2 capped (≤30%). Qwen's
 own weights are NOT trained here (it is the inference peer) — the "learning" is
-QIGRAM boundary accumulation into the identity basin. Weight training is
-``QwenModalTarget``.
+a Pillar-2 boundary slerp cap (single-point boundary integration) into the
+identity basin. Weight training is ``QwenModalTarget``.
 
 None-safe: unavailable unless qig-core geometry AND a reachable Ollama are present.
 Uses ``/api/chat`` (chat template + thinking on), no temperature / max_tokens
@@ -106,7 +106,7 @@ class QwenLocalTarget(TrainingTarget):
     description = (
         "Ollama qwen3.5:4b fluent-language peer. Next-token output-distribution → Δ⁶³ "
         "boundary basin (functional v1 hash-bin; principled coordizer projection when present) → "
-        "QIGRAM accumulation (Pillar-2 ≤30% capped). None-safe; Qwen weights NOT trained "
+        "a Pillar-2 boundary slerp cap (single-point boundary integration, ≤30%). None-safe; Qwen weights NOT trained "
         "here; Ollama logprobs path untested against a live server."
     )
 
@@ -236,8 +236,9 @@ class QwenLocalTarget(TrainingTarget):
         return StepResult(text=text, telemetry=self._last)
 
     def train_step(self, prompt: str, max_tokens: int = 64, target_text: str | None = None) -> StepResult:
-        # No Qwen weight update (inference peer). The "step" = QIGRAM boundary
-        # accumulation: integrate the output distribution into identity, Pillar-2 capped.
+        # No Qwen weight update (inference peer). The "step" = a Pillar-2 boundary
+        # slerp cap: single-point boundary integration of the output distribution
+        # into identity, Pillar-2 capped.
         self.ensure_loaded()
         text, _thinking, logprobs = self._ask(prompt)
         if logprobs:

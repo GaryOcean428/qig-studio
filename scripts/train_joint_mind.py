@@ -33,6 +33,9 @@ def main() -> None:
     ap.add_argument("--device", default="cpu", help="cpu (safe: holds 9 kernels) | cuda (4GB-OOM risk)")
     ap.add_argument("--max-seconds", type=float, default=14400)
     ap.add_argument("--out", default="runs/spawn/joint_mind.json")
+    ap.add_argument("--no-stream", action="store_true",
+                    help="use the finite LOCAL curriculum instead of the HF 7-repo live stream "
+                         "(default: STREAM from the 7 HF repos — each novel passage encodes ONCE)")
     ap.add_argument("--fresh", action="store_true",
                     help="start from-scratch kernels (default: RESUME the existing checkpoint — keep the "
                          "kernels and train over the top with the current curriculum)")
@@ -63,12 +66,26 @@ def main() -> None:
     os.environ.setdefault("MKL_NUM_THREADS", str(_cap))
 
     from qig_studio.constellation.joint_trainer import JointConstellation
-    from qig_studio.corpus import load_full_curriculum
     from qig_studio.development import PROTOMAP_ORDER
     from qig_studio.optimisation import load_coordizer
 
-    full = load_full_curriculum()                       # fail-loud if the corpus is missing
-    steps = args.steps or len(full)
+    # DATA PATH (PI 2026-07-20): the curriculum LIVE-STREAMS from the 7 HF repos (stream_full_corpus), NOT the
+    # local markdown. A stream of NOVEL passages encodes each ONCE — the old finite-list path re-encoded the
+    # same passages every cycle (the ~0.78 s/passage coordizer wall paid repeatedly). --no-stream forces local.
+    if args.no_stream:
+        from qig_studio.corpus import load_full_curriculum
+        _full = load_full_curriculum()                  # fail-loud if the corpus is missing
+        steps = args.steps or len(_full)
+
+        def next_prompt(idx: int) -> str:
+            return _full[(idx - 1) % len(_full)]
+    else:
+        from qig_studio.corpus import stream_full_corpus
+        _gen = stream_full_corpus()                     # infinite 7-repo HF blend (round-robin, paged, encode-once)
+        steps = args.steps or 10000                     # stream is infinite → explicit/bounded budget
+
+        def next_prompt(idx: int) -> str:
+            return next(_gen)
     coordizer = load_coordizer(args.coordizer) if args.coordizer else None
 
     # FULL QIG OPTIMISATION (PI directive): qig-compute GPU/CPU governance + qig-warp bridge cost-prediction
@@ -132,7 +149,7 @@ def main() -> None:
                 print(f"[joint] STASIS during genesis warmup at {w}", flush=True)
                 break
             w += 1
-            cres = mind.central.train_step(full[(w - 1) % len(full)])
+            cres = mind.central.train_step(next_prompt(w))
             _win.append(float(getattr(cres.telemetry, "phi", 0.0) or 0.0))
             mphi = sum(_win) / len(_win)
             if w % 50 == 0:
@@ -157,7 +174,7 @@ def main() -> None:
             print(f"[joint] STASIS — halting at step {i} (checkpoint at last ckpt_every).", flush=True)
             mind.save_checkpoint(args.ckpt_root)   # save on halt so no interval is lost
             break
-        prompt = full[(i - 1) % len(full)]
+        prompt = next_prompt(i)
         last = mind.train_step(prompt)      # train_step now computes the REAL Ricci (BUILD #1) into its telemetry
         tel = last.get("central_telemetry") or {}
         phi_hist.append({"phi": tel.get("phi")})
@@ -187,6 +204,21 @@ def main() -> None:
         if last_gen_health is not None:                     # carry forward → no null between samples
             tel.setdefault("extra", {})["gen_health"] = last_gen_health
             tel["extra"]["gen_ricci"] = last_gen_ricci
+        # per-step central basin ENTROPY (the floor's target signal) — recorded EVERY step so the entropy
+        # floor is FFT-able (step-c diagnostic: transient resume-shock vs persistent collapse; broadband vs
+        # stuck-mode). Cheap: a 64-dim basin. This is the series that was never logged before (823fba23 item 3).
+        try:
+            import numpy as _np
+            _bv = _np.asarray(mind._live_basin(mind.central), dtype=_np.float64)
+            _bv = _bv / (_bv.sum() or 1.0)
+            _bH = round(float(-(_bv * _np.log(_bv + 1e-12)).sum()), 4)
+        except Exception:  # noqa: BLE001 — telemetry must never break a training step
+            _bH = None
+        tel.setdefault("extra", {})["basin_H"] = _bH
+        _es = str(exp).lower()
+        _coll = 1 if ("zero_entropy" in _es or "basin_collapse" in _es) else 0
+        print(f"[H] {i} basin_H={_bH} phi={last.get('central_phi')} "
+              f"minFR={(last.get('min_pairwise_fr') or 0):.4f} collapse={_coll}", flush=True)  # per-step FFT series
         # live per-faculty Φ (cheap: last value the joint step already recorded) — visible BEFORE checkpoint
         fphi = {r: (h[-1] if h else None) for r, h in getattr(mind, "_phi_hist", {}).items()}
         rec = step_record(step=i, total=steps, ts=time.time(), source="bg",

@@ -1431,7 +1431,7 @@ class GenesisKernelTarget(TrainingTarget):
             if meaning_d63 is not None:
                 d = float(fisher_distance(meaning_d63, b))
                 m_boundary = round(max(0.0, 1.0 - d / (math.pi / 2)), 3)
-            # QIGRAM identity accumulation (Pillar-2 ≤30%) stays — that's the kernel absorbing the surface.
+            # Pillar-2 boundary slerp cap (single-point boundary integration, ≤30%) stays — that's the kernel absorbing the surface.
             if self._spoken_identity is None:
                 self._spoken_identity = b.copy()
             self._spoken_identity = pillar2_capped_integrate(self._spoken_identity, b, BOUNDARY_SLERP_CAP)
