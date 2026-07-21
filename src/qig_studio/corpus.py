@@ -30,6 +30,15 @@ from pathlib import Path
 # via QIG_STUDIO_CORPUS (a dir of .md/.txt → passages, or a legacy .jsonl).
 DEFAULT_CORPUS = "qig-consciousness/data/curriculum"
 
+
+def default_curriculum_dir():
+    """Resolved default knowledge-curriculum directory, layout-independent (flat ``<root>/qig-consciousness``
+    OR grouped ``<root>/qig-packages/qig-consciousness``). SINGLE SOURCE OF TRUTH for the path so the loader
+    and the server ``/status`` endpoint never drift — a hardcoded ``parents[3]/DEFAULT_CORPUS`` pointed at the
+    vanished flat path after the #31 qig-packages/ reorg (fixed 2026-07-21)."""
+    from ._paths import sibling_pkg
+    return sibling_pkg("qig-consciousness") / "data" / "curriculum"
+
 # EVERYDAY/CONVERSATIONAL/NARRATIVE register — the studio-local corpus built from HuggingFace text
 # (TinyStories, empathetic_dialogues, hh-rlhf, claude-fable-5, a little wikitext) via
 # scripts/build_everyday_corpus.py. The academic knowledge curriculum above teaches the kernel physics and
@@ -281,12 +290,9 @@ def load_full_curriculum(path: str | Path | None = None, *, min_len: int = 40,
 
     if include_everyday is None:
         include_everyday = os.environ.get("QIG_STUDIO_BLEND_EVERYDAY", "1").lower() not in ("0", "false", "no")
-    # Resolve the default curriculum layout-independently (flat <root>/qig-consciousness OR grouped
-    # <root>/qig-packages/qig-consciousness) — the #31 qig-packages/ reorg moved it, and a hardcoded
-    # parents[3]/DEFAULT_CORPUS pointed at the vanished flat path (fail-loud, blocked training 2026-07-20).
-    from ._paths import sibling_pkg
-    p = Path(path or os.environ.get("QIG_STUDIO_CORPUS") or
-             (sibling_pkg("qig-consciousness") / "data" / "curriculum"))
+    # Default resolves via default_curriculum_dir() — layout-independent, single source of truth shared with
+    # the server /status endpoint so the loader and the reported curriculum_source never drift.
+    p = Path(path or os.environ.get("QIG_STUDIO_CORPUS") or default_curriculum_dir())
     _key = f"{p}|{min_len}|ev={include_everyday}"
     if _key in _CURRICULUM_CACHE:
         return _CURRICULUM_CACHE[_key]
