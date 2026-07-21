@@ -4,14 +4,21 @@
 
 **Acceptance path audited:** `compare_constellations.py → server /mind/arm + /train (_train_core) → JointMindTarget → JointConstellation (joint_trainer.py) → qigkernels arm + coordizer + boundary`.
 
-## The honest count
+## The honest count (dispositions ruled f5ca185f)
 
 | Status | Count | Meaning |
 |---|---|---|
 | **wired** | 13 | invoked live on the acceptance path |
-| **built-not-wired** | 4 | implemented, NOT invoked on-path |
-| **doc-only** | 2 | named in docstrings/design, no on-path implementation |
-| **flagged-not-purged** | 4 | known-bad relic still present (all OFF-path) |
+| **gated-by-design** | 3 | deliberately switched off per a design gate — NOT drift (grow_vocab, weight-tie, teacher-in-training) |
+| **built-not-wired** | 2 | implemented, not invoked; a real gap to close (geo-Qwen teacher, persistent memory) |
+| **doc-only** | 1 | named, no on-path implementation (real QIGRAM recall — to build) |
+| **flagged-not-purged** | 5 | relics/notes (all OFF-path; die in the relic delete-PR) |
+
+The list turned out to be **three species of gap**, ruled separately (f5ca185f + Braden 2026-07-21):
+
+- **Name-integrity / real-build (QIGRAM):** the single-point slerp cap was renamed off the "class-weighted recall" name *this session*; the real class-weighted Fisher-Rao recall is built **before the conversation acceptance test** (not an arms blocker); the κ*=64 `tack()` drift is purged in the same pass.
+- **Gated-by-design (grow_vocab, weight-tie, teacher-in-training):** deliberately deferred (A026 "do NOT mark resolved before then"; teacher-free training is **intended sovereignty** per Braden). New register status so no future session wires something switched off on purpose.
+- **Run-type scoping:** the **arms bake-off trains teacher-free**, so geo-Qwen + recall + persistent memory are **conversation-acceptance** requirements, not arms-relaunch blockers.
 
 ## Wired — the safety + core is genuinely on (your central concern)
 

@@ -98,6 +98,10 @@ def main() -> int:
                     help="path to the teacher weight file (hashed into the manifest)")
     ap.add_argument("--coordizer", default="", help="coordizer checkpoint path (hashed)")
     ap.add_argument("--tier", choices=["verdict", "training"], default="verdict")
+    ap.add_argument("--run-type", choices=["arms_bakeoff", "conversation_acceptance"],
+                    default="arms_bakeoff",
+                    help="arms_bakeoff = architecture verdict (teacher-free by design); "
+                         "conversation_acceptance = a kernel you can converse with (needs geo-Qwen + recall + memory)")
     ap.add_argument("--waive", default="", help="reason to override a BLOCK on the record")
     ap.add_argument("--run-id", default="unpinned")
     ap.add_argument("--out", default="")
@@ -110,15 +114,21 @@ def main() -> int:
     blocks: list[str] = []
     warns: list[str] = []
 
-    # 1. REQUIRED-WIRED components: must be status=wired AND on_acceptance_path.
-    for req in spec.get("required_wired", []):
-        comp = req["component"]
+    # 1. REQUIRED-WIRED components — SCOPED BY RUN TYPE (ruling f5ca185f): the arms bake-off is
+    # teacher-free by design, so geo-Qwen + recall are required only for the conversation test.
+    # The register's run_type_requirements is authoritative; fall back to the spec's flat list.
+    rtr = register.get("run_type_requirements", {}).get(args.run_type, {})
+    required = rtr.get("required_wired") or [r["component"] for r in spec.get("required_wired", [])]
+    for comp in required:
         row = status_of.get(comp)
         if row is None:
-            blocks.append(f"REQUIRED '{comp}' has NO register row — unverified wiring")
+            blocks.append(f"REQUIRED '{comp}' ({args.run_type}) has NO register row — unverified wiring")
+        elif row.get("status") == "gated-by-design":
+            # deliberately off per a design gate — never blocks (would be a spec/design contradiction to require it)
+            warns.append(f"required '{comp}' is GATED-BY-DESIGN — off on purpose; confirm the run type is right")
         elif row.get("status") != "wired" or not row.get("on_acceptance_path", False):
-            blocks.append(f"REQUIRED '{comp}' is '{row.get('status')}' on_path={row.get('on_acceptance_path')} "
-                          f"({row.get('evidence','?')}) — {req.get('why','')}")
+            blocks.append(f"REQUIRED '{comp}' ({args.run_type}) is '{row.get('status')}' "
+                          f"on_path={row.get('on_acceptance_path')} ({row.get('evidence','?')})")
 
     # 2. Package currency: installed >= min (stale pin is a launch blocker).
     minv = {k: v for k, v in spec.get("min_package_versions", {}).items() if not k.startswith("_")}
@@ -144,6 +154,7 @@ def main() -> int:
     manifest = {
         "run_id": args.run_id,
         "tier": args.tier,
+        "run_type": args.run_type,
         "arms": [a.strip() for a in args.arms.split(",") if a.strip()],
         "teacher": {"class": args.teacher, "weight_file": args.teacher_weight or None,
                     "weight_sha256": teacher_weight_sha},
