@@ -16,30 +16,42 @@ from .qwen_local import QwenLocalTarget
 from .qwen_modal import QwenModalTarget
 
 
-# --- PI-ruled design B teacher selector (2026-07-21) -------------------------------------------
+# --- Teacher/boundary selector (PI-ruled 2026-07-21) -------------------------------------------
 # Which target instance becomes the SHARED ``language_peer`` wired into GenesisKernelTarget +
-# JointMindTarget's boundary path. Plain Qwen (Ollama, fluent) stays the default — chat/dev work
-# still wants it. ``arms_bakeoff``/verdict launchers set QIG_STUDIO_TEACHER=geo_qwen so the gk arm's
-# boundary is the PI-ruled geo-Qwen (bank-backed Δ⁶³ peer, EXP-A034/A043 same-substrate coupling)
-# instead of a hard, blanket replacement. Both instances stay independently registered/selectable
-# (standalone dev targets) regardless of which one is wired as the shared boundary — see
-# ``default_registry`` below.
+# JointMindTarget's boundary path. Three modes:
+#   qwen_local (DEFAULT) — plain Qwen (Ollama, fluent); chat/dev work still wants it.
+#   geo_qwen             — the geo-Qwen boundary; the DoD-2 CONVERSATION teacher (geo-Qwen IS
+#                          geocoding's FisherRaoAttention, EXP-A034; used where geometry-native
+#                          alignment is a feature, not a confound).
+#   none / teacher_free  — NO boundary peer (language_peer=None). The ARMS BAKE-OFF (DoD-1)
+#                          verdict runs teacher-free: PI ruling A (2026-07-21). Rationale — geo-Qwen
+#                          shares the geo arm's SUBSTRATE (both are geocoding FisherRaoAttention), so
+#                          teaching gk with geo-Qwen while geo runs teacherless would train gk to
+#                          imitate a contestant — a fresh architecture confound, just after purging
+#                          the plain-Qwen one. The geocoding geometry is still tested: it IS the geo
+#                          arm. arms_bakeoff/verdict launchers set QIG_STUDIO_TEACHER=none.
+# Both peer instances stay independently registered/selectable (standalone dev targets) regardless
+# of which mode is wired as the shared boundary — see ``default_registry`` below.
 QIG_STUDIO_TEACHER_ENV = "QIG_STUDIO_TEACHER"
 TEACHER_QWEN_LOCAL = "qwen_local"
 TEACHER_GEO_QWEN = "geo_qwen"
+TEACHER_NONE = "none"  # accepts "none" or "teacher_free"
 
 
-def _select_language_peer(qwen_peer: TrainingTarget, geo_qwen_peer: TrainingTarget) -> TrainingTarget:
+def _select_language_peer(qwen_peer: TrainingTarget, geo_qwen_peer: TrainingTarget) -> "TrainingTarget | None":
     """Read ``QIG_STUDIO_TEACHER`` (env; default ``"qwen_local"``) and return the target instance
-    that should be wired as the SHARED ``language_peer`` for the integrated-mind targets. An
-    unrecognised value warns and falls back to plain Qwen (fail-safe, never crashes registry
-    build)."""
+    wired as the SHARED ``language_peer`` for the integrated-mind targets — or ``None`` for a
+    teacher-free run (``none``/``teacher_free``, the design-A arms verdict). An unrecognised value
+    warns and falls back to plain Qwen (fail-safe, never crashes registry build)."""
     choice = os.environ.get(QIG_STUDIO_TEACHER_ENV, TEACHER_QWEN_LOCAL).strip().lower()
+    if choice in (TEACHER_NONE, "teacher_free"):
+        return None
     if choice == TEACHER_GEO_QWEN:
         return geo_qwen_peer
     if choice != TEACHER_QWEN_LOCAL:
         print(f"⚠️  {QIG_STUDIO_TEACHER_ENV}={choice!r} unrecognised "
-              f"(valid: {TEACHER_QWEN_LOCAL!r}, {TEACHER_GEO_QWEN!r}); falling back to {TEACHER_QWEN_LOCAL!r}")
+              f"(valid: {TEACHER_QWEN_LOCAL!r}, {TEACHER_GEO_QWEN!r}, {TEACHER_NONE!r}); "
+              f"falling back to {TEACHER_QWEN_LOCAL!r}")
     return qwen_peer
 
 

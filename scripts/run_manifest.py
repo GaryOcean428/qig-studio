@@ -134,17 +134,25 @@ def main() -> int:
             blocks.append(f"REQUIRED '{comp}' ({args.run_type}) is '{row.get('status')}' "
                           f"on_path={row.get('on_acceptance_path')} ({row.get('evidence','?')})")
 
-    # 1b. DECLARED-TEACHER guard (design B, PI 2026-07-21b): an arms_bakeoff VERDICT run must declare a
-    # GEO teacher. A plain-Qwen (qwen_local) boundary peer is the exact contamination that killed the
-    # prior run (registry.py:142 -> joint_trainer.py:159) and false-greened the gate; it must never do
-    # so again. The register pins the required teacher for the run type; enforce --teacher matches.
+    # 1b. DECLARED-TEACHER guard (design A, PI 2026-07-21c): the arms_bakeoff VERDICT runs TEACHER-FREE.
+    # BOTH boundary teachers are withheld: plain-Qwen contaminates ('imitates vanilla Qwen', killed run
+    # registry.py:142->joint_trainer.py:159), and geo-Qwen confounds (it IS geocoding's FisherRaoAttention,
+    # the SAME substrate as the geo arm — teaching gk with it trains gk to imitate a contestant). The
+    # register pins declared_teacher='none' for arms_bakeoff; enforce the run is genuinely teacher-free.
     declared_req = rtr.get("declared_teacher")
     if declared_req and args.run_type == "arms_bakeoff":
-        if "geo" not in (args.teacher or "").strip().lower():
+        teacher = (args.teacher or "").strip().lower()
+        teacher_free = teacher in ("", "none", "teacher_free")
+        if declared_req == "none" and not teacher_free:
             blocks.append(
-                f"TEACHER MISMATCH: {args.run_type} verdict requires a geo teacher "
-                f"(register declared_teacher='{declared_req}'), got --teacher='{args.teacher or None}'. "
-                f"A plain-Qwen boundary peer contaminated the killed run — refused.")
+                f"TEACHER CONFOUND: {args.run_type} verdict must run TEACHER-FREE "
+                f"(register declared_teacher='none', design A), got --teacher='{args.teacher or None}'. "
+                f"A boundary teacher confounds the architecture verdict (plain-Qwen contaminates; "
+                f"geo-Qwen shares the geo arm's geocoding substrate) — refused.")
+        elif declared_req != "none" and declared_req not in teacher:
+            blocks.append(
+                f"TEACHER MISMATCH: {args.run_type} verdict requires teacher '{declared_req}', "
+                f"got --teacher='{args.teacher or None}'.")
 
     # 2. Package currency: installed >= min (stale pin is a launch blocker).
     minv = {k: v for k, v in spec.get("min_package_versions", {}).items() if not k.startswith("_")}
