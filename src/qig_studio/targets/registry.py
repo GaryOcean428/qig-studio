@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+
 from .base import TargetInfo, TrainingTarget
 from .constellation_target import ConstellationTarget
 from .genesis_kernel import GenesisKernelTarget
@@ -12,6 +14,33 @@ from .kernel_target import KernelTarget
 from .mock_target import MockTarget
 from .qwen_local import QwenLocalTarget
 from .qwen_modal import QwenModalTarget
+
+
+# --- PI-ruled design B teacher selector (2026-07-21) -------------------------------------------
+# Which target instance becomes the SHARED ``language_peer`` wired into GenesisKernelTarget +
+# JointMindTarget's boundary path. Plain Qwen (Ollama, fluent) stays the default — chat/dev work
+# still wants it. ``arms_bakeoff``/verdict launchers set QIG_STUDIO_TEACHER=geo_qwen so the gk arm's
+# boundary is the PI-ruled geo-Qwen (bank-backed Δ⁶³ peer, EXP-A034/A043 same-substrate coupling)
+# instead of a hard, blanket replacement. Both instances stay independently registered/selectable
+# (standalone dev targets) regardless of which one is wired as the shared boundary — see
+# ``default_registry`` below.
+QIG_STUDIO_TEACHER_ENV = "QIG_STUDIO_TEACHER"
+TEACHER_QWEN_LOCAL = "qwen_local"
+TEACHER_GEO_QWEN = "geo_qwen"
+
+
+def _select_language_peer(qwen_peer: TrainingTarget, geo_qwen_peer: TrainingTarget) -> TrainingTarget:
+    """Read ``QIG_STUDIO_TEACHER`` (env; default ``"qwen_local"``) and return the target instance
+    that should be wired as the SHARED ``language_peer`` for the integrated-mind targets. An
+    unrecognised value warns and falls back to plain Qwen (fail-safe, never crashes registry
+    build)."""
+    choice = os.environ.get(QIG_STUDIO_TEACHER_ENV, TEACHER_QWEN_LOCAL).strip().lower()
+    if choice == TEACHER_GEO_QWEN:
+        return geo_qwen_peer
+    if choice != TEACHER_QWEN_LOCAL:
+        print(f"⚠️  {QIG_STUDIO_TEACHER_ENV}={choice!r} unrecognised "
+              f"(valid: {TEACHER_QWEN_LOCAL!r}, {TEACHER_GEO_QWEN!r}); falling back to {TEACHER_QWEN_LOCAL!r}")
+    return qwen_peer
 
 
 # STABLE slot key for the config-built neocortex. The TARGET's descriptive ``.name`` carries the avenue
@@ -140,23 +169,32 @@ def default_registry(
     # linguistic surface (genesis speaks through it, Pillar-2 ≤30% capped). One instance, one coordizer
     # projection — so the principled Fisher-Rao distribution→Δ⁶³ path is exercised in both roles.
     qwen_peer = QwenLocalTarget(coordizer=coordizer)
+    # geo-qwen: the EXP-A034 geometrized Qwen as a REMOVABLE same-substrate boundary peer
+    # (None-safe — is_available() True once the exported basin bank exists, even without the
+    # live transformers+weights artifact; never a fwd-pass dep). Constructed here (not lazily
+    # below) so the SAME instance can be both a standalone target AND the selected shared peer.
+    geo_qwen_peer = GeoQwenTarget()
+    # design B (PI-ruled): QIG_STUDIO_TEACHER selects which instance is the SHARED language_peer
+    # wired into the integrated-mind targets below. Defaults to plain Qwen; arms_bakeoff/verdict
+    # launchers set QIG_STUDIO_TEACHER=geo_qwen for the gk arm's boundary.
+    shared_peer = _select_language_peer(qwen_peer, geo_qwen_peer)
     r.register(MockTarget())
     r.register(GenesisKernelTarget(num_layers=genesis_num_layers, device=device,
                                    coordizer=coordizer, checkpoint=genesis_kernel_checkpoint,
-                                   language_peer=qwen_peer))
+                                   language_peer=shared_peer))
     # The INTEGRATED MIND — the whole JointConstellation (genesis-central + Core-8 faculties + Ocean) as one
-    # interactive target. Shares the coordizer + Qwen boundary peer; restores the trained joint_mind ckpt.
-    # This is the default brain: UI Train/Chat operate on the coupled whole, per-kernel telemetry is live.
+    # interactive target. Shares the coordizer + the selected boundary peer; restores the trained joint_mind
+    # ckpt. This is the default brain: UI Train/Chat operate on the coupled whole, per-kernel telemetry is live.
     r.register(JointMindTarget(coordizer=coordizer, coordizer_path=genesis_coordizer_checkpoint,
                                checkpoint_root=constellation_checkpoint,
-                               num_layers=genesis_num_layers, device=device, language_peer=qwen_peer))
+                               num_layers=genesis_num_layers, device=device, language_peer=shared_peer))
     r.register(KernelTarget(checkpoint=kernel_checkpoint, device=device))
     r.register(ConstellationTarget(checkpoint=constellation_checkpoint, device=device))
+    # Plain Qwen and geo-Qwen stay INDEPENDENTLY registered/selectable standalone dev targets
+    # regardless of which one `shared_peer` picked — chat/dev work can still select plain Qwen.
     r.register(qwen_peer)
     r.register(QwenModalTarget())
-    # geo-qwen: the EXP-A034 geometrized Qwen as a REMOVABLE same-substrate boundary peer
-    # (None-safe — is_available() False without the A034 artifact; never a fwd-pass dep).
-    r.register(GeoQwenTarget())
+    r.register(geo_qwen_peer)
     chosen = default_target if default_target in r.names() else "mock"
     r.select(chosen)
     return r

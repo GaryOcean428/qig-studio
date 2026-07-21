@@ -48,6 +48,16 @@ _DEFAULT_BASIN_BANK = (
 )
 _COORDIZER_CKPT = sibling_pkg("qig-coordizer") / "checkpoints" / "coordizer_latest.json"
 
+# Sentinel key ``speak()`` smuggles the bank's RAW Δ⁶³ coordinate through the ``logprobs`` dict so
+# ``project_distribution`` can recover it untouched. There are no real per-token logprobs from a bank
+# read (the bank was built offline, once, by coordizing a full generated continuation — see
+# ``export_basin_bank``) — the bank value already IS a genuine Fisher-Rao Δ⁶³ point, so passing it
+# straight through is the geometrically correct move (re-deriving it via the hash-bin/coordizer
+# token-logprob path would be a fabrication, not a projection). Internal to this module; the
+# language_peer CALL SURFACE (genesis_kernel.py) only ever sees the (content, thinking, logprobs)
+# tuple and the plain ``project_distribution(logprobs)`` call — unchanged contract.
+_BANK_BASIN_KEY = "__geo_qwen_bank_d63__"
+
 
 def _lift_d63_to_d383(d63):
     """EXP-A043 bridge: lift a coordizer Δ⁶³ coord into the kernel's Δ³⁸³ geo-coder coupling
@@ -136,20 +146,37 @@ class GeoQwenTarget(ConstellationNode, TrainingTarget):
             self._bank = {"prompts": [str(p) for p in raw["prompts"]], "d63": raw["d63"]}
         return self._bank
 
-    def coupling_basin(self, text: str):
-        """The EXP-A043 coupling currency: the geo-Qwen's Δ³⁸³ coupling basin for `text`, served
-        from the bank (Δ⁶³ coordizer coord) and lifted via geocoding's coord_adapter — NO
-        transformers. Returns None if no bank (None-safe). This is what a constellation writes
-        into a kernel's _set_pull for same-substrate coupling in the shared Δ³⁸³ space."""
+    def _bank_d63(self, text: str):
+        """RAW Δ⁶³ (BASIN_DIM=64) bank coordinate for ``text`` — EXACT match only; ``None`` on a
+        bank miss (NO silent index-0 constant). None-safe. Rationale (no-silent-fallback rule):
+        the offline bank is a FINITE set (``export_basin_bank`` over a fixed corpus — currently 12
+        prompts). Returning a fixed 0th entry for any off-bank text is a SILENT WRONG FALLBACK —
+        every live/HF-stream stimulus would get the SAME constant basin, a hollow
+        (non-stimulus-conditioned) teacher masquerading as geo-Qwen. Returning ``None`` is honest:
+        the caller (``project_distribution`` / ``coupling_basin``) then reports 'no geo-Qwen signal
+        for this text' instead of a constant, so a bake-off cannot false-green on a hollow teacher.
+        A FAITHFUL per-stimulus signal for off-bank text requires a live geo-Qwen forward (CASE-2
+        native loader) or a bank that actually covers the stimuli — tracked separately (PI decision).
+        This is the PRE-lift Δ⁶³ value the ``language_peer`` contract needs: ``genesis_kernel.py``
+        compares ``project_distribution``'s return directly against a ``_d63``-reduced (64-dim)
+        kernel basin via ``fisher_distance``, NOT the Δ³⁸³ ``coupling_basin`` lift (different consumer)."""
         bank = self._load_bank()
         if bank is None:
             return None
         import numpy as np
 
         prompts = bank["prompts"]
-        idx = prompts.index(text) if text in prompts else 0  # exact or nearest-by-order fallback
-        d63 = np.asarray(bank["d63"][idx], dtype=np.float64)
-        return _lift_d63_to_d383(d63)
+        if text not in prompts:
+            return None  # HONEST no-signal on bank miss — never a silent index-0 constant
+        return np.asarray(bank["d63"][prompts.index(text)], dtype=np.float64)
+
+    def coupling_basin(self, text: str):
+        """The EXP-A043 coupling currency: the geo-Qwen's Δ³⁸³ coupling basin for `text`, served
+        from the bank (Δ⁶³ coordizer coord) and lifted via geocoding's coord_adapter — NO
+        transformers. Returns None if no bank (None-safe). This is what a constellation writes
+        into a kernel's _set_pull for same-substrate coupling in the shared Δ³⁸³ space."""
+        d63 = self._bank_d63(text)
+        return None if d63 is None else _lift_d63_to_d383(d63)
 
     def _resolve_device(self):
         import torch
@@ -272,6 +299,58 @@ class GeoQwenTarget(ConstellationNode, TrainingTarget):
         ids = self._tokenizer(text, return_tensors="pt").input_ids
         logits = self._node_forward_logits(ids)
         return self._node_basin_from_logits(logits) if logits is not None else None
+
+    # --- language_peer CALL-SURFACE PARITY (design B, PI-ruled) --------------------------------
+    # genesis_kernel.py's ``_generate_via_boundary`` (the ONLY call sites, read-only-verified at
+    # :1277/:1420/:1423) calls exactly THREE methods on whatever is wired as ``language_peer``:
+    #   is_available() -> bool                                            (already implemented above)
+    #   speak(prompt, persona, think=bool) -> (content: str, thinking: str, logprobs: dict)
+    #   project_distribution(logprobs: dict) -> Δ⁶³ ndarray | None
+    # QwenLocalTarget's contract produces REAL text (Ollama) + a token-logprobs dict that
+    # ``project_distribution`` reduces via hash-bin/coordizer. The geo-Qwen has no equivalent —
+    # the exported bank stores only Δ⁶³ coords + prompts, NOT the generated continuation text
+    # (see ``export_basin_bank``) — so it cannot fabricate real text from the bank. What IS real
+    # bank-side is the Δ⁶³ boundary basin itself; ``speak`` smuggles that through ``logprobs``
+    # (``_BANK_BASIN_KEY``) for ``project_distribution`` to pass straight through.
+    def speak(self, message: str, persona: str | None = None, think: bool = False) -> tuple[str, str, dict]:
+        """BANK-FIRST (default): the Δ⁶³ boundary CONTRIBUTION is real (an actual measured bank
+        coordinate for ``message``), but there is no stored generated TEXT in the bank — that is
+        a genuine, honestly-marked LIMITATION (NOT faked): ``content`` is "" and ``thinking``
+        carries the limitation note (surfaced regardless of ``think``, same as ``qwen_thinking``
+        telemetry always records it). ``persona`` is accepted for call-surface parity but unused
+        bank-side (no live text conditioning without transformers).
+
+        OPTIONAL fallback: only when the bank is ABSENT and the live transformers+converted-ckpt
+        path is available does this fall through to a genuine greedy ``generate()`` call for real
+        text — HF ``.generate()`` here yields no per-token logprobs either, so
+        ``project_distribution`` still only serves a basin when the bank is present; None
+        otherwise (None-safe, never fabricated)."""
+        if self._basin_bank_path.exists():
+            d63 = self._bank_d63(message)
+            logprobs: dict = {_BANK_BASIN_KEY: d63} if d63 is not None else {}
+            thinking = ("[geo-qwen boundary: bank-backed (EXP-A043) — no stored generated text, "
+                        "content intentionally empty; the Δ⁶³ boundary basin below IS a real bank "
+                        "measurement]")
+            return "", thinking, logprobs
+        # OPTIONAL fallback: no bank — try the live transformers path for genuine (but un-boundary-
+        # projectable, since there is no bank d63 to smuggle) text.
+        step = self.generate(message, max_tokens=64)
+        return step.text, "", {}
+
+    def project_distribution(self, logprobs: dict):
+        """Recover the Δ⁶³ boundary basin ``speak()`` smuggled through ``logprobs``. The bank value
+        is ALREADY a genuine Fisher-Rao Δ⁶³ point (built by ``export_basin_bank`` coordizing a real
+        generated continuation offline) — passed straight through, no re-projection, no cosine/dot.
+        Returns None when there is no basin (None-safe; e.g. transformers-fallback speak() with no
+        bank), matching ``QwenLocalTarget.project_distribution``'s None-safe contract exactly."""
+        if not logprobs:
+            return None
+        d63 = logprobs.get(_BANK_BASIN_KEY)
+        if d63 is None:
+            return None
+        import numpy as np
+
+        return np.asarray(d63, dtype=np.float64)
 
     def generate(self, prompt: str, max_tokens: int = 64) -> StepResult:
         """The boundary peer speaks (read-only oracle). None-safe: returns an empty StepResult
