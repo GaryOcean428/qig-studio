@@ -24,6 +24,8 @@ from __future__ import annotations
 import os
 from typing import Any
 
+from qig_core import BASIN_DIM
+
 from .base import LossRegime, StepResult, TelemetrySnapshot, TrainingTarget
 
 _MAX_BYTES = 256  # byte-level VOCAB size (256 raw bytes) — the from-scratch byte fallback's vocabulary
@@ -423,7 +425,7 @@ class GenesisKernelTarget(TrainingTarget):
             # compute-skipping locality (windowed attention) + qig-warp screening, not from this number.
             max_position_embeddings=8192,
             enable_coords=self.coordizer is not None,  # Δ⁶³ coords-first path via CoordAdapter
-            coord_dim=self.coord_dim or 64,
+            coord_dim=self.coord_dim or BASIN_DIM,
             head_mode=self.head_mode,                  # geometric (−d_FR/τ) | basin (coordizer-tied) | linear
             head_tau=self.head_tau,
             coord_basins=coord_basins,                 # basin-mode: the coordizer tie (None for other heads)
@@ -2306,7 +2308,7 @@ class GenesisKernelTarget(TrainingTarget):
         return {"attention": "local" if local else "global", "locality_radius": self.locality_radius,
                 "num_layers": self.num_layers, "recursion_depth": 3, "seq_len": _CTX,
                 "input": "coords" if self.coordizer is not None else "bytes",
-                "vocab_size": self.vocab_size, "coord_dim": self.coord_dim or 64,
+                "vocab_size": self.vocab_size, "coord_dim": self.coord_dim or BASIN_DIM,
                 "hidden_dim": self.hidden_dim, "num_params": nparams, "coordizer_vocab": cvocab,
                 "head_mode": self.head_mode, "head_tau": self.head_tau}
 

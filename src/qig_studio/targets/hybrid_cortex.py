@@ -43,6 +43,8 @@ import math
 import os
 from typing import Any
 
+from qig_core import BASIN_DIM
+
 from .base import LossRegime, StepResult, TelemetrySnapshot, TrainingTarget
 from .constellation_node import ConstellationNode
 
@@ -298,7 +300,7 @@ class HybridCortexTarget(ConstellationNode, TrainingTarget):
         cfg = _HybridCfg(
             vocab_size=self.vocab_size, hidden_dim=self.hidden_dim, num_layers=self.num_layers,
             num_heads=self.num_heads, ffn_dim=self.ffn_dim, locality_radius=self.locality_radius,
-            enable_coords=self.coordizer is not None, coord_dim=self.coord_dim or 64,
+            enable_coords=self.coordizer is not None, coord_dim=self.coord_dim or BASIN_DIM,
             head_tau=self.head_tau,
         )
         self._model = _build_hybrid_model(cfg)
@@ -648,7 +650,7 @@ class HybridCortexTarget(ConstellationNode, TrainingTarget):
         return {"attention": "local" if local else "global", "locality_radius": self.locality_radius,
                 "num_layers": self.num_layers, "recursion_depth": 3, "seq_len": _CTX,
                 "input": "coords" if self.coordizer is not None else "bytes",
-                "vocab_size": self.vocab_size, "coord_dim": self.coord_dim or 64,
+                "vocab_size": self.vocab_size, "coord_dim": self.coord_dim or BASIN_DIM,
                 "hidden_dim": self.hidden_dim, "num_params": nparams, "coordizer_vocab": cvocab,
                 "arm": "hybrid", "backend": "qig_studio.HybridModel (geo+qk mixers, geodesic combine)",
                 "head_mode": "geometric", "head_tau": self.head_tau, "mixers": ["geo", "qk"],

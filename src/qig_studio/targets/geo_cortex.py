@@ -42,6 +42,8 @@ import math
 import os
 from typing import Any
 
+from qig_core import BASIN_DIM
+
 from .base import LossRegime, StepResult, TelemetrySnapshot, TrainingTarget
 from .constellation_node import ConstellationNode
 
@@ -191,7 +193,7 @@ class GeoCortexTarget(ConstellationNode, TrainingTarget):
             locality_radius=self.locality_radius,  # None = global; int = banded compute-skipping (v_B budget)
             max_position=None,                       # unbounded (Fourier positions); _CTX caps seq at runtime
             enable_coords=self.coordizer is not None,  # Δ⁶³ coords-first path via coord_adapter (Linear→GELU)
-            coord_dim=self.coord_dim or 64,
+            coord_dim=self.coord_dim or BASIN_DIM,
             head_mode=self.head_mode,                  # geometric (GeometricHead, −d_FR/τ) | linear baseline
             head_tau=self.head_tau,
         )
@@ -779,7 +781,7 @@ class GeoCortexTarget(ConstellationNode, TrainingTarget):
         return {"attention": "local" if local else "global", "locality_radius": self.locality_radius,
                 "num_layers": self.num_layers, "recursion_depth": 3, "seq_len": _CTX,
                 "input": "coords" if self.coordizer is not None else "bytes",
-                "vocab_size": self.vocab_size, "coord_dim": self.coord_dim or 64,
+                "vocab_size": self.vocab_size, "coord_dim": self.coord_dim or BASIN_DIM,
                 "hidden_dim": self.hidden_dim, "num_params": nparams, "coordizer_vocab": cvocab,
                 "arm": "geo", "backend": "geocoding.GeoModel",
                 "head_mode": self.head_mode, "head_tau": self.head_tau}
