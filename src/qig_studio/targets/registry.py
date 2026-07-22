@@ -5,12 +5,10 @@ from __future__ import annotations
 import os
 
 from .base import TargetInfo, TrainingTarget
-from .constellation_target import ConstellationTarget
 from .genesis_kernel import GenesisKernelTarget
 from .geo_cortex import GeoCortexTarget
 from .geo_qwen import GeoQwenTarget
 from .joint_mind import JointMindTarget
-from .kernel_target import KernelTarget
 from .mock_target import MockTarget
 from .qwen_local import QwenLocalTarget
 from .qwen_modal import QwenModalTarget
@@ -202,8 +200,12 @@ def default_registry(
     r.register(JointMindTarget(coordizer=coordizer, coordizer_path=genesis_coordizer_checkpoint,
                                checkpoint_root=constellation_checkpoint,
                                num_layers=genesis_num_layers, device=device, language_peer=shared_peer))
-    r.register(KernelTarget(checkpoint=kernel_checkpoint, device=device))
-    r.register(ConstellationTarget(checkpoint=constellation_checkpoint, device=device))
+    # RETIRED: the Gary-formation kernel/constellation targets (KernelTarget/ConstellationTarget,
+    # which wrapped qig-consciousness's chat bridge) were archived 2026-07-22 — see
+    # qig-archive/20260722-studio-gary-targets/. The CURRENT candidate formations are genesis (gk),
+    # geo-cortex (geo), and the neocortex hybrid built by build_neocortex(); the JointMindTarget
+    # ("mind") registered above is the integrated whole. `kernel_checkpoint` is kept as an accepted
+    # (now-unused) parameter for backward config/env compatibility (QIG_STUDIO_KERNEL_CKPT).
     # Plain Qwen and geo-Qwen stay INDEPENDENTLY registered/selectable standalone dev targets
     # regardless of which one `shared_peer` picked — chat/dev work can still select plain Qwen.
     r.register(qwen_peer)

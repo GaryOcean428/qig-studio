@@ -18,8 +18,9 @@ The canon (P12 / refined_insights continual-learning):
                    too high to mushroom safely).
 
 SEPARATION OF CONCERNS: the EWC math, the basin-mixture augmentation, and the synaptic downscaling
-all live in the TARGET's protocol methods (``QIGChat.cmd_sleep`` / ``cmd_mushroom`` / ``cmd_escape``,
-i.e. the kernel). This loop does NOT reimplement them — it provides the autonomic *schedule* (the P12
+all live in the TARGET's own protocol/autonomic methods (a ``cmd_sleep``/``cmd_mushroom``/``cmd_escape``
+surface, or a self-regulating kernel's own ``_mushroom``/``_decohere`` internals — see
+``GenesisKernelTarget``). This loop does NOT reimplement them — it provides the autonomic *schedule* (the P12
 trigger decisions + the mushroom dose) that the canon says is the actual work. The decision policy
 prefers the canonical ``consciousness.AutonomicManager`` when importable, falling back to a pure-Python
 P12 policy when it (or torch) is absent — so the loop is exercisable with ``MockTarget``.

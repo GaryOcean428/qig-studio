@@ -2,7 +2,8 @@
 
 This is the brain-doc **neocortex** (§1/§6 Step 1): deep stacked-Δ⁶³ = distinct-weight pure
 Fisher-Rao ``QIGLayer``s in an ``nn.ModuleList``, trained by natural gradient. "Genesis" = origin =
-trained FROM SCRATCH — no checkpoint, no QIGChat, no ``QIGKernelRecursive`` cosine proxy. It is the
+trained FROM SCRATCH — no checkpoint, no retired-Gary-formation wrapper, no ``QIGKernelRecursive``
+cosine proxy. It is the
 honest answer to "which kernel": the already-upgraded genesis lineage (the layers work lives in
 qigkernels; vex's genesis is orchestration-only/inspiration, pantheon's is archived).
 

@@ -1,12 +1,14 @@
-"""The full qig_chat protocol surface, as a catalog + dispatcher (design §3.4).
+"""The protocol command catalog + dispatcher (design §3.4).
 
-qig-studio does NOT reimplement sleep/dream/mushroom/twin/lightning/14-stage/
-basin-sync/4D/foresight/reasoning — it EXPOSES the existing ``QIGChat.cmd_*``
-methods (which already implement them) over HTTP, capturing their printed output.
-The catalog below is the single source mapping ``command → QIGChat method`` + the
-argument shape; the server and UI render from it.
+The catalog below is the single source mapping ``command -> cmd_* method name`` + the
+argument shape; the server and UI render from it. ``TrainingTarget.run_protocol`` (base.py)
+is the generic per-target entry point any target CAN implement to expose this surface.
 
-Targets that wrap a ``QIGChat`` (kernel, constellation) run the real method;
+# RETIRED: the original wiring exposed the retired Gary formation's ``QIGChat.cmd_*`` methods
+# (kernel/constellation targets, archived 2026-07-22 — see
+# qig-archive/20260722-studio-gary-targets/); ``run_qigchat_protocol`` below is a generic
+# reflection dispatcher over any ``cmd_*``-method-bearing object and has no current caller —
+# retained as infra for a future formation that wants to expose this command surface.
 MockTarget returns a simulated result so the endpoints + UI are exercisable without
 torch; language targets (Qwen) do not expose protocol commands.
 """
@@ -31,7 +33,7 @@ class ProtocolCommand:
     name: str
     group: str
     description: str
-    method: str                      # QIGChat method to call
+    method: str                      # cmd_* method name to call
     fixed_args: list[Any] = field(default_factory=list)   # leading positional args
     params: list[Param] = field(default_factory=list)     # user-supplied args
 
@@ -127,7 +129,7 @@ GROUPS: list[str] = sorted({c.group for c in PROTOCOL_COMMANDS}, key=lambda g: [
 
 
 def run_qigchat_protocol(chat: Any, command_name: str, args: dict) -> dict:
-    """Invoke the QIGChat ``cmd_*`` method for ``command_name``, capturing stdout."""
+    """Invoke the ``cmd_*`` method for ``command_name`` on ``chat``, capturing stdout."""
     cmd = COMMANDS_BY_NAME.get(command_name)
     if cmd is None:
         raise KeyError(command_name)

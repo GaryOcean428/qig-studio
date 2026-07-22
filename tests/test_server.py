@@ -27,14 +27,14 @@ def test_health_and_purity_passed():
         assert body["active_target"] == "mock"
 
 
-def test_targets_lists_three_with_regimes():
+def test_targets_lists_current_formations_with_regimes():
     with TestClient(app) as client:
         body = client.get("/targets").json()
         names = {t["name"] for t in body["targets"]}
-        assert {"mock", "kernel", "constellation"} <= names
+        assert {"mock", "genesis", "mind"} <= names
         regimes = {t["name"]: t["loss_regime"] for t in body["targets"]}
         assert regimes["mock"] == "geometric"
-        assert regimes["kernel"] == "geometric"
+        assert regimes["genesis"] == "geometric"
 
 
 def test_chat_with_mock():

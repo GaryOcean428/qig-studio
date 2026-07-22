@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 from qig_studio.targets import (
-    ConstellationTarget,
-    KernelTarget,
     LossRegime,
     MockTarget,
     TrainingTarget,
@@ -40,24 +38,14 @@ def test_mock_generate_does_not_advance():
     assert m.telemetry().step == step_after_train  # inference does not learn
 
 
-def test_kernel_and_constellation_are_geometric_and_none_safe():
-    k = KernelTarget()
-    c = ConstellationTarget()
-    assert k.loss_regime is LossRegime.GEOMETRIC
-    assert c.loss_regime is LossRegime.GEOMETRIC
-    # is_available() must never raise (None-safe), regardless of env.
-    assert isinstance(k.is_available(), bool)
-    assert isinstance(c.is_available(), bool)
-
-
 def test_registry_default_selects_mock_and_lists_all():
     r = default_registry(default_target="mock")
     assert r.active is not None and r.active.name == "mock"
     names = set(r.names())
-    assert {"mock", "kernel", "constellation"} <= names
+    assert {"mock", "genesis", "mind"} <= names
     infos = {i.name: i for i in r.list_info()}
     assert infos["mock"].available is True
-    assert infos["kernel"].loss_regime is LossRegime.GEOMETRIC
+    assert infos["genesis"].loss_regime is LossRegime.GEOMETRIC
 
 
 def test_registry_select_unknown_raises():
@@ -71,7 +59,7 @@ def test_registry_select_unknown_raises():
 
 def test_registry_has_all_targets():
     r = default_registry()
-    assert set(r.names()) == {"mock", "genesis", "mind", "kernel", "constellation", "geo-qwen", "qwen-local", "qwen-modal"}
+    assert set(r.names()) == {"mock", "genesis", "mind", "geo-qwen", "qwen-local", "qwen-modal"}
 
 
 def test_genesis_target_is_geometric_and_none_safe():
