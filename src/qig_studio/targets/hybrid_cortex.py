@@ -199,7 +199,7 @@ class _HybridCfg:
         self.decoherence_std = kw.get("decoherence_std", 0.0)
         self.rms_eps = kw.get("rms_eps", 1e-6)
         self.enable_coords = kw.get("enable_coords", False)
-        self.coord_dim = kw.get("coord_dim", 64)
+        self.coord_dim = kw.get("coord_dim", BASIN_DIM)
         self.head_tau = kw.get("head_tau", 1.0)
         # model-scale sequence running coupling (dimensionless, ~1.0); NOT lattice physics κ (κ*≈64 RETIRED
         # per EXP-169; κ_JT^cert=0.028) — feeds telemetry/regime reporting only. Same provenance comment /
