@@ -1445,7 +1445,7 @@ class GenesisKernelTarget(TrainingTarget):
         snap.extra["surprise"] = round(_surprise, 4)                     # d_FR prediction-error on the input
         snap.extra["max_surprise"] = round(math.pi, 4)                   # d_FR ceiling (Δ⁶³ FR distance max = π)
         self._emit_pillars(snap, self._d63(meaning))                     # LIVE pillar metrics as it speaks
-        exp = experience(snap.to_dict())                                 # the kernel's felt state → persona
+        exp = experience(snap.to_dict())                                 # geometric telemetry (category-3, not felt-state) → persona
         kernel_voice = self._kernel_voice(prompt)                        # the kernel's OWN raw voice (attribution + peer seed)
         content, thinking, logprobs = self.language_peer.speak(
             prompt, self._persona(exp, kernel_voice),                    # Qwen EXTENDS the kernel's words + state
