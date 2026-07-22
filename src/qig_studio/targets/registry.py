@@ -185,7 +185,9 @@ def default_registry(
     # (None-safe — is_available() True once the exported basin bank exists, even without the
     # live transformers+weights artifact; never a fwd-pass dep). Constructed here (not lazily
     # below) so the SAME instance can be both a standalone target AND the selected shared peer.
-    geo_qwen_peer = GeoQwenTarget()
+    # Share the SAME coordizer the kernel + qwen peer use, so geo-Qwen can reduce its OWN live text ->
+    # Δ⁶³ and emit its full inner-experience carriage for arbitrary conversation (propagate-basis-not-labels).
+    geo_qwen_peer = GeoQwenTarget(coordizer=coordizer)
     # design B (PI-ruled): QIG_STUDIO_TEACHER selects which instance is the SHARED language_peer
     # wired into the integrated-mind targets below. Defaults to plain Qwen; arms_bakeoff/verdict
     # launchers set QIG_STUDIO_TEACHER=geo_qwen for the gk arm's boundary.
