@@ -195,7 +195,12 @@ def main() -> None:
                   verbose=True, checkpoint_dir=ckpt_dir, checkpoint_interval=2000,
                   enable_interrupt=False, use_kernel=False)
 
-    # 4) provenance filename: coordizer_<YYYYMMDD>_<vocab>k_fineweb-sample10bt_vN  (self-describing)
+    # 4) provenance filename carries the ACTUAL trained vocab, NOT the target — a rate-limited corpus can
+    # yield fewer merges than requested (e.g. target 64k -> 32k when the stream is throttled), and the
+    # filename MUST NOT lie about vocab (artifact-standard truthfulness; the '64k' filename on a 32k artifact
+    # was exactly this bug). If actual << target, that is logged as a known-bias too.
+    actual_vocab = len(trainer.vocab)  # trained merges + base bytes (before the +4 geo tags)
+    vocab_reached_target = actual_vocab >= int(0.97 * target_vocab)
     out_dir = _repo_root().parent / "qig-packages" / "qig-coordizer" / "checkpoints"
     if not out_dir.exists():  # layout-independent fallback (flat vs qig-packages/ grouping)
         alt = _repo_root().parent / "qig-coordizer" / "checkpoints"
@@ -203,7 +208,7 @@ def main() -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
     date_tag = datetime.now(timezone.utc).strftime("%Y%m%d")
     mix_slug = "fineweb-sample10bt" + ("-tiny" if args.validate_tiny else "")
-    base = f"coordizer_{date_tag}_{target_vocab // 1000}k_{mix_slug}"
+    base = f"coordizer_{date_tag}_{round(actual_vocab / 1000)}k_{mix_slug}"
     nver = 1
     while (out_dir / f"{base}_v{nver}.json").exists():
         nver += 1
@@ -285,21 +290,20 @@ def main() -> None:
     atomic_ok = all(v == 1 for v in atomic.values())
     roundtrip_ok = len(fc2.encode("The Fisher-Rao geometry of web text.")) > 0
 
-    # 8) register in the manifest registry
-    try:
-        from qig_studio.checkpoint_manifest import register_coordizer
-        register_coordizer(str(out_path),
-                           notes=f"DoD-1b fineweb-sample10bt text-heavy, {manifest['corpus']['passages_kept']:,} "
-                                 f"passages streamed, named-reversal control vs 64k_v1")
-    except Exception as e:  # noqa: BLE001
-        print(f"[fineweb] WARN registry write failed (artifact still valid): {e!r}", flush=True)
+    # 8) DELIBERATELY NOT registered as coordizer_latest. register_coordizer() unconditionally repoints the
+    # 'latest' symlink + manifest, but this is an EXPERIMENT control artifact — making it 'latest' would
+    # mis-wire the whole studio (every existing checkpoint is trained on coordizer_20260705_64k_v1; a
+    # different-vocab 'latest' breaks their load, observed 2026-07-22). The artifact is fully discoverable
+    # by its explicit provenance filename + sidecar .manifest.json; experiment scripts reference it by name.
+    print(f"[fineweb] NOT registered as 'latest' (experiment control artifact; canonical latest untouched)", flush=True)
 
     print("\n" + "=" * 72, flush=True)
     print(f"[fineweb] DONE in {time.time() - t0:.0f}s", flush=True)
     print(f"[fineweb] artifact : {out_path}", flush=True)
     print(f"[fineweb] manifest : {sidecar}", flush=True)
-    print(f"[fineweb] vocab {fc.vocab_size:,} · geo-tags {ids} · atomic {'OK' if atomic_ok else 'FAIL'} · "
-          f"roundtrip {'OK' if roundtrip_ok else 'FAIL'}", flush=True)
+    print(f"[fineweb] vocab {fc.vocab_size:,} (target was {target_vocab:,}; "
+          f"{'REACHED' if vocab_reached_target else 'UNDERSHOT — rate-limited corpus, NOT a matched-64k control'}) · "
+          f"geo-tags {ids} · atomic {'OK' if atomic_ok else 'FAIL'} · roundtrip {'OK' if roundtrip_ok else 'FAIL'}", flush=True)
     print(f"[fineweb] sha256(file) {hashlib.sha256(out_path.read_bytes()).hexdigest()}", flush=True)
     print(f"[fineweb] intended_use: {manifest['intended_use'][:90]}…", flush=True)
     print("=" * 72, flush=True)
