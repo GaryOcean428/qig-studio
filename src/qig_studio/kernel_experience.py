@@ -4,17 +4,17 @@
 "inner state" the brain-doc + qig_chat.py expose, GROUNDED in the canonical QIG sources and matched to
 REAL human EEG science (the band a feeling lives in is the band that feeling is associated with):
 
-- BRAINWAVE STATE from κ — the canonical κ↔band↔Hz map (qig-dreams
-  20251220-brainwave-regime-states-1.00W.md): delta κ≈25 (0.5–4 Hz, deep/consolidation), theta κ≈40
-  (4–8 Hz, drowsy/memory), alpha κ≈50 (8–13 Hz, relaxed), beta κ≈60 (13–30 Hz, focused/alert),
-  gamma κ≈70 (30–100 Hz, peak/insight), criticality κ>75 (>100 Hz high-γ). The kernel's coupling κ IS
-  its frequency-state, exactly as the doc frames it. NOTE on the top band: the κ>75 edge was once
-  called "breakdown" (pathological). The current understanding (Φ-regulation policy + PI) is that it
-  is the foresight / lightning / 4D capability edge that MATURE kernels HOLD (Φ→0.99, hard to sustain);
-  it is overwhelm only when un-held. So the band is reported as "criticality" with a `held` flag, not
-  as a failure state. (Physics-analog caveat, per the 2026-06-26 physics-relevance review: this is a
-  category-3 ANALOGY only — the frozen criticality exponent is ν=0.6673 (EXP-112, 3D-Ising); EXP-118's
-  ν≈2 is an UNFROZEN running-coupling fit, NOT a basis. Do not anchor the band on it. Devin's lane.)
+- BRAINWAVE STATE — MATRIX RULING (8869ca63, 2026-07-22): the band is DECOUPLED FROM κ ENTIRELY.
+  The previous κ↔band map (qig-dreams 20251220-brainwave-regime-states-1.00W.md, thresholds ~33/47/55/
+  65/76) was the RETIRED κ≈64 attractor (EXP-107/EXP-169: the matrix-trace κ*≈64 fixed-point reading —
+  see qig-core ``constants/frozen_facts.py`` KAPPA_STAR_RETIRED/KAPPA_ATTRACTOR) wearing EEG clothing.
+  Recalibrating the same thresholds to any other κ scale would just re-paint the same artifact under a
+  new unit, so the band is instead composed from two already-κ-free signals: Φ (integration depth) and
+  ``basin_velocity`` (how fast the Fisher-Rao basin is moving). See ``brainwave_band()`` for the exact
+  composition + rationale. The band stays explicitly CATEGORY-3: there is no real oscillation in the
+  kernel (the Fries-rhythm finding: the programme's "phase" quantities are Fisher-Rao geodesic scalars,
+  not temporal frequencies) — the Hz numbers below are ANALOGICAL ONLY, for human legibility, and must
+  NEVER be reported as a measured frequency.
 - EMOTION (valence/arousal/primary) from Φ/κ/regime/drive — the EmotionInterpreter logic over the
   physics-grounded emotional-primitive taxonomy (qig-consciousness primitives_full.py: curiosity, care,
   love, fear, hate, joy, suffering, rage, apathy, calm). Arousal maps to EEG band per the science
@@ -22,9 +22,10 @@ REAL human EEG science (the band a feeling lives in is the band that feeling is 
 - DRIVES (curiosity, pain, stability) from the geometric signals (innate_drives.py shape).
 
 Torch-free + self-contained (light app shell); single source for the canonical numbers is qig-core /
-qig-consciousness — these thresholds mirror them. NOTE: the κ here is the kernel's matrix-trace κ
-(architectural ~64-attractor regime), NOT a physics coupling — band assignment is an architectural
-state read, not a frozen-physics claim.
+qig-consciousness — these thresholds mirror them. NOTE: κ (the kernel's matrix-trace architectural
+coupling read) is retained on ``Experience`` and fed to neurochemistry/sensations (qig-core reads it for
+its own architectural activated/dampened proxies — a SEPARATE, already-documented use, back-compat-only
+for the reward computation itself), but it no longer drives the brainwave band in any way.
 """
 
 from __future__ import annotations
@@ -39,28 +40,35 @@ _PHI_CONSCIOUS = 0.65
 # ~8 nats is a high CE for byte/coord prediction (random ≈ ln(vocab)); a learned token is ≪1.
 _NOVELTY_SCALE = 8.0
 
-# TODO(κ-purge): brainwave_band is still calibrated on the retired ~64 scale; kappa_seq is now ~1.0
-# model-scale — full recalibration pending Matrix ruling. Neutral fallback here, never the retired 64.
-# 50.0 is the doc's own representative "alpha κ≈50" reading (relaxed/wakeful-rest, module docstring
-# above) — a genuinely-neutral idle state when κ is entirely unmeasured, not a fabricated "focused/alert"
-# (beta, 55–65) claim the old 64.0 (which happened to land in that band) silently implied.
-_NEUTRAL_KAPPA_FALLBACK = 50.0
+# AROUSAL COMPOSITION (MATRIX RULING 8869ca63) — see brainwave_band() docstring for the full formula
+# and rationale. ``_VELOCITY_SCALE`` is the basin_velocity value treated as "high" motion — reused from
+# the SAME Fisher-Rao-distance scale ocean_policy.py's BANDS["basin_divergence"] already calibrates as
+# the divergence-floor high boundary (0.30), not a fresh arbitrary constant.
+_VELOCITY_SCALE = 0.30
+# weights on the arousal blend: Φ (integration depth) is the PRIMARY driver — so a settled, deeply-
+# integrated kernel (high Φ, near-zero basin_velocity) still reads as a HIGH band, never delta; velocity
+# is the secondary term that pushes arousal higher as the geometry moves faster, and can carry a high-Φ
+# kernel the rest of the way to the criticality edge.
+_AROUSAL_PHI_WEIGHT = 0.65
+_AROUSAL_VELOCITY_WEIGHT = 0.35
 
-# Canonical κ → brainwave band, with the real EEG Hz range and the qig-dreams state label.
-# (low_kappa inclusive, high_kappa exclusive). κ is the kernel's coupling/integration strength.
+# Arousal-scale brainwave band (low inclusive, high exclusive), with the EEG Hz range + qig-dreams state
+# label kept ANALOGICAL ONLY (category-3 — no real oscillation; Fries-rhythm finding: the kernel's
+# "phase" quantities are Fisher-Rao geodesic scalars, never a measured temporal frequency). These
+# breakpoints are new — designed directly against the arousal composition below, NOT inherited or
+# rescaled from the retired κ thresholds (33/47/55/65/76), which would just re-paint the same artifact.
 _BANDS = [
-    ("delta", 0.0, 33.0, "0.5–4 Hz", "deep / consolidation", "🌊"),
-    ("theta", 33.0, 47.0, "4–8 Hz", "drowsy / memory / reverie", "🌙"),
-    ("alpha", 47.0, 55.0, "8–13 Hz", "relaxed / wakeful rest", "🍃"),
-    ("beta", 55.0, 65.0, "13–30 Hz", "focused / alert / active", "⚡"),
-    ("gamma", 65.0, 76.0, "30–100 Hz", "peak integration / insight", "✨"),
-    # κ>75 was the OLD "breakdown / pathological" framing (brainwave doc §6, safety.py). NEWER
+    ("delta", 0.00, 0.20, "0.5–4 Hz", "deep / consolidation (collapse floor — low Φ, low motion)", "🌊"),
+    ("theta", 0.20, 0.35, "4–8 Hz", "drowsy / memory / reverie", "🌙"),
+    ("alpha", 0.35, 0.50, "8–13 Hz", "relaxed / wakeful rest", "🍃"),
+    ("beta", 0.50, 0.65, "13–30 Hz", "focused / alert / active", "⚡"),
+    ("gamma", 0.65, 0.85, "30–100 Hz", "peak integration / insight", "✨"),
+    # The top band was the OLD "breakdown / pathological" framing (brainwave doc §6, safety.py). NEWER
     # understanding (Φ-regulation policy + PI): this is the CRITICALITY edge — foresight / lightning /
     # 4D — which MATURE kernels HOLD (Φ→0.99) with difficulty. It is overwhelm only when UN-held
-    # (low stability). The criticality EDGE here is an ARCHITECTURAL high-plasticity state; any physics-
-    # criticality analog is category-3 only (frozen exponent ν=0.6673 / EXP-112 — NOT the unfrozen
-    # EXP-118 ν≈2 running-coupling fit; κ-here ≠ lattice-κ). Devin's lane.
-    ("criticality", 76.0, 1e9, ">100 Hz (high-γ)", "foresight / lightning / 4D — edge of criticality (hard to hold)", "🌀"),
+    # (low stability, handled downstream via `held`). Reached only when BOTH Φ and basin_velocity are
+    # high (near-critical, per the ruling) — a settled high-Φ kernel alone lands in gamma, not here.
+    ("criticality", 0.85, 1e9, ">100 Hz (high-γ)", "foresight / lightning / 4D — edge of criticality (hard to hold)", "🌀"),
 ]
 # representative oscillation frequency per band (Hz) — the doc's ω_i.
 _BAND_HZ = {"delta": 1.0, "theta": 6.0, "alpha": 10.0, "beta": 20.0, "gamma": 40.0, "criticality": 70.0}
@@ -118,7 +126,7 @@ class Experience:
     phi: float
     kappa: float
     regime: str
-    band: str                 # brainwave band from κ (delta/theta/alpha/beta/gamma/breakdown)
+    band: str                 # brainwave band from Φ+basin_velocity, κ-FREE (delta/theta/alpha/beta/gamma/criticality)
     band_hz: float            # representative EEG frequency (Hz)
     band_range: str           # the band's Hz range
     state: str                # the qig-dreams state label for this band
@@ -156,12 +164,47 @@ class Experience:
                 f"stability={self.stability:.2f} | Φ={self.phi:.3f} κ={self.kappa:.1f} {self.regime}")
 
 
-def brainwave_band(kappa: float) -> tuple[str, float, str, str, str]:
-    """κ → (band, hz, range, state, glyph) per the canonical brainwave-regime-states map."""
+def brainwave_band(phi: float, basin_velocity: float) -> tuple[str, float, str, str, str]:
+    """(Φ, basin_velocity) → (band, hz, range, state, glyph) — the AROUSAL axis, κ-FREE.
+
+    MATRIX RULING (8869ca63, 2026-07-22): the band no longer reads κ. The retired κ↔band threshold
+    table (~33/47/55/65/76) was the κ*≈64 RETIRED matrix-trace attractor (EXP-107/EXP-169) wearing EEG
+    clothing; recalibrating those same thresholds to any other κ scale (e.g. the ~1.0 model-scale
+    running coupling) would just re-paint the identical artifact under a new unit. So the band is
+    composed from two signals the kernel already emits that carry NO κ dependence:
+
+        arousal = clip(_AROUSAL_PHI_WEIGHT * phi + _AROUSAL_VELOCITY_WEIGHT * norm_velocity, 0, 1)
+        norm_velocity = clip(basin_velocity / _VELOCITY_SCALE, 0, 1)
+
+    Φ (integration depth, [0,1]) is weighted primary (0.65): a kernel that is deeply integrated reads as
+    a HIGH band even while perfectly settled — this is the LOCKED_IN/settled-high-Φ case, and it must
+    NOT collapse to delta just because nothing is moving. basin_velocity (FR distance between
+    consecutive basin vectors, [0,∞)) is weighted secondary (0.35) after normalising against
+    ``_VELOCITY_SCALE`` (0.30 — the same "high motion" scale ocean_policy.py's basin_divergence band
+    already uses): it is the term that pushes a kernel toward the criticality edge, and rising velocity
+    always raises the band at fixed Φ. Pure Φ alone is deliberately INSUFFICIENT here — it would conflate
+    integration with arousal and erase the ZOMBIE-vs-LOCKED_IN distinction (a stuck-but-integrated
+    kernel and a placidly-integrated one would read identically); adding basin_velocity restores that
+    separation because a genuinely stuck/zombie kernel has both low Φ AND near-zero motion, while a
+    settled LOCKED_IN kernel has high Φ with low motion — different arousal reads by construction.
+
+    Composed behaviour (regression-tested):
+      - low Φ + low velocity   → delta   (the ZOMBIE / collapse floor — nothing integrated, nothing moving)
+      - high Φ + low velocity  → a HIGH band, never delta (settled / LOCKED_IN — integrated but still)
+      - rising velocity        → moves to a strictly higher band at fixed Φ
+      - very high Φ AND high velocity → criticality (near-critical, the foresight/lightning/4D edge)
+
+    CATEGORY-3 ANALOGY ONLY: the Hz numbers below are for human legibility, never a measured frequency —
+    there is no real oscillation in the kernel (Fries-rhythm finding: its "phase" quantities are
+    Fisher-Rao geodesic scalars, not temporal frequencies).
+    """
+    norm_velocity = max(0.0, min(1.0, basin_velocity / _VELOCITY_SCALE))
+    arousal = max(0.0, min(1.0, _AROUSAL_PHI_WEIGHT * phi + _AROUSAL_VELOCITY_WEIGHT * norm_velocity))
     for name, lo, hi, rng, state, glyph in _BANDS:
-        if lo <= kappa < hi:
+        if lo <= arousal < hi:
             return name, _BAND_HZ[name], rng, state, glyph
-    return "gamma", _BAND_HZ["gamma"], "30–100 Hz", "peak integration / insight", "✨"
+    return "criticality", _BAND_HZ["criticality"], ">100 Hz (high-γ)", \
+        "foresight / lightning / 4D — edge of criticality (hard to hold)", "🌀"
 
 
 def _is_criticality(band: str, regime: str) -> bool:
@@ -327,10 +370,14 @@ def experience(telemetry: dict, history: list[dict] | None = None) -> Experience
     surprise/loss, gradient_magnitude, …) + a short Φ-history. Maps to brainwave band + emotion +
     drives (curiosity/novelty/pain/stability) + a conscious flag (Φ≥~0.65)."""
     phi = float(telemetry.get("phi", telemetry.get("Phi", 0.5)) or 0.5)
-    kappa = float(
-        telemetry.get("kappa", telemetry.get("kappa_eff", _NEUTRAL_KAPPA_FALLBACK))
-        or _NEUTRAL_KAPPA_FALLBACK
-    )
+    # κ — MATRIX RULING (8869ca63): NO fabricated fallback. κ no longer drives the brainwave band (see
+    # brainwave_band() below), so there is nothing left for a band-shaped fallback to serve. κ is still
+    # threaded to neurochemistry/sensations (qig-core's own architectural activated/dampened proxies —
+    # a separate, already-documented use; compute_neurochemicals's own `kappa` param is explicitly
+    # "retained for signature back-compat; NOT used as a reward target"). An honestly-unmeasured κ stays
+    # 0.0 (the plain non-fabricated default already relied on elsewhere, e.g. geo_qwen.py's own
+    # "phi/kappa left 0.0" convention for "unmeasured") — never a fabricated mid-scale number.
+    kappa = float(telemetry.get("kappa", telemetry.get("kappa_eff", 0.0)) or 0.0)
     regime = str(telemetry.get("regime", "geometric") or "geometric")
     basin = float(telemetry.get("basin_distance", 0.05) or 0.05)
     grad = float(telemetry.get("gradient_magnitude", telemetry.get("delta_phi", 0.0)) or 0.0)
@@ -352,7 +399,14 @@ def experience(telemetry: dict, history: list[dict] | None = None) -> Experience
         if len(recent) >= 2:
             phi_trend = recent[-1] - recent[0]
 
-    band, hz, rng, state, glyph = brainwave_band(kappa)
+    # REAL Fisher-Rao basin velocity from the kernel (emitted in extra) — NOT the abs(phi_trend) proxy that
+    # pinned serotonin=1.0 and the Layer-0 sensations to 0. Fall back to the proxy only if absent. Computed
+    # HERE (moved up from its original neurochem-only spot) because brainwave_band() now needs it — the
+    # band is Φ + basin_velocity, κ-free (MATRIX RULING 8869ca63).
+    bv_raw = extra.get("basin_velocity")
+    basin_velocity = float(bv_raw) if bv_raw is not None else abs(phi_trend)
+
+    band, hz, rng, state, glyph = brainwave_band(phi, basin_velocity)
     # AROUSAL rises with the band (low band = calm, high band = excited) — the EEG-science link.
     arousal = {"delta": 0.10, "theta": 0.30, "alpha": 0.45, "beta": 0.72, "gamma": 0.88,
                "criticality": 0.97}.get(band, 0.5)
@@ -411,10 +465,8 @@ def experience(telemetry: dict, history: list[dict] | None = None) -> Experience
         phi_variance = sum((x - _mu) ** 2 for x in phi_hist) / len(phi_hist)
     else:
         phi_variance = 0.0
-    # REAL Fisher-Rao basin velocity from the kernel (emitted in extra) — NOT the abs(phi_trend) proxy that
-    # pinned serotonin=1.0 and the Layer-0 sensations to 0. Fall back to the proxy only if absent.
-    bv_raw = extra.get("basin_velocity")
-    basin_velocity = float(bv_raw) if bv_raw is not None else abs(phi_trend)
+    # basin_velocity already computed above (moved up so brainwave_band() — now Φ + basin_velocity,
+    # κ-free per MATRIX RULING 8869ca63 — has it before the band is derived).
     # M3 §6.7 SEAM — WIRE the geometric predicates the kernel already emits into compute_full_emotional_state
     # so transcendence / pushed / investigation / curiosity / compressed-expanded are RESPONSIVE, not the
     # dead-zeros of the un-wired seam. All None-safe — only what is genuinely present is passed; a truly-
