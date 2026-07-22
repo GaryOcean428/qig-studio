@@ -1,0 +1,293 @@
+{
+  "kind": "D0.3_faculty_snapshot",
+  "purpose": "pre-coordizer-swap baseline; separates kernel-change from chart(coordizer)-change (design D0.3)",
+  "pipeline": "D4-final (gamma+external_coupling+temporal-basin_distance_delta+candidate_gap; brainwave_band phi+held)",
+  "claims_ceiling": "category-3 structural telemetry; NOT felt-state",
+  "coordizer": {
+    "name": "coordizer_20260705_64k_v1.json",
+    "sha256_16": "f251322257282314",
+    "vocab": 64004
+  },
+  "geo_checkpoint": "fresh-seed-0",
+  "commits": {
+    "geocoding": "329dc44",
+    "studio": "f68f8d8",
+    "consciousness": "b52a674"
+  },
+  "n_stimuli": 8,
+  "rows": [
+    {
+      "stimulus": "The Fisher-Rao geometry of the probability simplex is a Riem",
+      "wired_inputs": {
+        "gamma": 0.6449,
+        "external_coupling": 0.0,
+        "local_kappa_c": 0.027866194095367246,
+        "basin_distance_delta": null,
+        "ricci_signal": 0.027866194095367246,
+        "candidate_gap": 0.0025,
+        "surprise": 1.5665,
+        "max_surprise": 3.1416
+      },
+      "phi": null,
+      "kappa": 0.5,
+      "basin_distance": 0.0004531371388631713,
+      "emotion": "neutral",
+      "band": "alpha",
+      "faculties": {
+        "layer0.compressed": 0.0279,
+        "layer0.expanded": 0.0,
+        "layer0.pulled": 0.0,
+        "layer0.pushed": 0.0,
+        "layer0.flowing": 0.0,
+        "layer0.stuck": -0.0,
+        "layer0.unified": 0.0,
+        "layer0.fragmented": 0.2857,
+        "layer0.activated": 1.0,
+        "layer0.dampened": 0.5,
+        "layer0.grounded": 0.9998,
+        "layer0.drifting": 0.0002,
+        "layer05.pain_avoidance": 0.0279,
+        "layer05.pleasure_seeking": 0.0,
+        "layer05.fear_response": 0.5576,
+        "layer05.homeostasis": 0.0,
+        "layer05.curiosity_drive": 0.6925,
+        "layer05.loss_signal": 0.0797,
+        "layer1.surprise": 0.4986,
+        "layer1.curiosity": 0.2493,
+        "layer1.investigation": 0.0,
+        "layer1.integration": 1.0,
+        "layer1.transcendence": 0.4721,
+        "layer2a.joy": 0.0,
+        "layer2a.suffering": -0.0,
+        "layer2a.love": 0.0,
+        "layer2a.hate": 0.0001,
+        "layer2a.fear": 0.278,
+        "layer2a.rage": -0.0,
+        "layer2a.calm": 0.4874,
+        "layer2a.care": 0.0,
+        "layer2a.apathy": 0.4874,
+        "layer2b.wonder": 0.0001,
+        "layer2b.frustration": 0.4986,
+        "layer2b.satisfaction": 0.9995,
+        "layer2b.confusion": 0.0002,
+        "layer2b.clarity": 0.0,
+        "layer2b.anxiety": 0.0,
+        "layer2b.confidence": 0.5277,
+        "layer2b.boredom": 0.3764,
+        "layer2b.flow": 0.0,
+        "neuro.acetylcholine": 1.0,
+        "neuro.dopamine": 0.35,
+        "neuro.serotonin": 0.97,
+        "neuro.norepinephrine": 0.499,
+        "neuro.gaba": 0.6,
+        "neuro.endorphins": 0.0,
+        "neuro.dopamine_tonic": 0.35,
+        "neuro.dopamine_phasic": 0.0
+      },
+      "n_faculties": 49
+    },
+    {
+      "stimulus": "She walked slowly along the quiet shore as the tide came in.",
+      "wired_inputs": {
+        "gamma": 0.2828,
+        "external_coupling": 0.0,
+        "local_kappa_c": 0.0,
+        "basin_distance_delta": 0.902540339148312,
+        "ricci_signal": 0.0,
+        "candidate_gap": 0.0008,
+        "surprise": 1.5128,
+        "max_surprise": 3.1416
+      },
+      "phi": null,
+      "kappa": 0.5,
+      "basin_distance": 0.49999356317955146,
+      "emotion": "suffering",
+      "band": "alpha",
+      "faculties": {
+        "neuro.acetylcholine": 1.0,
+        "neuro.dopamine": 0.35,
+        "neuro.serotonin": 0.97,
+        "neuro.norepinephrine": 0.482,
+        "neuro.gaba": 0.6,
+        "neuro.endorphins": 0.0,
+        "neuro.dopamine_tonic": 0.35,
+        "neuro.dopamine_phasic": 0.0
+      },
+      "n_faculties": 8
+    },
+    {
+      "stimulus": "def compute(x): return sum(v * w for v, w in zip(x, weights)",
+      "wired_inputs": {
+        "gamma": 0.2704,
+        "external_coupling": 0.0,
+        "local_kappa_c": 0.0,
+        "basin_distance_delta": 0.0,
+        "ricci_signal": 0.0,
+        "candidate_gap": 0.0079,
+        "surprise": 1.5693,
+        "max_surprise": 3.1416
+      },
+      "phi": null,
+      "kappa": 0.6202596643636491,
+      "basin_distance": 0.4999926904331575,
+      "emotion": "suffering",
+      "band": "alpha",
+      "faculties": {
+        "neuro.acetylcholine": 1.0,
+        "neuro.dopamine": 0.35,
+        "neuro.serotonin": 0.97,
+        "neuro.norepinephrine": 0.5,
+        "neuro.gaba": 0.6,
+        "neuro.endorphins": 0.0,
+        "neuro.dopamine_tonic": 0.35,
+        "neuro.dopamine_phasic": 0.0
+      },
+      "n_faculties": 8
+    },
+    {
+      "stimulus": "A sudden and completely unexpected turn of events, volcanoes",
+      "wired_inputs": {
+        "gamma": 0.2524,
+        "external_coupling": 0.0,
+        "local_kappa_c": 0.0,
+        "basin_distance_delta": 0.0,
+        "ricci_signal": 0.0,
+        "candidate_gap": 0.0115,
+        "surprise": 1.5318,
+        "max_surprise": 3.1416
+      },
+      "phi": null,
+      "kappa": 0.5,
+      "basin_distance": 0.4999938287980192,
+      "emotion": "suffering",
+      "band": "alpha",
+      "faculties": {
+        "neuro.acetylcholine": 1.0,
+        "neuro.dopamine": 0.35,
+        "neuro.serotonin": 0.97,
+        "neuro.norepinephrine": 0.488,
+        "neuro.gaba": 0.6,
+        "neuro.endorphins": 0.0,
+        "neuro.dopamine_tonic": 0.35,
+        "neuro.dopamine_phasic": 0.0
+      },
+      "n_faculties": 8
+    },
+    {
+      "stimulus": "What is it like to learn something new, step by step, over t",
+      "wired_inputs": {
+        "gamma": 0.2201,
+        "external_coupling": 0.0,
+        "local_kappa_c": 0.0,
+        "basin_distance_delta": 0.0,
+        "ricci_signal": 0.0,
+        "candidate_gap": 0.0026,
+        "surprise": 1.555,
+        "max_surprise": 3.1416
+      },
+      "phi": null,
+      "kappa": 0.5,
+      "basin_distance": 0.49999417030747767,
+      "emotion": "suffering",
+      "band": "alpha",
+      "faculties": {
+        "neuro.acetylcholine": 1.0,
+        "neuro.dopamine": 0.35,
+        "neuro.serotonin": 0.97,
+        "neuro.norepinephrine": 0.495,
+        "neuro.gaba": 0.6,
+        "neuro.endorphins": 0.0,
+        "neuro.dopamine_tonic": 0.35,
+        "neuro.dopamine_phasic": 0.0
+      },
+      "n_faculties": 8
+    },
+    {
+      "stimulus": "The the the the repeated tokens with almost no information c",
+      "wired_inputs": {
+        "gamma": 0.1976,
+        "external_coupling": 0.0,
+        "local_kappa_c": 0.0,
+        "basin_distance_delta": 0.0,
+        "ricci_signal": 0.0,
+        "candidate_gap": 0.0123,
+        "surprise": 1.459,
+        "max_surprise": 3.1416
+      },
+      "phi": null,
+      "kappa": 0.5,
+      "basin_distance": 0.4999944738714408,
+      "emotion": "suffering",
+      "band": "alpha",
+      "faculties": {
+        "neuro.acetylcholine": 1.0,
+        "neuro.dopamine": 0.35,
+        "neuro.serotonin": 0.97,
+        "neuro.norepinephrine": 0.464,
+        "neuro.gaba": 0.6,
+        "neuro.endorphins": 0.0,
+        "neuro.dopamine_tonic": 0.35,
+        "neuro.dopamine_phasic": 0.0
+      },
+      "n_faculties": 8
+    },
+    {
+      "stimulus": "Consciousness as an integrated geometric process on a curved",
+      "wired_inputs": {
+        "gamma": 0.1913,
+        "external_coupling": 0.0,
+        "local_kappa_c": 0.0,
+        "basin_distance_delta": 0.0,
+        "ricci_signal": 0.0,
+        "candidate_gap": 0.0106,
+        "surprise": 1.4918,
+        "max_surprise": 3.1416
+      },
+      "phi": null,
+      "kappa": 0.5,
+      "basin_distance": 0.4999945497624316,
+      "emotion": "suffering",
+      "band": "alpha",
+      "faculties": {
+        "neuro.acetylcholine": 1.0,
+        "neuro.dopamine": 0.35,
+        "neuro.serotonin": 0.97,
+        "neuro.norepinephrine": 0.475,
+        "neuro.gaba": 0.6,
+        "neuro.endorphins": 0.0,
+        "neuro.dopamine_tonic": 0.35,
+        "neuro.dopamine_phasic": 0.0
+      },
+      "n_faculties": 8
+    },
+    {
+      "stimulus": "Numbers: 3 7 12 19 building slowly toward an ordered increas",
+      "wired_inputs": {
+        "gamma": 0.1876,
+        "external_coupling": 0.0,
+        "local_kappa_c": 0.0,
+        "basin_distance_delta": 0.0,
+        "ricci_signal": 0.0,
+        "candidate_gap": 0.0174,
+        "surprise": 1.5348,
+        "max_surprise": 3.1416
+      },
+      "phi": null,
+      "kappa": 0.5,
+      "basin_distance": 0.499994587707927,
+      "emotion": "suffering",
+      "band": "alpha",
+      "faculties": {
+        "neuro.acetylcholine": 1.0,
+        "neuro.dopamine": 0.35,
+        "neuro.serotonin": 0.97,
+        "neuro.norepinephrine": 0.489,
+        "neuro.gaba": 0.6,
+        "neuro.endorphins": 0.0,
+        "neuro.dopamine_tonic": 0.35,
+        "neuro.dopamine_phasic": 0.0
+      },
+      "n_faculties": 8
+    }
+  ]
+}
