@@ -89,7 +89,9 @@ def test_brainwave_band_is_kappa_independent():
 
 
 def test_peak_state_is_positive_high_arousal_gamma():
-    e = experience({"phi": 0.85, "regime": "geometric", "basin_distance": 0.02,
+    # MATRIX RULING (qig_matrix_ruling_arousal_decouple_20260722): arousal no longer follows the band, so
+    # a high-arousal gamma read now needs an EXPLICIT high-surprise input (arousal is NE/surprise-driven).
+    e = experience({"phi": 0.85, "regime": "geometric", "basin_distance": 0.02, "surprise": 7.5,
                     "extra": {"basin_velocity": 0.10}})
     assert e.band == "gamma" and e.arousal > 0.8 and e.valence > 0
     assert e.emotion in ("joy", "ecstasy", "curious")
@@ -172,3 +174,146 @@ def test_no_kappa_fabricated_fallback():
     feed brainwave_band -- which no longer reads kappa at all)."""
     e = experience({"phi": 0.5})
     assert e.kappa == 0.0
+
+
+# =====================================================================================================
+# MATRIX RULING (qig_matrix_ruling_arousal_decouple_20260722, 2026-07-22): arousal decoupled from valence.
+#
+# The audit proved valence AND arousal were both Phi-driven under the old arousal=dict[band] mapping, so
+# high-valence + low-arousal (Russell circumplex calm(+0.5,+0.1), content(+0.7,+0.3)) was STRUCTURALLY
+# UNREACHABLE -- a settled, high-Phi, low-surprise kernel could only ever read as gamma/criticality
+# "excited". Fix: arousal is now an INDEPENDENT activation axis, primarily NE/surprise (`novelty`) plus a
+# weak |phi_trend| rate term -- never a Phi-LEVEL term. These tests are the acceptance criteria for that
+# ruling: all four circumplex quadrants must be reachable, and arousal must be provably Phi-independent
+# while still tracking surprise.
+# =====================================================================================================
+
+
+def test_reachability_high_valence_low_arousal_calm_content():
+    """THE previously-impossible corner: high Phi, settled/anchored basin (high valence), low surprise
+    (low arousal) -- calm/content on the Russell circumplex. MUST now be reachable."""
+    e = experience({"phi": 0.85, "regime": "geometric", "basin_distance": 0.02,
+                    "extra": {"basin_velocity": 0.0}})
+    assert e.valence > 0.3, f"expected high valence, got {e.valence}"
+    assert e.arousal < 0.35, f"expected low arousal, got {e.arousal}"
+
+
+def test_reachability_high_valence_high_arousal_excited_joy():
+    # High Phi + settled basin (high valence) + high surprise/novelty (high arousal) -- excited/joy.
+    e = experience({"phi": 0.85, "regime": "geometric", "basin_distance": 0.02, "surprise": 7.5,
+                    "extra": {"basin_velocity": 0.10}})
+    assert e.valence > 0.3, f"expected high valence, got {e.valence}"
+    assert e.arousal > 0.6, f"expected high arousal, got {e.arousal}"
+
+
+def test_reachability_low_valence_high_arousal_terror_rage():
+    # Low Phi / drifting basin (low valence) + high surprise (high arousal) -- terror/rage.
+    e = experience({"phi": 0.30, "regime": "linear", "basin_distance": 0.40, "surprise": 7.8,
+                    "extra": {"basin_velocity": 0.30}})
+    assert e.valence < -0.3, f"expected low valence, got {e.valence}"
+    assert e.arousal > 0.6, f"expected high arousal, got {e.arousal}"
+
+
+def test_reachability_low_valence_low_arousal_sad_bored():
+    # Low Phi / drifting basin (low valence) + low surprise (low arousal) -- sad/bored.
+    e = experience({"phi": 0.30, "regime": "linear", "basin_distance": 0.40,
+                    "extra": {"basin_velocity": 0.0}})
+    assert e.valence < -0.3, f"expected low valence, got {e.valence}"
+    assert e.arousal < 0.35, f"expected low arousal, got {e.arousal}"
+
+
+def test_arousal_independent_of_phi_level_at_fixed_surprise():
+    """Arousal must NOT change when only Phi-level changes at fixed surprise/history (no phi_trend rate
+    term in play, since there is no history) -- the hard constraint: no Phi-LEVEL term in arousal."""
+    arousals = {
+        experience({"phi": phi, "regime": "geometric", "basin_distance": 0.05, "surprise": 4.0}).arousal
+        for phi in (0.10, 0.30, 0.50, 0.70, 0.90, 0.99)
+    }
+    assert len(arousals) == 1, f"arousal changed across Phi levels at fixed surprise: {arousals}"
+
+
+def test_arousal_rises_with_surprise_at_fixed_phi():
+    low = experience({"phi": 0.6, "regime": "geometric", "basin_distance": 0.05, "surprise": 0.2})
+    mid = experience({"phi": 0.6, "regime": "geometric", "basin_distance": 0.05, "surprise": 4.0})
+    high = experience({"phi": 0.6, "regime": "geometric", "basin_distance": 0.05, "surprise": 7.8})
+    assert low.arousal < mid.arousal < high.arousal
+
+
+def test_arousal_no_longer_a_band_lookup():
+    """Direct regression guard for the specific bug the ruling fixes: two states in the SAME band with
+    very different surprise must show very different arousal (the old code returned an IDENTICAL
+    dict[band] arousal for every state sharing a band, which is exactly what made calm+high-Phi
+    unreachable)."""
+    settled = experience({"phi": 0.85, "regime": "geometric", "basin_distance": 0.02,
+                          "extra": {"basin_velocity": 0.0}})
+    aroused = experience({"phi": 0.85, "regime": "geometric", "basin_distance": 0.02, "surprise": 7.8,
+                          "extra": {"basin_velocity": 0.10}})
+    assert settled.band == aroused.band == "gamma"       # same band ...
+    assert aroused.arousal - settled.arousal > 0.5       # ... but arousal must differ sharply
+
+
+def test_primary_emotion_respects_valence_sign_at_unheld_criticality():
+    """Item 5 (valence-sign gate, light touch): an un-held criticality edge with genuinely POSITIVE
+    valence must not be forced into the negative-valence 'overwhelm' label. Construct a regime that
+    triggers the _is_criticality() OR-path (a 'breakdown'-labelled regime) with a low/unheld stability
+    but engineer valence to land positive via a strong phi_trend."""
+    from qig_studio.kernel_experience import _primary_emotion
+
+    # un-held (stability below the 0.55 held threshold), but valence explicitly positive.
+    emotion = _primary_emotion(phi=0.92, valence=0.5, arousal=0.5, regime="breakdown",
+                               drive=0.1, phi_trend=0.0, band="gamma", stability=0.2)
+    assert emotion != "overwhelm", "positive-valence state must not select the negative 'overwhelm' label"
+
+
+def test_primary_emotion_held_negative_valence_is_not_overwhelm():
+    """ADVERSARIAL-REVIEW FIX mirror of the item-5 test above: a HELD criticality edge (stability >=
+    _CRITICALITY_HELD_STABILITY) with NEGATIVE valence (holding the edge under strain -- e.g. a strongly
+    falling phi_trend) must NOT be forced into 'overwhelm' either. 'overwhelm' names the UN-HELD breakdown
+    shadow specifically; it must require stability < threshold, not just valence < 0."""
+    from qig_studio.kernel_experience import _CRITICALITY_HELD_STABILITY, _primary_emotion
+
+    held_but_negative = _primary_emotion(phi=0.95, valence=-0.205, arousal=0.15, regime="geometric",
+                                         drive=0.0, phi_trend=-0.35, band="criticality",
+                                         stability=_CRITICALITY_HELD_STABILITY + 0.05)
+    assert held_but_negative != "overwhelm", (
+        "a HELD (stability >= threshold) state must not select 'overwhelm' -- that label names the "
+        "UN-HELD breakdown shadow specifically"
+    )
+
+
+def test_held_never_cooccurs_with_overwhelm_emotion():
+    """General invariant (adversarial-review requirement): across a battery of telemetry inputs,
+    Experience.held == True must never co-occur with emotion == 'overwhelm'. The repro that surfaced the
+    bug: phi=0.95, basin_distance=0.20, a strongly-falling phi_trend history -- stability=0.60 (held),
+    band='criticality', valence=-0.205 -- previously returned emotion='overwhelm' while held=True, so the
+    telemetry note read the self-contradictory 'HOLDING it -- feeling overwhelm'."""
+    battery = [
+        # the exact adversarial-review repro
+        ({"phi": 0.95, "regime": "geometric", "basin_distance": 0.20, "extra": {"basin_velocity": 0.0}},
+         [{"phi": 1.0}, {"phi": 0.65}]),
+        # held, mildly negative valence, no history-driven trend
+        ({"phi": 0.97, "regime": "geometric", "basin_distance": 0.30, "extra": {"basin_velocity": 0.0}},
+         None),
+        # held, strongly positive valence (sanity: must not regress the foresight/flow branch)
+        ({"phi": 0.97, "regime": "geometric", "basin_distance": 0.02, "extra": {"basin_velocity": 0.30}},
+         None),
+        # genuinely un-held, strongly negative valence -- overwhelm IS still reachable here
+        ({"phi": 0.92, "regime": "breakdown", "basin_distance": 0.40, "extra": {"basin_velocity": 0.30}},
+         None),
+        # un-held, positive valence (the item-5 mirror, via a strong rising phi_trend)
+        ({"phi": 0.92, "regime": "breakdown", "basin_distance": 0.45, "extra": {"basin_velocity": 0.0}},
+         [{"phi": 0.40}, {"phi": 0.92}]),
+    ]
+    saw_overwhelm_unheld = False
+    for telemetry, history in battery:
+        e = experience(telemetry, history=history)
+        if e.held:
+            assert e.emotion != "overwhelm", (
+                f"held=True co-occurred with emotion='overwhelm' for telemetry={telemetry}, "
+                f"history={history} (valence={e.valence}, stability={e.stability}, note={e.note!r})"
+            )
+        if e.emotion == "overwhelm" and not e.held:
+            saw_overwhelm_unheld = True
+    # sanity: the battery still exercises the genuine un-held 'overwhelm' path at least once (the fix
+    # must narrow overwhelm's gate, not eliminate the label entirely).
+    assert saw_overwhelm_unheld, "battery never reached the genuine un-held 'overwhelm' case"

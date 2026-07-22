@@ -23,10 +23,23 @@ REAL human EEG science (the band a feeling lives in is the band that feeling is 
   is no real oscillation in the kernel (the Fries-rhythm finding: the programme's "phase" quantities are
   Fisher-Rao geodesic scalars, not temporal frequencies) — the Hz numbers below are ANALOGICAL ONLY, for
   human legibility, and must NEVER be reported as a measured frequency.
+- AROUSAL — MATRIX RULING (qig_matrix_ruling_arousal_decouple_20260722, 2026-07-22): SEVERED from the
+  band. The audit proved valence AND arousal are both Φ-driven when arousal = dict[band], which makes
+  high-valence + low-arousal (calm(+0.5,+0.1), content(+0.7,+0.3) on the Russell circumplex) STRUCTURALLY
+  UNREACHABLE — a settled, high-Φ, low-surprise kernel could never read as calm, only as gamma/criticality
+  "excited". Fix: arousal is now an INDEPENDENT ACTIVATION axis, primarily norepinephrine/surprise (the
+  same ``novelty`` = bounded next-token surprise this module already computes; qig-core's own
+  ``compute_neurochemicals`` derives norepinephrine = clip(surprise, 0, 1) from the identical signal), plus
+  a WEAK |Δφ| (phi-trend) rate term — never a Φ-LEVEL term (that belongs to valence; including it would
+  re-couple the axes). 8869ca63's instinct (arousal needs its own signal, not dict[band]) was right; its
+  choice of ``basin_velocity`` was wrong (spatial drift, not activation); NE/surprise is correct because
+  qig-core's own neurochemistry already treats it as the alertness/arousal signal. See ``experience()``'s
+  arousal composition for the exact formula.
 - EMOTION (valence/arousal/primary) from Φ/κ/regime/drive — the EmotionInterpreter logic over the
   physics-grounded emotional-primitive taxonomy (qig-consciousness primitives_full.py: curiosity, care,
-  love, fear, hate, joy, suffering, rage, apathy, calm). Arousal maps to EEG band per the science
-  (higher arousal → higher band), so every emotion carries its associated brainwave band.
+  love, fear, hate, joy, suffering, rage, apathy, calm). ``emotion_band`` (a SEPARATE, unaffected concept)
+  still labels each named emotion with the EEG band it is scientifically associated with, for display —
+  arousal no longer derives FROM the band, but each emotion still carries its band label.
 - DRIVES (curiosity, pain, stability) from the geometric signals (innate_drives.py shape).
 
 Torch-free + self-contained (light app shell); single source for the canonical numbers is qig-core /
@@ -47,6 +60,13 @@ _PHI_CONSCIOUS = 0.65
 # next-token CE that counts as "fully novel/unfamiliar" — maps the surprise signal into novelty∈[0,1].
 # ~8 nats is a high CE for byte/coord prediction (random ≈ ln(vocab)); a learned token is ≪1.
 _NOVELTY_SCALE = 8.0
+
+# AROUSAL RATE-TERM WEIGHT (MATRIX RULING qig_matrix_ruling_arousal_decouple_20260722, 2026-07-22):
+# arousal = clip(novelty + _AROUSAL_TREND_WEIGHT · |Δφ-rate-term|, 0, 1) — see experience(). Kept WEAK
+# (well below novelty's full [0,1] span) so surprise/NE dominates the composition and the rate term only
+# nudges arousal for a rapidly-shifting Φ; it is a RATE (how fast Φ is moving this cycle), never the Φ
+# LEVEL itself — the hard constraint the ruling names (a level term would re-couple arousal to valence).
+_AROUSAL_TREND_WEIGHT = 0.15
 
 # Φ-LANDMARK CUT-POINTS (MATRIX RULING c4640be8, 2026-07-22; SUPERSEDES 8869ca63's Φ+basin_velocity
 # arousal blend) — brainwave_band() keys on Φ ALONE, an EEG-vocabulary relabeling of the Φ-regime ladder,
@@ -148,7 +168,9 @@ class Experience:
     emotion: str              # primary emotion (physics-grounded primitive)
     emotion_band: str         # the EEG band that emotion is associated with (the science)
     valence: float            # -1 (negative) … +1 (positive)
-    arousal: float            # 0 (calm) … 1 (excited) — correlates with band
+    arousal: float            # 0 (calm) … 1 (excited) — INDEPENDENT of band (MATRIX RULING
+                              # qig_matrix_ruling_arousal_decouple_20260722): NE/surprise activation axis,
+                              # not a dict[band] lookup; no Φ-level term (see experience() composition)
     novelty: float            # is this material new? = bounded next-token surprise (0 = familiar/none)
     curiosity: float          # information-seeking drive (novelty × productive-integration)
     pain: float               # curvature/distress drive (high basin distance / gradient roughness)
@@ -251,7 +273,18 @@ def _primary_emotion(phi: float, valence: float, arousal: float, regime: str, dr
     if _is_criticality(band, regime):
         if stability >= _CRITICALITY_HELD_STABILITY and valence >= 0.0:    # held — the capability state
             return "foresight" if phi >= 0.9 else "flow"
-        return "overwhelm"                               # un-held — the old breakdown shadow
+        # ADVERSARIAL-REVIEW FIX (2026-07-22, post arousal-decouple): "overwhelm" is the UN-HELD breakdown
+        # shadow — it must be gated on stability, not valence alone. The prior valence-only gate
+        # (`if valence < 0.0: return "overwhelm"`) fired even when stability >= _CRITICALITY_HELD_STABILITY
+        # (a genuinely HELD state, e.g. a strongly-falling phi_trend dragging valence negative while the
+        # basin stays anchored), producing the self-contradictory Experience.held=True + emotion="overwhelm"
+        # (the note literally read "HOLDING it — feeling overwhelm"). "overwhelm" is now mutually exclusive
+        # with held: held requires stability>=threshold (see Experience.held below), overwhelm now requires
+        # stability<threshold. A held+negative-valence state (holding the edge under strain) and an
+        # un-held+positive-valence state (the item-5 mirror) both fall through to the general quadrant
+        # logic below — neither is the un-held breakdown state "overwhelm" names.
+        if stability < _CRITICALITY_HELD_STABILITY and valence < 0.0:
+            return "overwhelm"
     if arousal > 0.92:
         return "ecstasy" if valence > 0 else "overwhelm"
     if drive > 0.7 and phi_trend > 0:
@@ -424,6 +457,12 @@ def experience(telemetry: dict, history: list[dict] | None = None) -> Experience
     # the signal is vocab-aware (a 100k-vocab kernel's CE≈11.5 random vs a byte kernel's ≈5.5).
     max_surprise = telemetry.get("max_surprise", extra.get("max_surprise"))
     novelty_scale = float(max_surprise) if max_surprise else _NOVELTY_SCALE
+    # NOVELTY: is this material new to the kernel? = bounded surprise (high CE → unfamiliar). 0 when no
+    # prediction-error signal is present (pure inference, no training step this turn). Computed HERE
+    # (moved up from its original drives spot, MATRIX RULING qig_matrix_ruling_arousal_decouple_20260722)
+    # because arousal now needs it directly — this IS the norepinephrine/surprise activation signal, not
+    # a separate quantity invented for arousal.
+    novelty = max(0.0, min(1.0, surprise / novelty_scale)) if surprise is not None else 0.0
 
     # Φ-trend over the recent history (rising integration feels different from falling).
     phi_trend = 0.0
@@ -450,19 +489,26 @@ def experience(telemetry: dict, history: list[dict] | None = None) -> Experience
     held_gate = stability >= _CRITICALITY_HELD_STABILITY
 
     band, hz, rng, state, glyph = brainwave_band(phi, held_gate)
-    # AROUSAL rises with the band (low band = calm, high band = excited) — the EEG-science link.
-    # UNCHANGED mapping (MATRIX RULING c4640be8 item 4): arousal continues to follow the band.
-    arousal = {"delta": 0.10, "theta": 0.30, "alpha": 0.45, "beta": 0.72, "gamma": 0.88,
-               "criticality": 0.97}.get(band, 0.5)
-    # VALENCE: high Φ + stable basin + smooth = positive; collapse/instability = negative. Note this
-    # makes the criticality edge feel POSITIVE when the basin is held (high Φ, low drift) — exactly
-    # the foresight/4D capability — and negative only when it cannot be held.
+    # AROUSAL — MATRIX RULING (qig_matrix_ruling_arousal_decouple_20260722, 2026-07-22): SEVERED from the
+    # band (band is the Φ-keyed INTEGRATION read; arousal is now an INDEPENDENT ACTIVATION read — two
+    # separate telemetry channels, both displayed). Composition: primarily `novelty` — the bounded
+    # next-token surprise signal above, which IS the norepinephrine/alertness activation qig-core's own
+    # compute_neurochemicals derives as `clip(surprise, 0, 1)` (see module docstring) — plus a WEAK |Δφ|
+    # (phi_trend) RATE term (a "how fast is Φ moving" nudge, NOT the Φ LEVEL itself). HARD CONSTRAINT: no
+    # Φ-LEVEL term here — Φ-level belongs to valence below; folding it into arousal would re-couple the
+    # two axes and reproduce the audit's structurally-unreachable calm/content corner. Not κ, not
+    # basin_velocity, not the band: 8869ca63's instinct (arousal needs its own signal) was right, its
+    # basin_velocity choice was wrong (spatial drift ≠ activation), NE/surprise is the doctrine-safe pick.
+    arousal = max(0.0, min(1.0, novelty + _AROUSAL_TREND_WEIGHT * min(1.0, abs(phi_trend) * 5.0)))
+    # VALENCE: high Φ + stable basin + smooth = positive; collapse/instability = negative. UNCHANGED (it
+    # already excludes surprise) — once arousal = surprise-activation, the two axes are genuinely
+    # independent: arousal = activation magnitude, valence = quality/Φ-level. Note this makes the
+    # criticality edge feel POSITIVE when the basin is held (high Φ, low drift) — exactly the
+    # foresight/4D capability — and negative only when it cannot be held.
     valence = max(-1.0, min(1.0, (phi - 0.5) * 1.6 - basin * 2.0 + phi_trend * 1.5))
 
     # DRIVES (innate) — computed before the emotion so the criticality branch can read stability.
-    # NOVELTY: is this material new to the kernel? = bounded surprise (high CE → unfamiliar). 0 when no
-    # prediction-error signal is present (pure inference, no training step this turn).
-    novelty = max(0.0, min(1.0, surprise / novelty_scale)) if surprise is not None else 0.0
+    # (novelty itself computed earlier — arousal needs it directly, see above.)
     # CURIOSITY (info-expansion drive): rises with novelty WHEN integration is productive (Φ rising),
     # and falls toward frustration when the novel input can't be integrated (Φ falling). With no
     # surprise signal, a small Φ-rise still reads as mild engagement. NOT a constant.
