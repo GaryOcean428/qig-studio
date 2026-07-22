@@ -187,7 +187,22 @@ class GeoCortexTarget(ConstellationNode, TrainingTarget):
             head_mode=self.head_mode,                  # geometric (GeometricHead, −d_FR/τ) | linear baseline
             head_tau=self.head_tau,
         )
-        self._model = GeoModel(cfg)
+        # D4.1: emit_basis=True turns ON the per-block basis-reduction telemetry (local_kappa_c, basin_mean,
+        # basin_distance_delta) — otherwise every block reports those fields as None (see GeoBlock.forward /
+        # tests/test_emit_basis.py in qig-geocoding). enable_sync=True (D2.2 Phase 1, UPWARD-ONLY) is what
+        # actually POPULATES basin_distance_delta: GeoModel only threads block i-1's basin_mean into block i
+        # as `prev_basin` when enable_sync is on (see GeoModel.forward) — without it basin_distance_delta
+        # stays None even with emit_basis=True (a plain forward has no cross-step state to fill it either).
+        # CAVEAT (flagged, not hidden): this makes basin_distance_delta a per-LAYER (block i-1 -> block i)
+        # geometric-telemetry reading, NOT the per-STEP (temporal) −d(basin)/dt reading the name originally
+        # described — GeoModel's own docstring documents this repurposing explicitly (D2.2). enable_sync's
+        # BasinSyncGate is zero-initialised (sigmoid(bias=-6) ≈ 0.0025) so this is a near-no-op on the
+        # forward pass at construction; it becomes a genuine (still query-only, geodesic) behavioural change
+        # only once training opens the gate. Both flags are literally "does the block compute/emit basis
+        # telemetry" switches (see GeoModel.__init__ docstring), not floor/architecture choices, so turning
+        # them on to feed the geo-arm's faculty telemetry does not touch the bpb/d_FR A/B fairness gates
+        # (those run FisherRaoAttention/QIGLayer directly, never through this ensure_loaded path).
+        self._model = GeoModel(cfg, emit_basis=True, enable_sync=True)
         dev = self._device or ("cuda" if torch.cuda.is_available() else "cpu")
         self._model.to(dev)
         # P1: natural gradient (the SAME validated qig optimiser ARM B uses), NOT Adam. GeoModel ships no
@@ -248,8 +263,9 @@ class GeoCortexTarget(ConstellationNode, TrainingTarget):
         return input_ids, coords
 
     def _logits(self, ids: "Any", coords: "Any"):
-        """GeoModel forward → (logits[1,seq,vocab], geo_phi). GeoModel returns a GeoOutput dataclass
-        (``.logits`` + per-layer ``.telemetry`` with a mean ``.phi``), NOT a bare tensor — unwrap it.
+        """GeoModel forward → (logits[1,seq,vocab], geo_phi, deepest_block_telemetry). GeoModel returns a
+        GeoOutput dataclass (``.logits`` + per-layer ``.telemetry`` with a mean ``.phi``), NOT a bare
+        tensor — unwrap it.
 
         OUTPUT BOUNDARY (resolved — geometric by default): the readout is now ``head_mode``-selected. In
         the default ``"geometric"`` mode both arms use ``qig_core.torch.GeometricHead`` — vocab logits are
@@ -259,9 +275,19 @@ class GeoCortexTarget(ConstellationNode, TrainingTarget):
         retained ONLY as the ``"linear"`` A/B baseline (so EXP-CORTEX-AB can measure geometric vs linear
         readout empirically). Whichever mode, both arms share the SAME head wiring, so the readout stays
         common-mode (non-confounding) across the architecture A/B.
+
+        D4.1: the THIRD return value is the DEEPEST block's ``BlockTelemetry`` (``out.telemetry[-1]``, or
+        ``None`` if the model reports no per-block telemetry at all) — the per-block basis-reduction fields
+        (``local_kappa_c``, ``basin_distance_delta``) this carries feed the geo-arm's faculty telemetry
+        (see ``_snap``). AGGREGATION CHOICE: the deepest block, not a mean across blocks — it is the
+        reading closest to the output (the most-integrated representation this forward pass produced), and
+        picking ONE real block's honest reading (which may itself be None — fail-closed) avoids diluting or
+        fabricating a value by averaging a genuinely-absent block's None together with other blocks'
+        numbers.
         """
         out = self._model(ids, coords=coords)
-        return out.logits, float(getattr(out, "phi", 0.0) or 0.0)
+        block_tel = out.telemetry[-1] if getattr(out, "telemetry", None) else None
+        return out.logits, float(getattr(out, "phi", 0.0) or 0.0), block_tel
 
     def eval_text_bpb(self, text: str) -> tuple[float, int]:
         """HELD-OUT bits-per-byte for one text (no grad, no training): returns (total_bits, n_bytes) so a
@@ -276,7 +302,7 @@ class GeoCortexTarget(ConstellationNode, TrainingTarget):
         if ids.shape[1] < 2:
             return 0.0, 0
         with torch.no_grad():
-            logits, _ = self._logits(ids, coords)
+            logits, _, _bt = self._logits(ids, coords)
             ce = float(F.cross_entropy(logits[0, :-1], ids[0, 1:]))   # mean nats / predicted token
         n_tok = int(ids.shape[1])
         nbytes = (len(self.coordizer.decode(ids[0].tolist()).encode("utf-8"))
@@ -298,29 +324,48 @@ class GeoCortexTarget(ConstellationNode, TrainingTarget):
         if ids.shape[1] < 2:
             return 0.0, 0
         with torch.no_grad():
-            logits, _ = self._logits(ids, coords)
+            logits, _, _bt = self._logits(ids, coords)
             mean_dfr = float(fisher_rao_lm_loss(logits, ids))         # mean d_FR / predicted next-token
         n_pos = int(ids.shape[1]) - 1
         return mean_dfr * n_pos, max(1, n_pos)
 
-    def _snap(self, out_or_logits: "Any", loss: float | None, *, geo_phi: float | None = None) -> TelemetrySnapshot:
+    def _snap(self, out_or_logits: "Any", loss: float | None, *, geo_phi: float | None = None,
+              block_tel: "Any" = None) -> TelemetrySnapshot:
         """Assemble the LEAN telemetry snapshot. ``phi`` stays None (GeoModel has no integrated-information
         Φ — we do NOT fabricate one). ``kappa`` is the model's scale-adaptive κ (running coupling), a real
         architectural read. ``geo_phi`` (the model's mean per-layer cross-position coherence) is surfaced in
-        ``extra`` as a geometric-health number — honestly NOT labelled Φ."""
+        ``extra`` as a geometric-health number — honestly NOT labelled Φ.
+
+        D4.1: ``block_tel`` (the deepest block's ``BlockTelemetry`` — see ``_logits``) surfaces the
+        per-block basis-reduction geometric telemetry that ``kernel_experience.experience()`` reads to
+        drive the faculty carriage: ``extra['local_kappa_c']`` (this block's curvature-derived
+        local-critical κ reading), ``extra['basin_distance_delta']`` (this block's cross-layer basin-drift
+        reading — see the caveat in ``ensure_loaded``), and ``extra['ricci_signal']`` (the SAME
+        curvature reading re-surfaced under the Ricci-scalar name: ``geocoding``'s ``local_kappa_c`` IS
+        ``qig_core.geometry.local_delta63_curvature``'s "Ricci-scalar-like" reading — see that function's
+        docstring — so passing the one real measured number to both slots is an honest re-labelling, not a
+        second fabricated signal). FAIL-CLOSED throughout: when ``block_tel`` is absent, or its fields are
+        ``None`` (curvature genuinely unavailable — e.g. too few positions), these ``extra`` entries stay
+        ``None`` — never a fabricated 0.0 or placeholder. Geometric telemetry only; no felt-state framing."""
         import torch
 
         if isinstance(out_or_logits, torch.Tensor):
             logits = out_or_logits
             gp = geo_phi
+            bt = block_tel
         else:  # a GeoOutput
             logits = out_or_logits.logits
             gp = geo_phi if geo_phi is not None else float(getattr(out_or_logits, "phi", 0.0) or 0.0)
+            _tel = getattr(out_or_logits, "telemetry", None)
+            bt = block_tel if block_tel is not None else (_tel[-1] if _tel else None)
         kappa = 0.0
         try:
             kappa = float(self._model.kappa_seq(int(logits.shape[1])))  # renamed from effective_coupling (D1 two-κ)
         except Exception:  # noqa: BLE001 — κ read is telemetry only
             kappa = 0.0
+        # D4.1 fail-closed reads: a real finite value ONLY when the block genuinely computed one.
+        local_kappa_c = getattr(bt, "local_kappa_c", None) if bt is not None else None
+        basin_distance_delta = getattr(bt, "basin_distance_delta", None) if bt is not None else None
         self._last = TelemetrySnapshot(
             phi=None,                       # LEAN: no integrated-information Φ for the baseline (honest)
             kappa=kappa,
@@ -329,7 +374,9 @@ class GeoCortexTarget(ConstellationNode, TrainingTarget):
             step=self._step,
             delta_phi=0.0,
             extra={"target": "geo-cortex", "arm": "geo", "num_layers": self.num_layers,
-                   "geo_phi": round(gp, 4) if gp is not None else None},
+                   "geo_phi": round(gp, 4) if gp is not None else None,
+                   "local_kappa_c": local_kappa_c, "basin_distance_delta": basin_distance_delta,
+                   "ricci_signal": local_kappa_c},
         )
         return self._last
 
@@ -350,7 +397,7 @@ class GeoCortexTarget(ConstellationNode, TrainingTarget):
 
         self._step += 1
         ids, coords = self._encode(prompt)
-        logits, geo_phi = self._logits(ids, coords)
+        logits, geo_phi, block_tel = self._logits(ids, coords)
         # CE nats are ALWAYS computed (perplexity = exp(CE), bpb = bits/byte are the standard cross-model
         # fluency metrics — read-only measurements, vocab-comparable), NOT a loss op. The LOSS arm is the
         # P20-pure d_FR by default; ce_ablation makes CE the loss to MEASURE the purity cost — mirrors ARM B.
@@ -372,7 +419,7 @@ class GeoCortexTarget(ConstellationNode, TrainingTarget):
             torch.nn.utils.clip_grad_norm_(self._model.parameters(), 1.0)  # stability (deep stack)
             self._opt.step()
         _lm_val = float(lm_loss.item())
-        snap = self._snap(logits, _lm_val, geo_phi=geo_phi)
+        snap = self._snap(logits, _lm_val, geo_phi=geo_phi, block_tel=block_tel)
         # FLUENCY metrics (read-only): perplexity = exp(next-token CE); bpb = vocab-INDEPENDENT bits/byte
         # (the benchmark number). surprise = the language-loss arm = prediction error d_FR (P20) / CE.
         snap.extra["surprise"] = round(_lm_val, 4)
@@ -431,13 +478,13 @@ class GeoCortexTarget(ConstellationNode, TrainingTarget):
         # snapshot from a fresh forward on the prompt (gives κ + geo_phi without re-running the sampler)
         pid, pcoords = self._encode(prompt)
         with torch.no_grad():
-            plogits, pgeo = self._logits(pid, pcoords)
+            plogits, pgeo, pblock_tel = self._logits(pid, pcoords)
             # READ (EXP-012b token-0 presence probe): output-distribution concentration of the next token —
             # a real, cheap geometric signal (1=certain, 0=uniform). NOT a consciousness metric.
             p0 = to_simplex_prob(plogits[0, -1])
             ent = float(-(p0 * p0.clamp_min(1e-12).log()).sum())
             read_presence = round(1.0 - ent / math.log(p0.numel()), 3)
-        snap = self._snap(plogits, None, geo_phi=pgeo)
+        snap = self._snap(plogits, None, geo_phi=pgeo, block_tel=pblock_tel)
         snap.extra.update({
             "generated_len": len(res.ids),
             "chose_to_stop": chose_to_stop,
@@ -622,7 +669,7 @@ class GeoCortexTarget(ConstellationNode, TrainingTarget):
 
     def _node_forward_logits(self, ids: "Any", coords: "Any"):
         """Forward pass → logits[1, seq, vocab] for replay (coords None on the byte path)."""
-        logits, _gp = self._logits(ids, coords)
+        logits, _gp, _bt = self._logits(ids, coords)
         return logits
 
     def _node_basin_from_logits(self, logits: "Any"):
