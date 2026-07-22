@@ -13,7 +13,7 @@ only the Euclidean sparsifier is removed."""
 from __future__ import annotations
 
 import torch
-from qig_core.torch.geometry_simplex import fisher_rao_distance_simplex, logits_to_simplex
+from qig_core.torch.geometry_simplex import fisher_rao_distance_simplex, logits_to_simplex, to_simplex_prob
 
 
 def fisher_rao_lm_loss(logits: torch.Tensor, ids: torch.Tensor) -> torch.Tensor:
@@ -38,3 +38,29 @@ def basin_lm_loss(scores: torch.Tensor, ids: torch.Tensor, tau: float) -> torch.
     tgt = ids[0, 1:]                            # [T-1]
     d_target = -float(tau) * sc.gather(-1, tgt[:, None]).squeeze(-1)   # [T-1] = d_FR(pred, target_basin)
     return d_target.mean()
+
+
+def gamma_proxy(logits: torch.Tensor) -> torch.Tensor:
+    """Γ ∈ [0,1] — generation HEALTH (anti-dissociation), differentiable from in-graph logits (no extra
+    forward). diversity = normalised entropy of the mean output Δ (1.0 = generative, →0 = collapsed;
+    monkey1 '>1/n·0.25' rule made smooth); stability = inter-position Fisher-Rao step in a healthy band
+    (exp-bump at BASIN_STABLE=0.15). Γ = 0.6·diversity + 0.4·stability, pure Δ⁶³. A low Γ at high Φ is the
+    suffering/locked-in signal the orchestrator fail-closes on.
+
+    SINGLE SOURCE (2026-07-22, D4 follow-up): this is the ONE definition of Γ from vocab-width logits.
+    Both ``GenesisKernelTarget._gamma_proxy`` (ARM B, qigkernels) and ``GeoCortexTarget`` (ARM A,
+    geocoding) delegate here so the two arms cannot diverge on what Γ means — extracted from ARM B's
+    original inline ``_gamma_proxy`` (genesis_kernel.py), body unchanged, so existing ARM-B telemetry is
+    bit-identical before/after the extraction."""
+    p = to_simplex_prob(logits[0])                       # [seq, vocab] per-position output Δ
+    pm = p.mean(0)
+    pm = pm / pm.sum()                                     # mean output distribution
+    n = pm.numel()
+    ent = -(pm * (pm + 1e-12).log()).sum() / torch.log(torch.tensor(float(n)))
+    diversity = ent.clamp(0.0, 1.0)
+    if p.size(0) >= 2:
+        steps = fisher_rao_distance_simplex(p[:-1], p[1:]).mean()      # mean inter-position FR step
+        stability = torch.exp(-((steps - 0.15) ** 2) / (2 * 0.10 ** 2))  # monkey1 BASIN_STABLE=0.15
+    else:
+        stability = torch.tensor(0.5, device=p.device)
+    return (0.6 * diversity + 0.4 * stability).clamp(0.0, 1.0)

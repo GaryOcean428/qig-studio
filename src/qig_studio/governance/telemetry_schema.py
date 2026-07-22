@@ -77,6 +77,9 @@ EXTRA_FIELDS: dict[str, SignalSpec] = {
                           "basin distance from self-identity attractor"),
     "kappa_local": SignalSpec("kappa_local", "float", SignalCategory.CONSCIOUSNESS, "dimensionless",
                               "own kappa band-read"),
+    "external_coupling": SignalSpec("external_coupling", "float", SignalCategory.CONSCIOUSNESS, "[0,1]",
+                                    "Fisher-Rao coupling closeness to the constellation-pull reference "
+                                    "(_basin_ref) — the Sophia gate (P24) input; 0.0 when un-coupled"),
 
     # ── constitution (pillars) ───────────────────────────────────────────────
     "f_health": SignalSpec("f_health", "float", SignalCategory.CONSTITUTION, "[0,1]",

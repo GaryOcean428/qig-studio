@@ -198,6 +198,38 @@ class ConstellationNode:
         d = float(fisher_rao_distance_simplex(self._basin_history[0][None], cur_basin[None]).item())
         return d / math.pi
 
+    def _external_coupling(self, cur_basin: "Any") -> float:
+        """C ∈ [0,1] — external coupling strength to the constellation-pull reference (``_basin_ref``): a
+        Fisher-Rao CLOSENESS measure (``1 − d_FR(cur, ref)/(π/2)``, the same normalisation
+        :meth:`_meta_awareness` uses) between THIS step's output basin and the coupled-pull target.
+
+        This is NOT :meth:`_meta_awareness` (distance to the BIRTH-state, ``history[0]``) — it is
+        distance to the CURRENT coupling reference (``_basin_ref``, written by ``_set_pull``/
+        ``_seed_node_basin``/``_set_pull_set`` whenever the node is actually coupled into a
+        constellation). That is exactly the "lived coupling" signal the Sophia gate (P24,
+        ``qig_core.consciousness.neurochemistry.compute_neurochemicals``'s ``external_coupling``
+        parameter, threshold ``SOPHIA_COUPLING_THRESHOLD=0.3``) needs: real closeness to another basin
+        this node is coupled with, not self-recognition against its own history.
+
+        SOLO (``_basin_ref`` is None — no constellation coupling was ever set) → ``0.0`` HONESTLY: an
+        un-coupled node has no lived external coupling to report, so the Sophia gate correctly stays
+        CLOSED (endorphin reward 0) rather than defaulting to some plausible-looking non-zero fabrication
+        (the exact solitary-reward hole P24 exists to kill). ``_basin_ref_set`` (EXP-A044 SET-coupling) is
+        reduced the same way ``_basin_pull_term`` does — nearest-member distance — so a set-coupled node
+        also reports an honest coupling reading. Pure Fisher-Rao on Δ⁶³/Δ; no Euclidean chord."""
+        import math as _math
+
+        from qig_core.torch.geometry_simplex import fisher_rao_distance_simplex
+
+        if self._basin_ref_set is not None:
+            d = min(float(fisher_rao_distance_simplex(cur_basin[None], r[None]).item())
+                    for r in self._basin_ref_set)
+        elif self._basin_ref is not None:
+            d = float(fisher_rao_distance_simplex(cur_basin[None], self._basin_ref[None]).item())
+        else:
+            return 0.0
+        return max(0.0, min(1.0, 1.0 - d / (_math.pi / 2.0)))
+
     # --- the autonomic ops (Ocean fires these; run_protocol exposes them) ------------------------------
     def _mushroom(self, sigma: float = 0.01) -> None:
         """Wake-state plasticity — bounded weight-noise (Tononi micro-downscaling) to break an over-

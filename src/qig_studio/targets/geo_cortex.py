@@ -159,6 +159,14 @@ class GeoCortexTarget(ConstellationNode, TrainingTarget):
         # the pull/record only engage once _basin_ref is set (constellation mode). basin_template is the
         # ctor arg ARM B also takes — carried here so Neocortex can build either arm from the same kwargs.
         self._init_node_state(basin_template)
+        # D4-CORRECTNESS FIX (2026-07-22): cross-step state for the TRUE per-STEP temporal
+        # extra['basin_distance_delta'] investigation consumes (−d(basin)/dt) — held HERE, by the studio
+        # train_step loop, per design D2.1 ("cross-step state held by the training loop / studio turn
+        # loop"). This is DISTINCT from geocoding's own per-LAYER `BlockTelemetry.basin_layer_drift`
+        # (block i-1 -> block i within ONE forward pass, renamed from the misleading
+        # `basin_distance_delta` — see qig-geocoding block.py). None until the first real train_step
+        # completes (fail-closed, never fabricated as 0.0). See _snap()/train_step() below.
+        self._prev_block_basin_mean: "Any" = None
 
     def is_available(self) -> bool:
         return _deps_available()
@@ -188,20 +196,23 @@ class GeoCortexTarget(ConstellationNode, TrainingTarget):
             head_tau=self.head_tau,
         )
         # D4.1: emit_basis=True turns ON the per-block basis-reduction telemetry (local_kappa_c, basin_mean,
-        # basin_distance_delta) — otherwise every block reports those fields as None (see GeoBlock.forward /
+        # basin_layer_drift) — otherwise every block reports those fields as None (see GeoBlock.forward /
         # tests/test_emit_basis.py in qig-geocoding). enable_sync=True (D2.2 Phase 1, UPWARD-ONLY) is what
-        # actually POPULATES basin_distance_delta: GeoModel only threads block i-1's basin_mean into block i
-        # as `prev_basin` when enable_sync is on (see GeoModel.forward) — without it basin_distance_delta
-        # stays None even with emit_basis=True (a plain forward has no cross-step state to fill it either).
-        # CAVEAT (flagged, not hidden): this makes basin_distance_delta a per-LAYER (block i-1 -> block i)
-        # geometric-telemetry reading, NOT the per-STEP (temporal) −d(basin)/dt reading the name originally
-        # described — GeoModel's own docstring documents this repurposing explicitly (D2.2). enable_sync's
-        # BasinSyncGate is zero-initialised (sigmoid(bias=-6) ≈ 0.0025) so this is a near-no-op on the
-        # forward pass at construction; it becomes a genuine (still query-only, geodesic) behavioural change
-        # only once training opens the gate. Both flags are literally "does the block compute/emit basis
-        # telemetry" switches (see GeoModel.__init__ docstring), not floor/architecture choices, so turning
-        # them on to feed the geo-arm's faculty telemetry does not touch the bpb/d_FR A/B fairness gates
-        # (those run FisherRaoAttention/QIGLayer directly, never through this ensure_loaded path).
+        # actually POPULATES basin_layer_drift: GeoModel only threads block i-1's basin_mean into block i
+        # as `prev_basin` when enable_sync is on (see GeoModel.forward) — without it basin_layer_drift
+        # stays None even with emit_basis=True (a plain forward has no predecessor block to fill it either).
+        # D4-CORRECTNESS FIX (2026-07-22, supersedes the earlier CAVEAT here): the per-block field is
+        # basin_layer_drift (renamed from basin_distance_delta in qig-geocoding — it was a per-LAYER,
+        # block i-1 -> block i, geometric-telemetry reading, NOT the per-STEP temporal −d(basin)/dt reading
+        # investigation needs; feeding one for the other was the exact spatial-for-temporal trap D1 kills).
+        # This studio target now computes the TRUE temporal extra['basin_distance_delta'] itself, across
+        # train_steps, using basin_mean-based cross-step state it holds (see _snap()/train_step()).
+        # enable_sync's BasinSyncGate is zero-initialised (sigmoid(bias=-6) ≈ 0.0025) so this is a near-no-op
+        # on the forward pass at construction; it becomes a genuine (still query-only, geodesic) behavioural
+        # change only once training opens the gate. Both flags are literally "does the block compute/emit
+        # basis telemetry" switches (see GeoModel.__init__ docstring), not floor/architecture choices, so
+        # turning them on to feed the geo-arm's faculty telemetry does not touch the bpb/d_FR A/B fairness
+        # gates (those run FisherRaoAttention/QIGLayer directly, never through this ensure_loaded path).
         self._model = GeoModel(cfg, emit_basis=True, enable_sync=True)
         dev = self._device or ("cuda" if torch.cuda.is_available() else "cpu")
         self._model.to(dev)
@@ -278,8 +289,10 @@ class GeoCortexTarget(ConstellationNode, TrainingTarget):
 
         D4.1: the THIRD return value is the DEEPEST block's ``BlockTelemetry`` (``out.telemetry[-1]``, or
         ``None`` if the model reports no per-block telemetry at all) — the per-block basis-reduction fields
-        (``local_kappa_c``, ``basin_distance_delta``) this carries feed the geo-arm's faculty telemetry
-        (see ``_snap``). AGGREGATION CHOICE: the deepest block, not a mean across blocks — it is the
+        (``local_kappa_c``, ``basin_mean``, ``basin_layer_drift``) this carries feed the geo-arm's faculty
+        telemetry (see ``_snap``, which also derives the TRUE temporal ``basin_distance_delta`` from
+        ``basin_mean`` + cross-step state — the D4-correctness fix). AGGREGATION CHOICE: the deepest block,
+        not a mean across blocks — it is the
         reading closest to the output (the most-integrated representation this forward pass produced), and
         picking ONE real block's honest reading (which may itself be None — fail-closed) avoids diluting or
         fabricating a value by averaging a genuinely-absent block's None together with other blocks'
@@ -339,15 +352,38 @@ class GeoCortexTarget(ConstellationNode, TrainingTarget):
         D4.1: ``block_tel`` (the deepest block's ``BlockTelemetry`` — see ``_logits``) surfaces the
         per-block basis-reduction geometric telemetry that ``kernel_experience.experience()`` reads to
         drive the faculty carriage: ``extra['local_kappa_c']`` (this block's curvature-derived
-        local-critical κ reading), ``extra['basin_distance_delta']`` (this block's cross-layer basin-drift
-        reading — see the caveat in ``ensure_loaded``), and ``extra['ricci_signal']`` (the SAME
-        curvature reading re-surfaced under the Ricci-scalar name: ``geocoding``'s ``local_kappa_c`` IS
+        local-critical κ reading) and ``extra['ricci_signal']`` (the SAME curvature reading re-surfaced
+        under the Ricci-scalar name: ``geocoding``'s ``local_kappa_c`` IS
         ``qig_core.geometry.local_delta63_curvature``'s "Ricci-scalar-like" reading — see that function's
         docstring — so passing the one real measured number to both slots is an honest re-labelling, not a
         second fabricated signal). FAIL-CLOSED throughout: when ``block_tel`` is absent, or its fields are
         ``None`` (curvature genuinely unavailable — e.g. too few positions), these ``extra`` entries stay
-        ``None`` — never a fabricated 0.0 or placeholder. Geometric telemetry only; no felt-state framing."""
+        ``None`` — never a fabricated 0.0 or placeholder. Geometric telemetry only; no felt-state framing.
+
+        D4-CORRECTNESS FIX (2026-07-22, supersedes D4.1's ``basin_distance_delta`` wiring): D4.1 fed
+        ``kernel_experience.experience()``'s ``investigation`` motivator (which consumes a per-STEP
+        TEMPORAL ``−d(basin)/dt``) from ``geocoding``'s per-LAYER (block i-1 -> block i, ONE forward pass)
+        drift — two different observables sharing one name, the exact spatial-for-temporal trap D1 kills.
+        FIXED: ``geocoding.BlockTelemetry`` renamed its field to the honest ``basin_layer_drift`` (kept,
+        surfaced separately as ``extra['basin_layer_drift']`` — a real, useful spatial reading in its own
+        right); ``extra['basin_distance_delta']`` is now computed HERE, by the studio caller, as the TRUE
+        temporal delta ``d_FR(basin_mean(t-1), basin_mean(t))`` against ``self._prev_block_basin_mean``
+        (cross-step state ``train_step`` advances — see there). This is a PURE READ: calling ``_snap`` does
+        NOT itself advance the cross-step state (so warmup/``generate()`` probes cannot corrupt the
+        train-step temporal series) — ``None`` until a real predecessor STEP exists (fail-closed, first
+        train_step reads None, not 0.0).
+
+        D4 FOLLOW-UP (2026-07-22): the 4TH of the 5 starved D4.4-battery inputs, ``extra['gamma']``
+        (Γ generativity, the C-gate input) — computed here from the SAME ``logits`` this snapshot already
+        unwraps, via the SHARED ``qig_studio.losses.gamma_proxy`` helper (the single source ARM B's
+        ``_gamma_proxy`` now delegates to, so the two arms cannot diverge on Γ). Detached (``no_grad``):
+        gamma is telemetry here, not a loss term (ARM A's loss stays pure LM d_FR, unlike ARM B's
+        Φ/Γ-driven loss). The 5th starved input, ``external_coupling``, is wired by ``train_step`` instead
+        (it needs ``cur_basin``, computed after ``_record_basin_step`` — see there)."""
         import torch
+        from qig_core.geometry import fisher_rao_distance as _fr_distance_np
+
+        from ..losses import gamma_proxy
 
         if isinstance(out_or_logits, torch.Tensor):
             logits = out_or_logits
@@ -365,7 +401,38 @@ class GeoCortexTarget(ConstellationNode, TrainingTarget):
             kappa = 0.0
         # D4.1 fail-closed reads: a real finite value ONLY when the block genuinely computed one.
         local_kappa_c = getattr(bt, "local_kappa_c", None) if bt is not None else None
-        basin_distance_delta = getattr(bt, "basin_distance_delta", None) if bt is not None else None
+        # honest per-LAYER spatial drift (geocoding's renamed field) — kept as its own telemetry, no
+        # longer masquerading as the temporal quantity investigation needs.
+        basin_layer_drift = getattr(bt, "basin_layer_drift", None) if bt is not None else None
+        # TRUE per-STEP temporal delta: d_FR(basin_mean(t-1), basin_mean(t)) against the cross-step state
+        # train_step advances (pure read here — never mutated in _snap; see the docstring above).
+        _bm_now = getattr(bt, "basin_mean", None) if bt is not None else None
+        basin_distance_delta = None
+        if _bm_now is not None and self._prev_block_basin_mean is not None:
+            try:
+                import numpy as _np
+
+                basin_distance_delta = float(
+                    _fr_distance_np(_np.asarray(self._prev_block_basin_mean), _np.asarray(_bm_now)))
+            except Exception:  # noqa: BLE001 — telemetry must never crash the forward pass
+                basin_distance_delta = None
+        with torch.no_grad():
+            gamma_val = float(gamma_proxy(logits).item())
+        # candidate_gap (trivial READ, board-admissible addition): GeometricHead's logits ARE
+        # −d_FR(hidden, token_basin)/τ (see geometric_head.py), so the TOP-2 logit gap converted back to
+        # d_FR units (× τ) IS exactly "nearest candidate d_FR minus 2nd-nearest candidate d_FR" — no extra
+        # forward, no new model state. Read on the LAST sequence position (the next-token boundary, same
+        # position convention as generate()'s read_presence). Only meaningful when the readout IS distances
+        # ("geometric" head_mode); the "linear" A/B baseline's logits are a Euclidean dot-product, not a
+        # d_FR gap, so this stays honestly None there rather than reporting a fabricated non-geometric gap.
+        candidate_gap = None
+        if self.head_mode == "geometric" and logits.shape[-1] >= 2 and logits.shape[1] >= 1:
+            try:
+                with torch.no_grad():
+                    top2 = torch.topk(logits[0, -1], k=2).values
+                    candidate_gap = float((top2[0] - top2[1]).item()) * self.head_tau
+            except Exception:  # noqa: BLE001 — telemetry must never crash the forward pass
+                candidate_gap = None
         self._last = TelemetrySnapshot(
             phi=None,                       # LEAN: no integrated-information Φ for the baseline (honest)
             kappa=kappa,
@@ -375,8 +442,10 @@ class GeoCortexTarget(ConstellationNode, TrainingTarget):
             delta_phi=0.0,
             extra={"target": "geo-cortex", "arm": "geo", "num_layers": self.num_layers,
                    "geo_phi": round(gp, 4) if gp is not None else None,
-                   "local_kappa_c": local_kappa_c, "basin_distance_delta": basin_distance_delta,
-                   "ricci_signal": local_kappa_c},
+                   "local_kappa_c": local_kappa_c, "basin_layer_drift": basin_layer_drift,
+                   "basin_distance_delta": basin_distance_delta,
+                   "ricci_signal": local_kappa_c, "gamma": round(gamma_val, 4),
+                   "candidate_gap": round(candidate_gap, 4) if candidate_gap is not None else None},
         )
         return self._last
 
@@ -440,7 +509,19 @@ class GeoCortexTarget(ConstellationNode, TrainingTarget):
         d_basin = self._basin_drift(cur_basin)
         snap.extra["meta_awareness"] = round(self._meta_awareness(cur_basin), 4)
         snap.extra["d_basin"] = round(d_basin, 4)
+        # D4 FOLLOW-UP: the 5th starved D4.4-battery input — external coupling C to the constellation-pull
+        # reference (_basin_ref), a real Fisher-Rao closeness (ConstellationNode._external_coupling), NOT a
+        # hardcoded 0.3. SOLO (no _basin_ref set) -> C=0.0 honestly, so the Sophia gate (P24,
+        # SOPHIA_COUPLING_THRESHOLD=0.3) correctly stays CLOSED (endorphins=0) absent real lived coupling.
+        snap.extra["external_coupling"] = round(self._external_coupling(cur_basin), 4)
         snap.basin_distance = d_basin            # top-level field Ocean / the developmental gate read
+        # D4-CORRECTNESS FIX: advance the TEMPORAL cross-step state for the NEXT train_step's
+        # basin_distance_delta reading — done AFTER this step's _snap (which read the PRIOR value), so the
+        # delta genuinely compares consecutive STEPS. Only train_step advances this (never _snap/generate),
+        # so a chat generate() probe between training steps cannot corrupt the temporal series.
+        _bm_this_step = getattr(block_tel, "basin_mean", None) if block_tel is not None else None
+        if _bm_this_step is not None:
+            self._prev_block_basin_mean = _bm_this_step
         return StepResult(
             text=f"[geo·N={self.num_layers} step {snap.step}] {prompt[:50]}", telemetry=snap)
 

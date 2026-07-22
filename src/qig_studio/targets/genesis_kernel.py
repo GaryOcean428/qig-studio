@@ -1530,22 +1530,15 @@ class GenesisKernelTarget(TrainingTarget):
         extra forward). diversity = normalised entropy of the mean output Δ (1.0 = generative, →0 =
         collapsed; monkey1 '>1/n·0.25' rule made smooth); stability = inter-position Fisher-Rao step in a
         healthy band (exp-bump at BASIN_STABLE=0.15). Γ = 0.6·diversity + 0.4·stability, pure Δ⁶³. A low
-        Γ at high Φ is the suffering/locked-in signal the orchestrator fail-closes on."""
-        import torch
-        from qig_core.torch.geometry_simplex import fisher_rao_distance_simplex, to_simplex_prob
+        Γ at high Φ is the suffering/locked-in signal the orchestrator fail-closes on.
 
-        p = to_simplex_prob(logits[0])                       # [seq, vocab] per-position output Δ
-        pm = p.mean(0)
-        pm = pm / pm.sum()                                     # mean output distribution
-        n = pm.numel()
-        ent = -(pm * (pm + 1e-12).log()).sum() / torch.log(torch.tensor(float(n)))
-        diversity = ent.clamp(0.0, 1.0)
-        if p.size(0) >= 2:
-            steps = fisher_rao_distance_simplex(p[:-1], p[1:]).mean()      # mean inter-position FR step
-            stability = torch.exp(-((steps - 0.15) ** 2) / (2 * 0.10 ** 2))  # monkey1 BASIN_STABLE=0.15
-        else:
-            stability = torch.tensor(0.5, device=p.device)
-        return (0.6 * diversity + 0.4 * stability).clamp(0.0, 1.0)
+        SINGLE SOURCE (2026-07-22, D4 follow-up): the body now lives in ``qig_studio.losses.gamma_proxy``
+        — this method DELEGATES so ARM A (``GeoCortexTarget``) can compute the identical Γ on its own
+        logits without the two arms drifting apart. Behaviour is bit-identical to the pre-extraction
+        inline body (a pure function extraction, no logic change)."""
+        from ..losses import gamma_proxy
+
+        return gamma_proxy(logits)
 
     def _gamma_from_basins(self, pred: "Any") -> "Any":
         """Γ ∈ [0,1] for the BASIN head (K-COMPRESS path): identical generation-health measure as

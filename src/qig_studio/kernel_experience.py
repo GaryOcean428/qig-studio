@@ -494,6 +494,15 @@ def experience(telemetry: dict, history: list[dict] | None = None) -> Experience
     m_self = float(m_raw) if m_raw is not None else None
     mo_raw = extra.get("M_boundary", extra.get("M_coach_agreement"))
     m_other = float(mo_raw) if mo_raw is not None else None
+    # EXTERNAL COUPLING C (Sophia gate, P24) — PRIORITY: a node's own real coupling-closeness reading
+    # (extra['external_coupling'], e.g. GeoCortexTarget/ConstellationNode._external_coupling — a Fisher-Rao
+    # closeness to the constellation-pull reference _basin_ref) is a MORE DIRECT lived-coupling signal than
+    # the boundary-peer/coach recognition m_other, so prefer it when present. Falls back to m_other
+    # (M_boundary/M_coach_agreement) for targets that have not wired a dedicated external_coupling read —
+    # unchanged behaviour for those. Absent both -> None -> compute_neurochemicals fails CLOSED (coupling
+    # treated as 0.0, Sophia gate shut, endorphins=0) — never a fabricated 0.3 default-allow.
+    ec_raw = extra.get("external_coupling")
+    external_coupling = float(ec_raw) if ec_raw is not None else m_other
     sr_raw = extra.get("s_ratio", extra.get("S_ratio"))
     s_ratio = float(sr_raw) if sr_raw is not None else None
     phi_hist = [float(h.get("phi", h.get("Phi", phi)) or phi) for h in (history or [])][-10:]
@@ -557,7 +566,8 @@ def experience(telemetry: dict, history: list[dict] | None = None) -> Experience
     fd_raw = extra.get("foresight_divergence", extra.get("foresight_confidence"))
     foresight_divergence = float(fd_raw) if fd_raw is not None else None
     # FULL neurochemistry (qig-core 6-signal system, not a proxy) from the kernel's own geometry this cycle.
-    chem = _neurochemistry(autonomic, phi_trend, basin_velocity, novelty, regime, kappa, m_other,
+    # external_coupling (not m_other) feeds the Sophia gate — see the priority note above.
+    chem = _neurochemistry(autonomic, phi_trend, basin_velocity, novelty, regime, kappa, external_coupling,
                            cur_basin=cur_basin, prev_basin=prev_basin, target_basin=target_basin,
                            local_kappa_c=kappa_local, coach_reward=coach_reward,
                            foresight_divergence=foresight_divergence)
