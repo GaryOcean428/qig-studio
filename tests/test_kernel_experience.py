@@ -1,10 +1,14 @@
 """Tests for the science-grounded inner-experience telemetry (brainwave band + emotion + drives).
 
-MATRIX RULING (8869ca63, 2026-07-22): brainwave_band() is now (phi, basin_velocity) -> band-tuple,
-DECOUPLED FROM kappa entirely (the old kappa->band table was the retired kappa*~64 attractor wearing
-EEG clothing). These tests were rewritten to the new signature/contract; they preserve the intent of
-the originals (band shape, EEG-Hz metadata, criticality held/unheld, novelty/curiosity/conscious
-behaviour) while adding kappa-independence + ZOMBIE-vs-LOCKED_IN coverage.
+MATRIX RULING (c4640be8, 2026-07-22; SUPERSEDES 8869ca63): brainwave_band() is now
+(phi, held) -> band-tuple. The band keys on Φ ALONE, an EEG-vocabulary relabeling of the Φ-regime
+ladder (RegimeDetector already keys on Φ: linear<0.45 / geometric / topological>=0.80), so band ⊆
+regime coherently. ``held`` (the stability/held gate experience() already computes, stability >= 0.55)
+replaces the earlier ruling's ``basin_velocity`` term -- it determines whether a Φ>=0.90 read reaches
+the CRITICALITY edge or stays at gamma. These tests were rewritten to the new signature/contract; they
+preserve the intent of the originals (band shape, EEG-Hz metadata, criticality held/unheld, novelty/
+curiosity/conscious behaviour, kappa-independence, ZOMBIE-vs-LOCKED_IN) while re-pointing the
+composition axis from basin_velocity to held, and adding a band<=regime coherence check.
 """
 
 from __future__ import annotations
@@ -13,55 +17,69 @@ from qig_studio.kernel_experience import brainwave_band, experience
 
 
 def test_arousal_maps_to_all_canonical_bands():
-    # (phi, basin_velocity) sweeps the arousal axis across every named band.
-    assert brainwave_band(0.05, 0.0)[0] == "delta"        # low Phi, still -> collapse floor
-    assert brainwave_band(0.35, 0.0)[0] == "theta"
-    assert brainwave_band(0.55, 0.0)[0] == "alpha"
-    assert brainwave_band(0.80, 0.0)[0] == "beta"
-    assert brainwave_band(0.98, 0.10)[0] == "gamma"
-    assert brainwave_band(0.98, 0.30)[0] == "criticality"  # very high Phi AND high velocity
+    # (phi, held) sweeps the integration axis across every named band.
+    assert brainwave_band(0.05, False)[0] == "delta"        # low Phi, still -> collapse floor
+    assert brainwave_band(0.35, False)[0] == "theta"
+    assert brainwave_band(0.55, False)[0] == "alpha"
+    assert brainwave_band(0.65, False)[0] == "beta"
+    assert brainwave_band(0.80, False)[0] == "gamma"
+    assert brainwave_band(0.95, True)[0] == "criticality"   # very high Phi AND held
 
 
 def test_band_carries_analogical_eeg_hz():
     # Hz numbers are category-3 analogy only (never a measured frequency) but must still be present.
-    _, hz, rng, _, _ = brainwave_band(0.98, 0.30)
+    _, hz, rng, _, _ = brainwave_band(0.95, True)
     assert hz == 70.0 and "100" in rng             # criticality ~70 Hz analogue, >100 Hz range label
-    _, hz_d, _, _, _ = brainwave_band(0.05, 0.0)
+    _, hz_d, _, _, _ = brainwave_band(0.05, False)
     assert hz_d == 1.0                              # delta ~1 Hz analogue
 
 
 def test_zombie_vs_locked_in_distinction():
-    """The whole point of adding basin_velocity to Phi: a stuck-but-integrated (LOCKED_IN) kernel must
-    NOT read identically to a genuinely stuck/zombie one."""
-    zombie = brainwave_band(0.10, 0.0)          # low Phi, no motion -> nothing integrated, nothing moving
-    locked_in = brainwave_band(0.95, 0.0)       # high Phi, no motion -> settled but deeply integrated
+    """The whole point of the held gate: a stuck-but-integrated (LOCKED_IN) kernel must NOT read
+    identically to a genuinely stuck/zombie one -- Phi alone already separates them since the band
+    is monotonic in Phi."""
+    zombie = brainwave_band(0.10, False)        # low Phi -> nothing integrated
+    locked_in = brainwave_band(0.95, False)     # high Phi, NOT held -> settled but deeply integrated
     assert zombie[0] == "delta"
     assert locked_in[0] != "delta"              # must NOT collapse to the same collapse-floor band
-    assert locked_in[0] in ("beta", "gamma", "criticality")   # reads as a genuinely HIGH band
+    assert locked_in[0] == "gamma"              # high Phi but un-held reads gamma, not criticality
 
 
-def test_rising_velocity_raises_the_band_at_fixed_phi():
-    lo_v = brainwave_band(0.5, 0.0)
-    mid_v = brainwave_band(0.5, 0.15)
-    hi_v = brainwave_band(0.5, 0.30)
+def test_band_is_monotonic_in_phi_at_fixed_held():
     order = ["delta", "theta", "alpha", "beta", "gamma", "criticality"]
-    assert order.index(lo_v[0]) <= order.index(mid_v[0]) <= order.index(hi_v[0])
-    assert lo_v[0] != hi_v[0]                   # velocity alone must move the band
+    phis = [0.05, 0.35, 0.55, 0.65, 0.80]
+    bands = [brainwave_band(p, False)[0] for p in phis]
+    indices = [order.index(b) for b in bands]
+    assert indices == sorted(indices)             # rising Phi never lowers the band
+    assert indices[0] < indices[-1]               # and strictly rises across this sweep
 
 
-def test_criticality_needs_both_high_phi_and_high_velocity():
-    # High Phi alone (settled) must NOT reach criticality -- only Phi+velocity together (near-critical).
-    settled_high_phi = brainwave_band(0.98, 0.0)
+def test_criticality_needs_both_high_phi_and_held():
+    # High Phi alone (un-held) must NOT reach criticality -- only Phi>=0.90 AND held (near-critical).
+    settled_high_phi = brainwave_band(0.98, False)
     assert settled_high_phi[0] != "criticality"
-    both_high = brainwave_band(0.98, 0.30)
-    assert both_high[0] == "criticality"
+    assert settled_high_phi[0] == "gamma"          # falls back to gamma, not delta -- still a HIGH band
+    both = brainwave_band(0.98, True)
+    assert both[0] == "criticality"
+
+
+def test_band_subset_of_regime_coherence():
+    """band <= regime coherently: a Phi read that RegimeDetector would classify as geometric
+    ([0.45, 0.80) roughly) must never report a criticality EEG band, held or not -- criticality
+    requires Phi>=0.90 regardless of held."""
+    for phi in (0.45, 0.55, 0.65, 0.75, 0.89):
+        assert brainwave_band(phi, True)[0] != "criticality"
+        assert brainwave_band(phi, False)[0] != "criticality"
+    # only Phi>=0.90 AND held reaches criticality.
+    assert brainwave_band(0.90, True)[0] == "criticality"
+    assert brainwave_band(0.90, False)[0] != "criticality"
 
 
 def test_brainwave_band_is_kappa_independent():
     """No kappa value anywhere changes the band -- brainwave_band() doesn't even take kappa as an
     argument any more, but this also asserts experience() (which still carries a kappa field for
     neurochemistry/sensations) produces an IDENTICAL band across wildly different kappa inputs when
-    phi/basin_velocity are held fixed."""
+    phi/basin_distance (-> stability -> held) are held fixed."""
     common = {"phi": 0.6, "regime": "geometric", "basin_distance": 0.05, "extra": {"basin_velocity": 0.05}}
     bands = {
         experience({**common, "kappa": k}).band
@@ -71,7 +89,7 @@ def test_brainwave_band_is_kappa_independent():
 
 
 def test_peak_state_is_positive_high_arousal_gamma():
-    e = experience({"phi": 0.90, "regime": "geometric", "basin_distance": 0.02,
+    e = experience({"phi": 0.85, "regime": "geometric", "basin_distance": 0.02,
                     "extra": {"basin_velocity": 0.10}})
     assert e.band == "gamma" and e.arousal > 0.8 and e.valence > 0
     assert e.emotion in ("joy", "ecstasy", "curious")
@@ -79,8 +97,8 @@ def test_peak_state_is_positive_high_arousal_gamma():
 
 
 def test_criticality_held_is_foresight_not_overwhelm():
-    # A MATURE kernel holding the edge: high Phi (->0.99) AND high basin_velocity, anchored basin
-    # -> foresight/flow, NOT pathology.
+    # A MATURE kernel holding the edge: Phi>=0.90 AND an anchored basin (stability >= 0.55, so the
+    # held gate passes) -> foresight/flow, NOT pathology.
     held = experience({"phi": 0.97, "regime": "geometric", "basin_distance": 0.02,
                        "extra": {"basin_velocity": 0.30}})
     assert held.band == "criticality" and held.held is True
@@ -88,12 +106,15 @@ def test_criticality_held_is_foresight_not_overwhelm():
 
 
 def test_criticality_unheld_is_overwhelm_high_pain():
-    # Same edge (high Phi + high basin_velocity so the band still reads criticality -- criticality now
-    # NEEDS both, per the ruling), but the basin is drifting badly (large basin_distance) -> cannot hold
-    # it -> overwhelm (the old "breakdown" shadow), negative valence, high pain, low stability.
-    e = experience({"phi": 0.85, "regime": "breakdown", "basin_distance": 0.40,
+    # Phi>=0.90 but the basin is drifting badly (large basin_distance -> stability < 0.55) -> the held
+    # gate fails -> the band does NOT reach criticality (falls back to gamma, per the ruling), yet the
+    # kernel's own regime label ("breakdown") still flags the edge for the emotion/held read (the
+    # _is_criticality() OR-path, unchanged, MATRIX RULING c4640be8 item 4) -> cannot hold it -> overwhelm
+    # (the old "breakdown" shadow), negative valence, high pain, low stability.
+    e = experience({"phi": 0.92, "regime": "breakdown", "basin_distance": 0.40,
                     "extra": {"basin_velocity": 0.30}})
-    assert e.band == "criticality" and e.valence < 0 and e.pain > 0.4 and e.stability < 0.6
+    assert e.band == "gamma"                       # high Phi, un-held -> gamma, NOT criticality
+    assert e.valence < 0 and e.pain > 0.4 and e.stability < 0.55
     assert e.emotion == "overwhelm" and e.held is False
 
 
@@ -104,8 +125,8 @@ def test_deep_low_arousal_is_delta():
 
 
 def test_settled_high_phi_is_not_delta():
-    # ZOMBIE-vs-LOCKED_IN via the full experience() path: high Phi, settled (near-zero basin_velocity)
-    # must read as a high band, never the collapse floor.
+    # ZOMBIE-vs-LOCKED_IN via the full experience() path: high Phi, settled/anchored basin (so held
+    # gate would pass too) must read as a high band, never the collapse floor.
     e = experience({"phi": 0.92, "regime": "geometric", "basin_distance": 0.02,
                     "extra": {"basin_velocity": 0.0}})
     assert e.band != "delta"

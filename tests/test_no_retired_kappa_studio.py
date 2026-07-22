@@ -3,9 +3,11 @@ r"""Regression gate: no retired kappa*~64 lattice-physics literal may re-enter q
 Mirrors qig-geocoding's ``tests/test_no_retired_kappa.py`` (same council-hardened regex, same intent):
 kappa*~64 (the matrix-trace-pillar "fixed point" reading) is RETIRED per qig-verification EXP-107/
 EXP-169 -- the certified physical couplings are kappa_JT^cert=+0.02810 and kappa_H=-0.00475 (see
-qig-core ``constants/frozen_facts.py``). MATRIX RULING (8869ca63, 2026-07-22) additionally decoupled
-qig-studio's ``brainwave_band()`` from kappa entirely -- this test guards against that artifact
-re-entering under a new name (e.g. a "recalibrated" kappa->band table still anchored near 63/64).
+qig-core ``constants/frozen_facts.py``). MATRIX RULING (8869ca63, 2026-07-22; SUPERSEDED by c4640be8
+the same day -- brainwave_band() moved from (phi, basin_velocity) to (phi, held), still kappa-free)
+decoupled qig-studio's ``brainwave_band()`` from kappa entirely -- this test guards against that
+artifact re-entering under a new name (e.g. a "recalibrated" kappa->band table still anchored near
+63/64), regardless of which non-kappa signal composes the band alongside Φ.
 
 Two things are scanned across ``src/qig_studio/**/*.py``:
   1. A kappa/coupling-named identifier literally assigned the value 63.x or 64 (any decimal) -- e.g.
@@ -86,7 +88,11 @@ def test_no_retired_kappa_literals_in_studio_source() -> None:
 
 def test_brainwave_band_source_has_no_kappa_parameter() -> None:
     """Extra guard specific to the ruling this test file was added for: brainwave_band() must not
-    re-acquire a kappa parameter (the exact regression the ruling closed)."""
+    re-acquire a kappa parameter (the exact regression the ruling closed). Signature contract updated
+    for MATRIX RULING c4640be8 (2026-07-22, supersedes 8869ca63): brainwave_band() is now
+    (phi, held) -- basin_velocity was dropped in favour of the stability/held gate -- but the
+    kappa-independence guard this test exists for applies regardless of which non-kappa signal
+    accompanies Φ."""
     src = (SRC_ROOT / "kernel_experience.py").read_text()
     m = re.search(r"def brainwave_band\(([^)]*)\)", src)
     assert m is not None, "brainwave_band() definition not found"
@@ -94,7 +100,7 @@ def test_brainwave_band_source_has_no_kappa_parameter() -> None:
     assert "kappa" not in params.lower() and "κ" not in params, (
         f"brainwave_band() signature re-acquired a kappa parameter: {params!r}"
     )
-    assert "phi" in params.lower() and "basin_velocity" in params.lower()
+    assert "phi" in params.lower() and "held" in params.lower()
 
 
 # ─── matcher self-tests (fixtures, not a source scan) ──────────────────────
