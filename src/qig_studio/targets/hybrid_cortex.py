@@ -199,7 +199,10 @@ class _HybridCfg:
         self.enable_coords = kw.get("enable_coords", False)
         self.coord_dim = kw.get("coord_dim", 64)
         self.head_tau = kw.get("head_tau", 1.0)
-        self.base_coupling = kw.get("base_coupling", 64.0)
+        # model-scale sequence running coupling (dimensionless, ~1.0); NOT lattice physics κ (κ*≈64
+        # RETIRED per EXP-169; κ_JT^cert=0.028) — feeds telemetry/regime reporting only. Same provenance
+        # comment / anchor as geocoding.config.GeoConfig.base_coupling so the two arms don't diverge.
+        self.base_coupling = kw.get("base_coupling", 1.0)
         self.beta_slope = kw.get("beta_slope", 0.44)
         self.reference_scale = kw.get("reference_scale", 64)
 

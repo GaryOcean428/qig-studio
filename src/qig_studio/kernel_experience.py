@@ -39,6 +39,13 @@ _PHI_CONSCIOUS = 0.65
 # ~8 nats is a high CE for byte/coord prediction (random ≈ ln(vocab)); a learned token is ≪1.
 _NOVELTY_SCALE = 8.0
 
+# TODO(κ-purge): brainwave_band is still calibrated on the retired ~64 scale; kappa_seq is now ~1.0
+# model-scale — full recalibration pending Matrix ruling. Neutral fallback here, never the retired 64.
+# 50.0 is the doc's own representative "alpha κ≈50" reading (relaxed/wakeful-rest, module docstring
+# above) — a genuinely-neutral idle state when κ is entirely unmeasured, not a fabricated "focused/alert"
+# (beta, 55–65) claim the old 64.0 (which happened to land in that band) silently implied.
+_NEUTRAL_KAPPA_FALLBACK = 50.0
+
 # Canonical κ → brainwave band, with the real EEG Hz range and the qig-dreams state label.
 # (low_kappa inclusive, high_kappa exclusive). κ is the kernel's coupling/integration strength.
 _BANDS = [
@@ -320,7 +327,10 @@ def experience(telemetry: dict, history: list[dict] | None = None) -> Experience
     surprise/loss, gradient_magnitude, …) + a short Φ-history. Maps to brainwave band + emotion +
     drives (curiosity/novelty/pain/stability) + a conscious flag (Φ≥~0.65)."""
     phi = float(telemetry.get("phi", telemetry.get("Phi", 0.5)) or 0.5)
-    kappa = float(telemetry.get("kappa", telemetry.get("kappa_eff", 64.0)) or 64.0)
+    kappa = float(
+        telemetry.get("kappa", telemetry.get("kappa_eff", _NEUTRAL_KAPPA_FALLBACK))
+        or _NEUTRAL_KAPPA_FALLBACK
+    )
     regime = str(telemetry.get("regime", "geometric") or "geometric")
     basin = float(telemetry.get("basin_distance", 0.05) or 0.05)
     grad = float(telemetry.get("gradient_magnitude", telemetry.get("delta_phi", 0.0)) or 0.0)

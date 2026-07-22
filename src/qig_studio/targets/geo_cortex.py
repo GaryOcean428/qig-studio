@@ -318,7 +318,7 @@ class GeoCortexTarget(ConstellationNode, TrainingTarget):
             gp = geo_phi if geo_phi is not None else float(getattr(out_or_logits, "phi", 0.0) or 0.0)
         kappa = 0.0
         try:
-            kappa = float(self._model.effective_coupling(int(logits.shape[1])))
+            kappa = float(self._model.kappa_seq(int(logits.shape[1])))  # renamed from effective_coupling (D1 two-κ)
         except Exception:  # noqa: BLE001 — κ read is telemetry only
             kappa = 0.0
         self._last = TelemetrySnapshot(
