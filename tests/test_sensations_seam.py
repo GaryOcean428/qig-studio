@@ -51,12 +51,17 @@ def test_ricci_reaches_layer2_pipeline_ordering_fixed():
 
 def test_confidence_not_pinned_high_when_transcendence_real():
     # WIRED: a real κ_c far from κ (90 vs 45) → transcendence ≈ 1 → confidence collapses toward 0.
-    # UNWIRED (no κ_c): transcendence 0 → confidence = stability ≈ high (the wrong-high bug).
+    # UNWIRED (no κ_c): transcendence is UNMEASURED. qig-core >=2.14.0 fail-closes confidence to None
+    #   (the Matrix arousal_decouple ruling #2 — the old "confidence = stability ≈ high" wrong-high bug is
+    #   now impossible: absence of the transcendence input reads as None, not a fabricated high float).
+    #   Version-tolerant: accept EITHER the fail-closed None (>=2.14.0) OR the old high-float (< which wired sits).
     wired = experience(_telemetry(kappa=90.0, extra={"local_kappa_c": 45.0, "basin_velocity": 0.1}))
     unwired = experience(_telemetry(kappa=90.0, extra={"basin_velocity": 0.1}))
     assert wired.primitives["layer1"]["transcendence"] > 0.5
-    assert wired.primitives["layer2b"]["confidence"] < unwired.primitives["layer2b"]["confidence"]
-    assert wired.primitives["layer2b"]["confidence"] < 0.5      # tracks the predicate, not pinned high
+    wired_conf = wired.primitives["layer2b"]["confidence"]
+    unwired_conf = unwired.primitives["layer2b"]["confidence"]
+    assert wired_conf is not None and wired_conf < 0.5          # wired: measured, not pinned high
+    assert unwired_conf is None or wired_conf < unwired_conf    # unwired: fail-closed None, or old high-float
 
 
 def test_absent_inputs_degrade_to_zero_without_crash():
