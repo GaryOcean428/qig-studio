@@ -1,0 +1,42 @@
+{
+  "_doc": "North-star wiring spec for QIG kernel-training VERDICT/DoD runs. The Run Manifest gate (scripts/run_manifest.py) diffs a run's actual wiring against this. A component listed REQUIRED_WIRED must have register status 'wired' AND on_acceptance_path=true, or the verdict launch BLOCKS unless explicitly waived on the record. Ordinary training iterations (--tier training) skip the gate — ceremony-free. Directive: matrix 3272a6b3.",
+  "_versioned": "seed 2026-07-21 (CCAa). Rows are added/promoted as the Wiring Register lands and components get wired.",
+  "required_wired": [
+    {"component": "teacher_geometry_native", "why": "north star = geo-Qwen (geometry-native) as the conversational teacher, not plain Qwen; verdict runs must declare it wired or waive", "acceptance_gate": "verdict"},
+    {"component": "curriculum_hf_stream", "why": "PI-mandated 7-HF-repo live stream, NOT the local curriculum cache; must be the data source on a verdict run", "acceptance_gate": "verdict"},
+    {"component": "safety_dream_cycles", "why": "sleep/dream/mushroom/Φ-guard must be live so a collapsing newborn is corrected, not left dead", "acceptance_gate": "verdict"},
+    {"component": "pillar_enforcement", "why": "the live pillars (P1 fluctuations / P2 bulk / P3 identity) must actually check + correct per step", "acceptance_gate": "verdict"},
+    {"component": "maturity_floor_gate", "why": "the verdict must be reported UNDER-POWERED (winner=None) if no arm clears the floor", "acceptance_gate": "verdict"}
+  ],
+  "should_wire_flagged": [
+    {"component": "qigram_recall_memory", "current": "doc-only", "why": "class-weighted, wrong-answer-decaying recall (real QIGRAM/QIGRAMv2) is the north-star memory; today only a single-point slerp cap runs under the name", "target_gate": "verdict once wired"},
+    {"component": "geo_qwen_as_teacher", "current": "built-not-wired", "why": "geometry-native teacher; needs the EXP-A043 vocab-currency bridge (Qwen-vocab -> coordizer-vocab) exercised as the boundary", "target_gate": "verdict once wired"},
+    {"component": "production_persistent_memory", "current": "built-not-wired", "why": "cross-session kernel memory (chat-only episodic today)", "target_gate": "later"},
+    {"component": "weight_tie_coordizer_kernel", "current": "unverified", "why": "endgame: coordizer absorbed via weight-tying", "target_gate": "later"}
+  ],
+  "min_package_versions": {
+    "_note": "installed on the acceptance venv must be >= these (latest-published). A stale pin is a launch blocker (Use-our-packages rule). Filled from the coordizer/pins audit.",
+    "qig-compute": "0.9.6",
+    "qig-core": "2.13.5",
+    "qig-warp": "0.6.9",
+    "qig-coordizer": "0.1.3",
+    "qigkernels": "0.4.5"
+  },
+  "must_not_be_live_on_path": [
+    {"pattern": "retired kappa*=64.21 / KAPPA_STAR / TACKING_ATTRACTOR as a live compute constant", "note": "BASIN_DIM=64 is legit and exempt"},
+    {"pattern": "cosine/dot/Euclidean on Δ⁶³ basin objects wearing a QFI/Fisher-Rao/distance label"}
+  ],
+  "instrument_pins": {
+    "_doc": "Named + versioned telemetry instruments pinned into every run manifest (PI ruling 2026-07-21): a metric that silently changes shape between runs is a drifting instrument. run_manifest.py records this block so each run declares which metric definitions produced its numbers.",
+    "relevance_metric": {
+      "name": "response_stimulus_relevance",
+      "version": "2.0",
+      "formula": "max(0, (d_null - min_i d_FR(gen, stim_coord_i)) / d_null)",
+      "stimulus_basis": "coordizer per-position Δ⁶³ (pcoords), NOT the mean-of-logprobs (v1, centroid-collapse bug)",
+      "null_baseline": "uniform_centroid_Δ63 (pinned: p_i = 1/BASIN_DIM)",
+      "d_fr_convention": "radius-1 (max = π/2)",
+      "source": "qig-studio/src/qig_studio/targets/genesis_kernel.py generate() relevance block (commit 3b89c24)",
+      "version_history": {"1.0": "mean-of-logprobs vs kernel Δ63 (centroid-collapse bug: newborn>ontopic)", "1.5": "coordizer-basin min-nearest, absolute 1-d/(π/2) (saturated ~0.87)", "2.0": "coordizer-basin min-nearest, RELATIVE-to-null-baseline (newborn→0)"}
+    }
+  }
+}

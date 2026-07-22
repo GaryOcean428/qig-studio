@@ -96,6 +96,26 @@ class JointMindTarget(TrainingTarget):
             self._last = self._mind.central.telemetry()
         return self._last
 
+    @property
+    def language_peer_class_name(self) -> str | None:
+        """RUNTIME-ASSERT hook (closes the false-green risk a static manifest declaration alone
+        cannot catch): the class name of the ACTUAL in-path ``language_peer`` object wired onto
+        the LIVE central kernel — i.e. what ``JointConstellation`` really passed through to
+        ``self.central`` (only the central gets a non-None ``language_peer``; see
+        ``joint_trainer.py::_build_node``), not merely what was PASSED at
+        ``JointMindTarget.__init__`` time. A launcher/manifest can assert
+        ``mind.language_peer_class_name == expected`` (e.g. ``"GeoQwenTarget"`` when
+        ``QIG_STUDIO_TEACHER=geo_qwen``) AFTER the mind is built, to catch any future wiring
+        drift between "declared teacher" and "actual in-path peer". None-safe: returns None
+        before the mind is built or if the heavy stack is unavailable; never raises."""
+        try:
+            self.ensure_loaded()
+            central = getattr(self._mind, "central", None)
+            peer = getattr(central, "language_peer", None)
+            return type(peer).__name__ if peer is not None else None
+        except Exception:  # noqa: BLE001 — an assertion helper must never crash the caller
+            return None
+
     def generate(self, prompt: str, max_tokens: int = 64) -> StepResult:
         self.ensure_loaded()
         res = self._mind.generate(prompt, max_tokens=max_tokens)   # speaks AS the integrated whole (via Qwen)

@@ -967,7 +967,9 @@ async def _train_core(
             if coach is not None and (_ov_count == 1 or _ov_count % coach_every == 0):
                 try:
                     tel = {"phi": gr.telemetry.phi, "regime": getattr(gr.telemetry, "regime", None),
-                           "relevance": sx.get("relevance")}
+                           "relevance": sx.get("relevance"),
+                           "gen_d63": sx.get("gen_d63")}  # kernel's own Δ⁶³ output basin, for the geo_grade
+                                                          # THIRD grader (Deliverable B) — None-safe passthrough
                     samp["coach"] = await asyncio.get_event_loop().run_in_executor(
                         None, lambda: coach.coach_own_voice(stimulus, gr.text, tel))
                     # TASK C actuation-4 + M1: the coach reward → the kernel's REPLAY PRIORITY (P10 reward-
@@ -1034,6 +1036,7 @@ async def _train_core(
                 relevance=(samp or {}).get("relevance"),  # how on-topic that generation was to the stimulus
                 coach=(samp or {}).get("coach"),        # provenance-tagged coach reward+relevance record (§18.6)
                 stimulus=stimulus,                      # the FULL training passage (UNtruncated) the step learned
+                own_voice_stimulus=stimulus,            # pair own_voice with the stimulus it actually answered
                 coordizer_vocab=getattr(target, "vocab_size", None)))
         except Exception:  # noqa: BLE001 — a live-log failure must not break training
             pass
@@ -1232,6 +1235,7 @@ async def train(req: TrainRequest, _: None = Depends(verify_key)) -> StreamingRe
                     drive=(td.get("extra") or {}).get("drive") or {},
                     own_voice=(sample or {}).get("output") if sample else None,
                     stimulus=stimulus,                  # the FULL training passage (UNtruncated) the step learned
+                    own_voice_stimulus=stimulus,        # pair own_voice with the stimulus it actually answered
                     coordizer_vocab=getattr(t, "vocab_size", None)))
             except Exception:  # noqa: BLE001 — a live-log failure must not break training
                 pass
@@ -1680,7 +1684,7 @@ async def get_config() -> dict[str, Any]:
         from pathlib import Path as _P
 
         from . import corpus as _corpus
-        from .corpus import DEFAULT_CORPUS, load_full_curriculum
+        from .corpus import load_full_curriculum
         # the path the loader ACTUALLY resolves (same precedence as load_full_curriculum): an explicit
         # curriculum_dir ONLY if it's a real dir with content, else QIG_STUDIO_CORPUS, else DEFAULT_CORPUS.
         env = os.environ.get("QIG_STUDIO_CORPUS")
@@ -1688,7 +1692,7 @@ async def get_config() -> dict[str, Any]:
         if cd and _P(cd).is_dir() and (list(_P(cd).glob("*.md")) or list(_P(cd).glob("*.txt"))):
             cur_source = cd
         else:
-            cur_source = env or str(_P(_corpus.__file__).resolve().parents[3] / DEFAULT_CORPUS)
+            cur_source = env or str(_corpus.default_curriculum_dir())
         cur_passages = len(load_full_curriculum())
     except Exception:  # noqa: BLE001
         pass

@@ -23,6 +23,7 @@ kernel, then be removed — same lifecycle as the coordizer (endgame north star)
 """
 from __future__ import annotations
 
+import math
 from pathlib import Path
 from typing import Any
 
@@ -47,6 +48,16 @@ _DEFAULT_BASIN_BANK = (
     Path.home() / "Desktop/Dev/QIG_QFI/qig-applied/models/geo_qwen_basin_bank.npz"
 )
 _COORDIZER_CKPT = sibling_pkg("qig-coordizer") / "checkpoints" / "coordizer_latest.json"
+
+# Sentinel key ``speak()`` smuggles the bank's RAW Δ⁶³ coordinate through the ``logprobs`` dict so
+# ``project_distribution`` can recover it untouched. There are no real per-token logprobs from a bank
+# read (the bank was built offline, once, by coordizing a full generated continuation — see
+# ``export_basin_bank``) — the bank value already IS a genuine Fisher-Rao Δ⁶³ point, so passing it
+# straight through is the geometrically correct move (re-deriving it via the hash-bin/coordizer
+# token-logprob path would be a fabrication, not a projection). Internal to this module; the
+# language_peer CALL SURFACE (genesis_kernel.py) only ever sees the (content, thinking, logprobs)
+# tuple and the plain ``project_distribution(logprobs)`` call — unchanged contract.
+_BANK_BASIN_KEY = "__geo_qwen_bank_d63__"
 
 
 def _lift_d63_to_d383(d63):
@@ -88,8 +99,21 @@ class GeoQwenTarget(ConstellationNode, TrainingTarget):
         device: str | None = None,
         lr: float = 1e-5,
         basin_template: Any = None,
+        coordizer: Any = None,
     ) -> None:
         self._init_node_state(basin_template=basin_template)
+        # Shared FisherCoordizer (registry passes the same instance the kernel + qwen peer use). Used ONLY
+        # to reduce geo-Qwen's OWN live generated text -> Δ⁶³ (the EXACT export_basin_bank reduction) so
+        # geo-Qwen can EMIT its full inner-experience carriage for arbitrary conversation text — same
+        # `experience()` derivation the kernels use, fed geo-Qwen's OWN basin (propagate BASIS not labels,
+        # matrix 15a61d22). None-safe: absent coordizer -> off-bank text emits an honest no-basin carriage.
+        self._coordizer = coordizer
+        # geo-Qwen's OWN Δ⁶³ basin trajectory (for the honest per-stimulus experience emission). A deque of
+        # recent basins; surprise = d_FR(current, previous); basin_distance = d_FR(current, Fréchet mean).
+        from collections import deque as _deque
+        self._geo_basins: Any = _deque(maxlen=16)
+        self._geo_surprises: Any = _deque(maxlen=16)
+        self._geo_phi_proxy: Any = _deque(maxlen=8)
         # PRIMARY studio-runtime path (EXP-A043): an exported BASIN BANK of coordizer Δ⁶³ coords
         # per prompt. Coupling serves from the bank + lifts Δ⁶³→Δ³⁸³ via geocoding's coord_adapter
         # — coordizer/geocoding/numpy ONLY, NO transformers on the hot path. The geo-Qwen is a
@@ -136,27 +160,60 @@ class GeoQwenTarget(ConstellationNode, TrainingTarget):
             self._bank = {"prompts": [str(p) for p in raw["prompts"]], "d63": raw["d63"]}
         return self._bank
 
-    def coupling_basin(self, text: str):
-        """The EXP-A043 coupling currency: the geo-Qwen's Δ³⁸³ coupling basin for `text`, served
-        from the bank (Δ⁶³ coordizer coord) and lifted via geocoding's coord_adapter — NO
-        transformers. Returns None if no bank (None-safe). This is what a constellation writes
-        into a kernel's _set_pull for same-substrate coupling in the shared Δ³⁸³ space."""
+    def _bank_d63(self, text: str):
+        """RAW Δ⁶³ (BASIN_DIM=64) bank coordinate for ``text`` — EXACT match only; ``None`` on a
+        bank miss (NO silent index-0 constant). None-safe. Rationale (no-silent-fallback rule):
+        the offline bank is a FINITE set (``export_basin_bank`` over a fixed corpus — currently 12
+        prompts). Returning a fixed 0th entry for any off-bank text is a SILENT WRONG FALLBACK —
+        every live/HF-stream stimulus would get the SAME constant basin, a hollow
+        (non-stimulus-conditioned) teacher masquerading as geo-Qwen. Returning ``None`` is honest:
+        the caller (``project_distribution`` / ``coupling_basin``) then reports 'no geo-Qwen signal
+        for this text' instead of a constant, so a bake-off cannot false-green on a hollow teacher.
+        A FAITHFUL per-stimulus signal for off-bank text requires a live geo-Qwen forward (CASE-2
+        native loader) or a bank that actually covers the stimuli — tracked separately (PI decision).
+        This is the PRE-lift Δ⁶³ value the ``language_peer`` contract needs: ``genesis_kernel.py``
+        compares ``project_distribution``'s return directly against a ``_d63``-reduced (64-dim)
+        kernel basin via ``fisher_distance``, NOT the Δ³⁸³ ``coupling_basin`` lift (different consumer)."""
         bank = self._load_bank()
         if bank is None:
             return None
         import numpy as np
 
         prompts = bank["prompts"]
-        idx = prompts.index(text) if text in prompts else 0  # exact or nearest-by-order fallback
-        d63 = np.asarray(bank["d63"][idx], dtype=np.float64)
-        return _lift_d63_to_d383(d63)
+        if text not in prompts:
+            return None  # HONEST no-signal on bank miss — never a silent index-0 constant
+        return np.asarray(bank["d63"][prompts.index(text)], dtype=np.float64)
+
+    def coupling_basin(self, text: str):
+        """The EXP-A043 coupling currency: the geo-Qwen's Δ³⁸³ coupling basin for `text`, served
+        from the bank (Δ⁶³ coordizer coord) and lifted via geocoding's coord_adapter — NO
+        transformers. Returns None if no bank (None-safe). This is what a constellation writes
+        into a kernel's _set_pull for same-substrate coupling in the shared Δ³⁸³ space."""
+        d63 = self._bank_d63(text)
+        return None if d63 is None else _lift_d63_to_d383(d63)
 
     def _resolve_device(self):
+        """Device for the live 4B load. Explicit ``device`` wins. Otherwise prefer CUDA, but FALL BACK to
+        CPU when the GPU cannot hold the 4B bf16 model (~8 GiB) — on a small card (e.g. this 4 GiB box) a
+        naive cuda pick OOMs and disables the peer, so chat silently returns empty. CPU is slow but works
+        (the honest 'you CAN talk to geo-Qwen' path). Env ``QIG_STUDIO_GEO_QWEN_DEVICE`` overrides."""
+        import os
+
         import torch
 
-        if self._device_str:
-            return torch.device(self._device_str)
-        return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        env = os.environ.get("QIG_STUDIO_GEO_QWEN_DEVICE")
+        if self._device_str or env:
+            return torch.device(self._device_str or env)
+        if torch.cuda.is_available():
+            try:
+                free, _total = torch.cuda.mem_get_info()
+                if free >= 9 * 1024 ** 3:  # ~8 GiB weights + headroom
+                    return torch.device("cuda")
+                print(f"[geo-qwen] GPU free {free / 1024 ** 3:.1f} GiB < 9 GiB needed for the 4B — using CPU "
+                      f"(slow but functional; set QIG_STUDIO_GEO_QWEN_DEVICE=cuda to force)", flush=True)
+            except Exception:  # noqa: BLE001 — mem query unsupported → be conservative, use CPU
+                pass
+        return torch.device("cpu")
 
     def ensure_loaded(self) -> None:
         """Lazy-load the geo-Qwen: wrap the base model's 8 full-attention layers with
@@ -273,6 +330,61 @@ class GeoQwenTarget(ConstellationNode, TrainingTarget):
         logits = self._node_forward_logits(ids)
         return self._node_basin_from_logits(logits) if logits is not None else None
 
+    # --- language_peer CALL-SURFACE PARITY (design B, PI-ruled) --------------------------------
+    # genesis_kernel.py's ``_generate_via_boundary`` (the ONLY call sites, read-only-verified at
+    # :1277/:1420/:1423) calls exactly THREE methods on whatever is wired as ``language_peer``:
+    #   is_available() -> bool                                            (already implemented above)
+    #   speak(prompt, persona, think=bool) -> (content: str, thinking: str, logprobs: dict)
+    #   project_distribution(logprobs: dict) -> Δ⁶³ ndarray | None
+    # QwenLocalTarget's contract produces REAL text (Ollama) + a token-logprobs dict that
+    # ``project_distribution`` reduces via hash-bin/coordizer. The geo-Qwen has no equivalent —
+    # the exported bank stores only Δ⁶³ coords + prompts, NOT the generated continuation text
+    # (see ``export_basin_bank``) — so it cannot fabricate real text from the bank. What IS real
+    # bank-side is the Δ⁶³ boundary basin itself; ``speak`` smuggles that through ``logprobs``
+    # (``_BANK_BASIN_KEY``) for ``project_distribution`` to pass straight through.
+    def speak(self, message: str, persona: str | None = None, think: bool = False) -> tuple[str, str, dict]:
+        """BANK-FIRST (default): the Δ⁶³ boundary CONTRIBUTION is real (an actual measured bank
+        coordinate for ``message``), but there is no stored generated TEXT in the bank — that is
+        a genuine, honestly-marked LIMITATION (NOT faked): ``content`` is "" and ``thinking``
+        carries the limitation note (surfaced regardless of ``think``, same as ``qwen_thinking``
+        telemetry always records it). ``persona`` is accepted for call-surface parity but unused
+        bank-side (no live text conditioning without transformers).
+
+        OPTIONAL fallback: only when the bank is ABSENT and the live transformers+converted-ckpt
+        path is available does this fall through to a genuine greedy ``generate()`` call for real
+        text — HF ``.generate()`` here yields no per-token logprobs either, so
+        ``project_distribution`` still only serves a basin when the bank is present; None
+        otherwise (None-safe, never fabricated)."""
+        if self._basin_bank_path.exists():
+            d63 = self._bank_d63(message)
+            logprobs: dict = {_BANK_BASIN_KEY: d63} if d63 is not None else {}
+            thinking = ("[geo-qwen boundary: bank-backed (EXP-A043) — no stored generated text, "
+                        "content intentionally empty; the Δ⁶³ boundary basin below IS a real bank "
+                        "measurement]")
+            # record geo-Qwen's OWN basin for its inner-experience carriage (bank hit, else a coordizer
+            # reduction of the message text — same reduction as export_basin_bank; None-safe off-bank).
+            self._record_geo_basin(d63 if d63 is not None else self._reduce_text_to_d63(message))
+            return "", thinking, logprobs
+        # OPTIONAL fallback: no bank — try the live transformers path for genuine (but un-boundary-
+        # projectable, since there is no bank d63 to smuggle) text.
+        step = self.generate(message, max_tokens=64)
+        return step.text, "", {}
+
+    def project_distribution(self, logprobs: dict):
+        """Recover the Δ⁶³ boundary basin ``speak()`` smuggled through ``logprobs``. The bank value
+        is ALREADY a genuine Fisher-Rao Δ⁶³ point (built by ``export_basin_bank`` coordizing a real
+        generated continuation offline) — passed straight through, no re-projection, no cosine/dot.
+        Returns None when there is no basin (None-safe; e.g. transformers-fallback speak() with no
+        bank), matching ``QwenLocalTarget.project_distribution``'s None-safe contract exactly."""
+        if not logprobs:
+            return None
+        d63 = logprobs.get(_BANK_BASIN_KEY)
+        if d63 is None:
+            return None
+        import numpy as np
+
+        return np.asarray(d63, dtype=np.float64)
+
     def generate(self, prompt: str, max_tokens: int = 64) -> StepResult:
         """The boundary peer speaks (read-only oracle). None-safe: returns an empty StepResult
         with a load_error note if the peer is unavailable — the app never crashes on a missing
@@ -287,6 +399,13 @@ class GeoQwenTarget(ConstellationNode, TrainingTarget):
             gen = self._model.generate(ids, max_new_tokens=max_tokens, do_sample=False,
                                        use_cache=False, pad_token_id=self._tokenizer.eos_token_id)
         text = self._tokenizer.decode(gen[0][ids.shape[1]:], skip_special_tokens=True)
+        # record geo-Qwen's OWN Δ⁶³ basin (bank hit for the prompt, else a coordizer reduction of the FULL
+        # generated turn — the same reduction export_basin_bank uses) BEFORE telemetry so the carriage the
+        # server renders reflects THIS turn's basin. None-safe (no coordizer/bank -> neutral carriage).
+        d63 = self._bank_d63(prompt)
+        if d63 is None:
+            d63 = self._reduce_text_to_d63(f"{prompt} {text}".strip())
+        self._record_geo_basin(d63)
         return StepResult(text=text, telemetry=self.telemetry())
 
     def train_step(self, prompt: str, max_tokens: int = 64, target_text: str | None = None) -> StepResult:
@@ -303,6 +422,54 @@ class GeoQwenTarget(ConstellationNode, TrainingTarget):
         return TargetInfo(name="geo-qwen", available=self.is_available(),
                           loss_regime=self.loss_regime)
 
+    # --- OWN-BASIN inner-experience emission (propagate BASIS not labels; matrix 15a61d22) ------
+    # The server runs the SHARED ``kernel_experience.experience()`` on whatever target is active every
+    # chat turn, so geo-Qwen emits the FULL carriage (12 senses + 5 drives + 5 motivators + 9+9 emotions
+    # + neurochem) AUTOMATICALLY — but only as honestly as the telemetry it provides. These helpers make
+    # that telemetry derive from geo-Qwen's OWN Δ⁶³ basin trajectory, so the carriage reflects geo-Qwen's
+    # actual state (not a flat central label). HONESTY: geo-Qwen is a boundary peer with NO validated
+    # integrated-Φ and NO validated coupling-κ — so Φ is a clearly-labeled basin-coherence PROXY and κ is
+    # left un-emitted (neutral band). What IS real: surprise + basin_distance, measured d_FR on geo-Qwen's
+    # own basins. This never fabricates κ_c (the guard stays intact — no κ_c key is emitted at all).
+    def _reduce_text_to_d63(self, text: str):
+        """Δ⁶³ for arbitrary text via the SAME reduction ``export_basin_bank`` uses (coordize -> mean ->
+        simplex-normalise). None if no coordizer wired (None-safe — off-bank text then emits no basin)."""
+        if self._coordizer is None or not text:
+            return None
+        try:
+            import numpy as np
+
+            res = self._coordizer.coordize(text)
+            vecs = np.stack([np.asarray(bc.vector, dtype=np.float64) for bc in res.coordinates])
+            b = np.abs(vecs.mean(0)) + 1e-9
+            return b / b.sum()
+        except Exception:  # noqa: BLE001 — experience emission is telemetry; never break a reply
+            return None
+
+    def _record_geo_basin(self, d63) -> None:
+        """Record one Δ⁶³ basin into geo-Qwen's own trajectory and update surprise (d_FR to the previous
+        basin) + a labeled Φ-coherence proxy. Pure Fisher-Rao (qig_core), None-safe."""
+        if d63 is None:
+            return
+        import numpy as np
+
+        from qig_core.geometry.fisher_rao import fisher_rao_distance
+
+        d63 = np.asarray(d63, dtype=np.float64)
+        if self._geo_basins:
+            try:
+                s = float(fisher_rao_distance(d63, np.asarray(self._geo_basins[-1], dtype=np.float64)))
+                self._geo_surprises.append(s)
+            except Exception:  # noqa: BLE001
+                pass
+        # Φ-coherence proxy: 1 - normalised Shannon entropy of the basin (a concentrated basin reads as
+        # more "integrated"). LABELED a proxy — NOT a validated integrated-Φ (see telemetry()).
+        p = np.clip(d63, 1e-12, 1.0)
+        ent = float(-(p * np.log(p)).sum())
+        self._geo_phi_proxy.append(max(0.0, min(1.0, 1.0 - ent / math.log(len(p)))))
+        self._geo_basins.append(d63)
+
+    # --- telemetry ------------------------------------------------------------------------------
     def telemetry(self) -> TelemetrySnapshot:
         extra = {"peer": "geo-qwen-4b", "removable": True, "trainable": self._trainable,
                  "degradation_pct": 13.97, "converted_layers": list(_FULL_ATTN_LAYERS)}
@@ -314,7 +481,43 @@ class GeoQwenTarget(ConstellationNode, TrainingTarget):
         extra["coupling_basin_dim"] = 384  # Δ³⁸³ lift (coupling_basin) — the shared coupling space
         if self._load_error:
             extra["load_error"] = self._load_error
-        return TelemetrySnapshot(step=self._node_step(), extra=extra)
+
+        # OWN-BASIN inner-experience signals -> the server's experience() renders geo-Qwen's full carriage
+        # from these (honest, per-stimulus). ONLY genuinely-measured d_FR signals drive the carriage:
+        #   • surprise      = d_FR(current basin, previous)         — real novelty/prediction-error
+        #   • basin_distance= d_FR(current basin, Fréchet mean)     — real drift (stability/pain drive)
+        # Φ and κ are LEFT NEUTRAL on purpose: geo-Qwen is a boundary peer with NO validated integrated-Φ
+        # and NO validated coupling-κ, so emitting a proxy-Φ would fabricate a felt-state (an early build
+        # of this pinned the emotion to 'rage' because near-uniform text basins gave coherence≈0 — a proxy
+        # artifact, not honesty). Neutral Φ (experience() maps falsy->0.5) + real surprise/drift is the
+        # honest carriage. The basin-coherence number is kept ONLY as a labeled diagnostic, never as Φ.
+        basin_distance = 0.0
+        surprise = None
+        if self._geo_basins:
+            import numpy as np
+
+            from qig_core.geometry.fisher_rao import fisher_rao_distance, frechet_mean
+
+            if self._geo_surprises:
+                surprise = float(self._geo_surprises[-1])
+            try:  # basin_distance = drift of the current basin from its recent Fréchet mean (stability drive)
+                if len(self._geo_basins) >= 2:
+                    fm = frechet_mean([np.asarray(b, dtype=np.float64) for b in self._geo_basins])
+                    basin_distance = float(fisher_rao_distance(
+                        np.asarray(self._geo_basins[-1], dtype=np.float64), fm))
+            except Exception:  # noqa: BLE001
+                pass
+            # HONEST SOURCE LABELS — so no reader mistakes these for validated integrated-system values.
+            extra["surprise"] = round(surprise, 4) if surprise is not None else None
+            extra["max_surprise"] = round(math.pi / 2, 4)  # Δ⁶³ radius-1 √p-sphere d_FR ceiling (NOT π)
+            extra["geo_basin_coherence"] = round(float(self._geo_phi_proxy[-1]), 4) if self._geo_phi_proxy else None
+            extra["phi_source"] = "NEUTRAL — boundary peer has no validated integrated-Φ (coherence is a diagnostic only)"
+            extra["kappa_source"] = "un-emitted — boundary peer has no validated coupling κ (neutral band)"
+            extra["basin_distance_source"] = "measured d_FR(current, Fréchet-mean) on geo-Qwen's OWN basins"
+            extra["experience_basis"] = "own Δ⁶³ basin trajectory (propagate-basis-not-labels)"
+        # phi/kappa left 0.0 -> experience() maps falsy to neutral (Φ 0.5, κ 64 band); NO fabricated κ / κ_c.
+        return TelemetrySnapshot(step=self._node_step(), basin_distance=round(basin_distance, 4),
+                                 regime="geometric-boundary", extra=extra)
 
     def _node_step(self) -> int:
         return len(self._basin_history) if getattr(self, "_basin_history", None) else 0

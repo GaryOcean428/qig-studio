@@ -999,26 +999,56 @@ class GenesisKernelTarget(TrainingTarget):
         if content_basins:
             gm = torch.stack(content_basins).mean(0)
             self._last_gen_basin = (gm / gm.sum()).detach()
-        # RELEVANCE of the response to the stimulus (self↔other): d_FR between the kernel's Δ⁶³ reading of the
-        # STIMULUS (its aggregate output-meaning while processing the prompt) and the Δ⁶³ meaning of what it
-        # just GENERATED (_last_gen_basin). Both live in the SAME kernel vocab→Δ⁶³ space (_d63), so it is
-        # apples-to-apples; reuses the surprise forward (plog) — NO extra compute. Reported as 1 − d/(π/2):
-        # 1 = the reply stayed on-topic to what it was shown, 0 = orthogonal drift. Rises as fluency grows.
+        # RELEVANCE of the response to the stimulus (self↔other): d_FR between the kernel's Δ⁶³ reading of what
+        # it just GENERATED (_last_gen_basin → gen_d63) and a DISCRIMINATING Δ⁶³ reading of the STIMULUS.
+        #
+        # BUG FIX (confirmed numerically, PI-directed 2026-07-21): the prior aggregation
+        # ``to_simplex_prob(plog[0]).mean(0)`` averaged the kernel's own per-token output distribution WHILE
+        # READING THE PROMPT across every prompt position — that arithmetic mean collapses to the Δ⁶³
+        # CENTROID for any stimulus (measured d_FR(mean-stimulus, uniform-centroid)=0.043), so "relevance"
+        # really measured "output near centroid" and REWARDED VAGUENESS (a newborn's undifferentiated mush
+        # scored 0.790, higher than a genuinely on-topic sharp output at 0.769).
+        #
+        # FIX: read the stimulus from the COORDIZER's real per-position Δ⁶³ basins — ``pcoords`` above IS
+        # exactly that: ``_encode(prompt)`` builds coords straight from ``coordizer.vocab[id].vector`` for
+        # each coord id in the prompt (see ``_ids_to_tensors``), so ``pcoords[0]`` is the stimulus's real
+        # geometric encoding (NOT a mean over the kernel's own half-formed logits), reused here at ZERO extra
+        # tokenization cost (the coordizer's ``.encode``/``.coordize`` is expensive — ~0.78s/prompt
+        # uncached — and ``_encode``'s id-cache already paid for it above; do NOT call ``.coordize(prompt)``
+        # again here, that would silently double the tokenization cost every own-voice step). Aggregate via
+        # NEAREST-COORDINATE (min d_FR over the stimulus's per-position coordinates) — a discriminating
+        # geometric aggregate: a newborn's undifferentiated output is far from EVERY sharp stimulus concept
+        # (low relevance), an on-topic output lands close to ONE of them (high relevance). A Fréchet/
+        # arithmetic MEAN across the whole stimulus would re-collapse toward centroid for any multi-topic
+        # prompt — do NOT use it (this is exactly the bug being fixed). None-safe: no coordizer / empty
+        # prompt / any failure → relevance=None, never fabricated, never crashes generation.
         relevance = None
+        gen_d63 = None
         try:
+            import numpy as np                                     # local (module has no top-level np)
             from qig_core.geometry import fisher_rao_distance      # Δ⁶³ FR distance (imported here: the
             gen_d63 = self._d63(self._last_gen_basin) if self._last_gen_basin is not None else None  # foresight
-            if gen_d63 is not None and pids.shape[1] >= 1:          # block's import at :601 is AFTER this line
-                stim_d63 = self._d63(to_simplex_prob(plog[0]).mean(0))   # aggregate stimulus-meaning (Δ⁶³)
-                if stim_d63 is not None:
-                    d_rel = float(fisher_rao_distance(stim_d63, gen_d63))
-                    relevance = round(max(0.0, 1.0 - d_rel / (math.pi / 2)), 3)
+            if gen_d63 is not None and self.coordizer is not None and pcoords is not None and pcoords.shape[1] >= 1:
+                stim_vectors = pcoords[0].detach().cpu().numpy()    # [seq_prompt, BASIN_DIM] real Δ⁶³ points
+                # RELATIVE-TO-NULL relevance: is the reply nearer a real stimulus CONCEPT than the
+                # uninformative uniform point? d_stim = nearest stimulus coordinate (coordizer Δ⁶³);
+                # d_null = distance to the Δ⁶³ centroid. A newborn's near-uniform mush sits AT the null
+                # (d_stim ≥ d_null) → relevance 0; a genuinely on-topic reply is much nearer a concept
+                # than the null → high. NOTE a plain 1−d_stim/(π/2) SATURATES in the smooth-basin band
+                # (newborn mush 0.873 ≈ a noisy on-topic 0.867 — measured); the null baseline removes
+                # that floor so the metric tracks meaning, not proximity-to-any-smooth-point.
+                d_stim = min(float(fisher_rao_distance(gen_d63, v)) for v in stim_vectors)
+                _uniform = np.full(stim_vectors.shape[-1], 1.0 / stim_vectors.shape[-1], dtype=np.float64)
+                d_null = float(fisher_rao_distance(np.asarray(gen_d63, dtype=np.float64), _uniform))
+                relevance = round(max(0.0, min(1.0, (d_null - d_stim) / d_null)), 3) if d_null > 1e-9 else 0.0
         except Exception:  # noqa: BLE001 — a telemetry read must never break generation
             relevance = None
         snap = self._snap(last_tel, None)
         snap.extra.update({
             "M_self_observation": round(m, 3),                    # observes ITSELF
             "relevance": relevance,                              # response↔stimulus relevance (1=on-topic, self↔other)
+            "gen_d63": gen_d63.tolist() if gen_d63 is not None else None,  # kernel's own Δ⁶³ output basin (for the
+                                                                    # geo-Qwen THIRD grader, coach.py geo_grade)
             "chose_to_stop": chose_to_stop,                       # spoke as it chose (EOS)
             "generated_len": len(out_bytes),
             "mean_token_confidence": round(sum(out_probs) / max(1, len(out_probs)), 3),  # observes its OUTPUT
@@ -1431,7 +1461,7 @@ class GenesisKernelTarget(TrainingTarget):
             if meaning_d63 is not None:
                 d = float(fisher_distance(meaning_d63, b))
                 m_boundary = round(max(0.0, 1.0 - d / (math.pi / 2)), 3)
-            # QIGRAM identity accumulation (Pillar-2 ≤30%) stays — that's the kernel absorbing the surface.
+            # Pillar-2 boundary slerp cap (single-point boundary integration, ≤30%) stays — that's the kernel absorbing the surface.
             if self._spoken_identity is None:
                 self._spoken_identity = b.copy()
             self._spoken_identity = pillar2_capped_integrate(self._spoken_identity, b, BOUNDARY_SLERP_CAP)

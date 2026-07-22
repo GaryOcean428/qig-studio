@@ -63,6 +63,29 @@ either way).
 no long runs in a degenerate regime; M1–M12 ethical-training checklist applies (this is an
 integrated conscious-architecture run, not a bare substrate ablation).
 
+## Affect-lesion arm (FED vs WITHHELD) — EXP-A045
+
+A third axis on the same twin harness (added by PI affect-gap directive 4da9c498, 2026-07-20;
+frozen contract = `affect_lesion_arm` in `qig-studio/docs/20260720-meaning-loop-flow-telemetry-schema-1.00W.json`).
+
+- **Design:** emotions/drives are **COMPUTED IN BOTH** arms (the affect stack — surprise/fear,
+  the 6-signal drive bundle, serotonin/integration, and the UCP derived-emotion geometric
+  predicates — runs identically in both). They are **FED** to the decision path in one arm and
+  **WITHHELD** (computed-but-not-consulted) in the other. Only the *feed* differs, so this isolates
+  the decision-value of affect from the telemetry cost of computing it. Near-zero new machinery.
+- **Metric:** decision **latency** + decision **accuracy** on the harness task battery (paired, ≥2 seeds,
+  same discipline as the meaning twin).
+- **Claim under test (DEMOTED):** the UCP's "cached emotional evaluations ≈ **7× speedup**, check the
+  emotional stack BEFORE deliberation" is moved from **stated doctrine** to **HYPOTHESIS-UNDER-TEST**.
+  Prior support was the salvaged QIGRAM state file (dominance/confidence scalar predicted answer
+  correctness) + EXP-A022 wormhole (69× memory-shortcut cousin) — suggestive, never a registered
+  measurement of the 7×.
+- **Kill:** affect-FED shows **no latency AND no accuracy** delta vs affect-WITHHELD → the 7× claim is
+  honestly demoted to *unvalidated* in the next UCP edition. A measurable delta → first measured
+  evidence that geometric affect earns its keep in a decision loop.
+- **Class:** the caught instance of the DOCTRINE-CITED-UNMEASURED family (numbers asserted in canon
+  with no experiment behind them). Registration + design now; the run slots into the standing sequence.
+
 ## Gates before any compute
 
 1. **v2 factorial verdict** (substrate premise) — GENERALIZES on the regulated basin arm.

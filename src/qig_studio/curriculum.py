@@ -90,16 +90,26 @@ class CurriculumProvider:
                 self._file_prompts = None
         if loss_regime == LossRegime.GEOMETRIC and not self._file_prompts:
             self._try_real_curriculum()
-        # FULL-DATA streaming (env QIG_STUDIO_FULL_CORPUS=1): pull passages from the FULL 7-dataset HF blend
-        # (~1B tokens) AS THE KERNEL TRAINS, instead of the ~1M-token cached curriculum (~0.1% of the data).
-        # None-safe: if streaming can't init, the finite curriculum above still serves.
-        if loss_regime == LossRegime.GEOMETRIC and \
-                os.environ.get("QIG_STUDIO_FULL_CORPUS", "").lower() in ("1", "true", "yes"):
-            try:
+        # HF FULL-DATA STREAM IS MANDATORY on the geometric training path (PI 2026-07-21): the kernel
+        # trains on the FULL 7-dataset HF live blend (~1B tokens) AS IT TRAINS — NOT the ~1M-token local
+        # cache (~0.1% of the data — the "local garbage" the PI ruled against). Default ON. The ONLY way to
+        # train on the local cache is an EXPLICIT offline opt-out: QIG_STUDIO_LOCAL_CORPUS=1 (legacy alias:
+        # QIG_STUDIO_FULL_CORPUS=0) — never for a verdict/DoD run. NO SILENT fallback: if the mandatory
+        # stream cannot init, RAISE, so a run never quietly trains on the cache (the acceptance-path bug the
+        # wiring register caught 2026-07-21 — compare_constellations never set the old opt-in env).
+        if loss_regime == LossRegime.GEOMETRIC:
+            _offline = (os.environ.get("QIG_STUDIO_LOCAL_CORPUS", "").lower() in ("1", "true", "yes")
+                        or os.environ.get("QIG_STUDIO_FULL_CORPUS", "1").lower() in ("0", "false", "no"))
+            if not _offline:
                 from .corpus import stream_full_corpus
-                self._stream = stream_full_corpus()
-            except Exception:  # noqa: BLE001 — streaming unavailable → keep the finite curriculum
-                self._stream = None
+                try:
+                    self._stream = stream_full_corpus()
+                except Exception as e:  # noqa: BLE001 — mandatory stream failed: fail LOUD, never silent-local
+                    raise RuntimeError(
+                        "HF full-corpus stream is MANDATORY on the geometric path (PI 2026-07-21) but failed "
+                        f"to initialise: {e}. Set QIG_STUDIO_LOCAL_CORPUS=1 to train offline on the local "
+                        "cache (NOT valid for a verdict/DoD run)."
+                    ) from e
 
     def _load_dir(self, directory: str) -> None:
         """Load a nominated curriculum dir: ``*.txt`` → basin-driving prompts (one per

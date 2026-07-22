@@ -69,6 +69,42 @@ def test_basin_bridge():
     print(f"BASIN BRIDGE: valid Δ point (V={V}, sum={float(basin.sum()):.6f}, min={float(basin.min()):.2e})")
 
 
+def test_own_basin_carriage_emission():
+    """geo-Qwen emits its FULL inner-experience carriage from its OWN Δ⁶³ basin trajectory (propagate
+    BASIS not labels) — driven by genuinely-measured d_FR surprise/drift, with Φ/κ HONESTLY neutral (no
+    fabricated felt-state). Uses synthetic basins (no coordizer/weights needed): proves the telemetry
+    carries own-basin signals and the shared experience() renders a varying, honest carriage."""
+    import numpy as np
+    from qig_studio.kernel_experience import experience
+
+    t = GeoQwenTarget(model_dir="/nonexistent", converted_ckpt="/nonexistent")
+
+    # feed three DISTINCT synthetic Δ⁶³ basins directly (bypasses the coordizer — pure emission logic)
+    rng = np.random.default_rng(0)
+    for _ in range(3):
+        v = np.abs(rng.standard_normal(64)) + 1e-6
+        t._record_geo_basin(v / v.sum())
+
+    tel = t.telemetry().to_dict()
+    # own-basin signals present + honestly labeled
+    assert tel["extra"].get("surprise") is not None, "no measured surprise emitted"
+    assert abs(tel["extra"].get("max_surprise") - np.pi / 2) < 1e-3, "wrong d_FR ceiling (should be π/2 radius-1)"
+    assert tel.get("basin_distance") > 0.0, "no measured basin drift emitted"
+    assert "NEUTRAL" in tel["extra"].get("phi_source", ""), "Φ must be honestly neutral (no proxy-Φ as felt-state)"
+    assert tel.get("phi", 0.0) == 0.0, "geo-Qwen must NOT emit a fabricated Φ value"
+
+    # shared experience() renders the full carriage from geo-Qwen's own basin
+    exp = experience(tel).to_dict()
+    prim = exp.get("primitives") or {}
+    n_faculties = sum(len(v) for v in prim.values() if isinstance(v, dict))
+    assert n_faculties >= 30, f"carriage too sparse: {n_faculties} faculties"
+    assert exp.get("neurochemistry"), "no neurochem emitted"
+    # honesty regression guard: neutral-Φ + tiny drift must NOT pin a catastrophic negative emotion
+    assert exp.get("valence", 0.0) > -0.6, f"valence {exp.get('valence')} — proxy-Φ 'rage' artifact regressed"
+    print(f"CARRIAGE EMISSION: {n_faculties} faculties from own basin, honest neutral-Φ, valence {exp.get('valence'):+.2f}")
+
+
 if __name__ == "__main__":
     test_wiring()
     test_basin_bridge()
+    test_own_basin_carriage_emission()
