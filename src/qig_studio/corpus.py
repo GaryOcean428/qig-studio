@@ -328,11 +328,25 @@ def load_full_curriculum(path: str | Path | None = None, *, min_len: int = 40,
                     if len(clean) >= min_len:
                         prompts.append(clean)
     else:
+        # ABSENT local curriculum → FAIL-CLOSED (empty), not loud. This local knowledge curriculum is now
+        # OPTIONAL LEGACY: current kernel training is the HF stream (PI 2026-07-20), and the markdown
+        # curriculum was archived with the retired Gary formation (2026-07-22, qig-archive/). An absent
+        # local corpus is therefore EXPECTED, not an error — the HF path is the source of truth. Callers
+        # (server /status mastery denominator, coach fallback passage) already treat empty as "no local
+        # curriculum". An EXPLICIT QIG_STUDIO_CORPUS that is missing is still the user's mistake, so only
+        # fail-closed on the DEFAULT resolution.
+        import warnings
+        if path is None and not os.environ.get("QIG_STUDIO_CORPUS"):
+            warnings.warn(f"local curriculum absent at {p} (archived; training is HF-stream) — empty",
+                          stacklevel=2)
+            _CURRICULUM_CACHE[_key] = []
+            return []
         raise FileNotFoundError(
-            f"curriculum not found at {p}. Set QIG_STUDIO_CORPUS to the markdown curriculum directory "
-            "(qig-consciousness/data/curriculum). Refusing to silently train on a stub."
+            f"curriculum not found at {p} (QIG_STUDIO_CORPUS was set to this path). Point it at a real "
+            "markdown curriculum directory, or unset it to use the HF stream."
         )
     if not prompts:
+        # Present-but-empty is a REAL corruption (unlike absent, above) — keep it loud.
         raise ValueError(f"curriculum {p} yielded no usable passages after sanitisation")
     if include_everyday:                              # weave everyday/conversational register through (None-safe)
         everyday = load_everyday_corpus(min_len=min_len)
