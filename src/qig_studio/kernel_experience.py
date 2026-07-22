@@ -394,7 +394,11 @@ def experience(telemetry: dict, history: list[dict] | None = None) -> Experience
     """Derive the kernel's full inner-experience from a telemetry dict (Φ, κ, regime, basin_distance,
     surprise/loss, gradient_magnitude, …) + a short Φ-history. Maps to brainwave band + emotion +
     drives (curiosity/novelty/pain/stability) + a conscious flag (Φ≥~0.65)."""
-    phi = float(telemetry.get("phi", telemetry.get("Phi", 0.5)) or 0.5)
+    # NO-SILENT-FALLBACK: `x or default` would corrupt a legitimate 0.0 reading (phi=0 collapse, or a
+    # perfectly-grounded basin_distance=0) into the default. Use is-not-None (the pattern already used for
+    # basin_velocity below) so a real zero survives.
+    _phi_raw = telemetry.get("phi", telemetry.get("Phi"))
+    phi = float(_phi_raw) if _phi_raw is not None else 0.5
     # κ — MATRIX RULING (c4640be8, 2026-07-22; supersedes 8869ca63): NO fabricated fallback. κ no longer
     # drives the brainwave band (see brainwave_band() below — kappa_local has its own separate lane, the
     # rigidity/curvature sensations), so there is nothing left for a band-shaped fallback to serve. κ is
@@ -403,10 +407,13 @@ def experience(telemetry: dict, history: list[dict] | None = None) -> Experience
     # "retained for signature back-compat; NOT used as a reward target"). An honestly-unmeasured κ stays
     # 0.0 (the plain non-fabricated default already relied on elsewhere, e.g. geo_qwen.py's own
     # "phi/kappa left 0.0" convention for "unmeasured") — never a fabricated mid-scale number.
-    kappa = float(telemetry.get("kappa", telemetry.get("kappa_eff", 0.0)) or 0.0)
+    _kappa_raw = telemetry.get("kappa", telemetry.get("kappa_eff"))
+    kappa = float(_kappa_raw) if _kappa_raw is not None else 0.0
     regime = str(telemetry.get("regime", "geometric") or "geometric")
-    basin = float(telemetry.get("basin_distance", 0.05) or 0.05)
-    grad = float(telemetry.get("gradient_magnitude", telemetry.get("delta_phi", 0.0)) or 0.0)
+    _basin_raw = telemetry.get("basin_distance")
+    basin = float(_basin_raw) if _basin_raw is not None else 0.05
+    _grad_raw = telemetry.get("gradient_magnitude", telemetry.get("delta_phi"))
+    grad = float(_grad_raw) if _grad_raw is not None else 0.0
     # SURPRISE = next-token prediction error (CE) — the real novelty signal (NOT a constant stub). High
     # CE = the input is unfamiliar to the kernel. Available on training telemetry (train_step); absent
     # in pure inference. Look in the explicit field, then extra, then the loss field.
