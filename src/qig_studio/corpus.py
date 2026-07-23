@@ -411,3 +411,18 @@ def stream_full_corpus(min_len: int = 40, page: int = 100, max_chars: int = 2000
             ai += 1
         if not served and not academic:
             return                                             # nothing available anywhere (should not happen)
+
+
+def stream_fineweb_corpus(min_len: int = 200, page: int = 100, max_chars: int = 4000):
+    """INFINITE generator over the SINGLE FineWeb (sample/10BT) corpus — the SAME source the fineweb
+    coordizer vocab was drawn from (PI 2026-07-23: "the single fineweb from HF, so it matches the fineweb
+    coordizer"). This is the corpus-matched kernel curriculum: coordizer and kernel both see FineWeb, so
+    the Δ⁶³ vocab and the training text are the same distribution. Streams the cached parquet shard(s)
+    row-group-by-row-group (bounded RAM, encode-once), sanitised with the SAME hygiene as the 7-repo
+    stream (_passages_from_markdown split + _STUB_MARKERS drop). ``page`` is accepted for a signature
+    compatible with stream_full_corpus (the fineweb source pages internally by parquet row-group)."""
+    from .fineweb_source import stream_fineweb_passages
+    for doc in stream_fineweb_passages(min_len=min_len, max_chars=max_chars, passages=None):
+        for psg in _passages_from_markdown(doc, min_len):
+            if not any(m in psg.lower() for m in _STUB_MARKERS):
+                yield psg

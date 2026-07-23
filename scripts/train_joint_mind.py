@@ -39,8 +39,12 @@ def main() -> None:
     ap.add_argument("--max-seconds", type=float, default=14400)
     ap.add_argument("--out", default="runs/spawn/joint_mind.json")
     ap.add_argument("--no-stream", action="store_true",
-                    help="use the finite LOCAL curriculum instead of the HF 7-repo live stream "
-                         "(default: STREAM from the 7 HF repos — each novel passage encodes ONCE)")
+                    help="use the finite LOCAL curriculum instead of the HF live stream "
+                         "(default: STREAM live — each novel passage encodes ONCE)")
+    ap.add_argument("--fineweb", action="store_true",
+                    help="stream the SINGLE FineWeb (sample/10BT) corpus — the SAME source the fineweb "
+                         "coordizer vocab was drawn from, so the kernel corpus MATCHES the coordizer "
+                         "(PI 2026-07-23). Overrides the 7-repo blend.")
     ap.add_argument("--fresh", action="store_true",
                     help="start from-scratch kernels (default: RESUME the existing checkpoint — keep the "
                          "kernels and train over the top with the current curriculum)")
@@ -84,6 +88,13 @@ def main() -> None:
 
         def next_prompt(idx: int) -> str:
             return _full[(idx - 1) % len(_full)]
+    elif args.fineweb:
+        from qig_studio.corpus import stream_fineweb_corpus
+        _gen = stream_fineweb_corpus()                  # SINGLE FineWeb (matches the fineweb coordizer), encode-once
+        steps = args.steps or 10000                     # stream is infinite → explicit/bounded budget
+
+        def next_prompt(idx: int) -> str:
+            return next(_gen)
     else:
         from qig_studio.corpus import stream_full_corpus
         _gen = stream_full_corpus()                     # infinite 7-repo HF blend (round-robin, paged, encode-once)
