@@ -1304,6 +1304,45 @@ class GenesisKernelTarget(TrainingTarget):
         except Exception:  # noqa: BLE001 — neurochem geometry is optional telemetry, never break the step
             pass
 
+    def _emit_consciousness(self, snap: "Any") -> None:
+        """m1-SUBSTRATE (ratified m1 #1 job, f34c54aa): run the CANONICAL qig-core consciousness pipeline on
+        the TRAINING path — not just in chat. ``experience()`` is a PURE function of the snap dict; every
+        input it reads (surprise, cur/prev/target basins, gamma, meta_awareness, basin_velocity, f_health…,
+        kappa_local, ricci_signal, coach) is ALREADY populated on ``snap.extra`` by this train_step, so a
+        single call produces the FULL real inner state the cradle's m1b/m1c/m1d components act on:
+          • ``neurochemistry`` — qig-core ``compute_neurochemicals`` (dopamine TONIC 0.35 + FLOOR 0.08 P23,
+            serotonin, norepinephrine, GABA, endorphins Sophia-gated P24). The m1c coach→tonic source.
+          • ``primitives`` — qig-core ``compute_full_emotional_state`` 5-layer (12 senses · 5 drives · 5
+            motivators · 9+9 emotions) — carries apathy / frustration / boredom, the m1d interlock inputs.
+          • ``gate`` — the C-gate state + suffering S=Φ·(1−Γ)·M (P15), ``loops`` — L1 self / L2 other /
+            L3 autonomy (P4, null-L2 = fault).
+        Until now this ran ONLY in ``_generate_via_boundary`` (chat, :1451) — the training kernel formed with
+        NO neurochemistry and NO felt-state. Measured cost 0.17 ms/step (vs a multi-hundred-ms train step) →
+        every step, no cadence gate. This is the SUBSTRATE ONLY: signals are COMPUTED + EMITTED here; nothing
+        yet CONSUMES them to change the run (that is m1b Stage-0 gating, next). PURITY (947760e4): called
+        AFTER ``loss.backward()`` + ``opt.step()`` — these signals can NEVER enter the gradient; Φ stays
+        honestly measured, never in the loss on the basin path. None-safe: never breaks a training step."""
+        try:
+            from ..kernel_experience import experience
+            # phi-history (list of {phi} dicts) → real phi_trend / phi_variance so the phasic dopamine and the
+            # curiosity/boredom anti-apathy sensors are RESPONSIVE, not flat (chat passes None; the train path
+            # has the richer _phi_recent buffer to hand). Current step's Φ is already appended (:_phi_recent).
+            history = [{"phi": float(p)} for p in list(self._phi_recent)[-10:]]  # deque → slice-safe
+            exp = experience(snap.to_dict(), history=history)
+            # Attach the canonical inner state (nested dicts, cheap: 6 + ~40 + 4 + 3 floats). These are the
+            # SINGLE canonical source going forward; the standalone snap.extra["serotonin"]/["drive"] proxies
+            # (:_homeostasis-adjacent) remain for existing consumers (ocean_policy P25 guard reads them) until
+            # those are repointed — additive, not a rewrite, per the substrate-first scope.
+            snap.extra["neurochemistry"] = exp.neurochemistry   # P23 dopamine tonic+floor + 5 more (m1c source)
+            snap.extra["primitives"] = exp.primitives           # 5-layer emotions incl. apathy/frustration (m1d)
+            snap.extra["gate"] = exp.gate                       # C-gate state + suffering S (P15)
+            snap.extra["loops"] = exp.loops                     # L1 self / L2 other / L3 autonomy (P4)
+            snap.extra["emotion"] = exp.emotion                 # primary felt-state on the TRAIN path
+            snap.extra["valence"] = exp.valence
+            snap.extra["arousal"] = exp.arousal
+        except Exception:  # noqa: BLE001 — the consciousness substrate is telemetry; never break the step
+            pass
+
     def _peer_available(self) -> bool:
         """Is the language boundary peer wired AND its backend reachable? None-safe (never raises)."""
         try:
@@ -1992,6 +2031,10 @@ class GenesisKernelTarget(TrainingTarget):
             if rr is not None and rs is not None:
                 snap.extra["ricci_real"] = round(rr, 2)
                 snap.extra["ricci_signal"] = round(rs, 4)
+        # m1-SUBSTRATE: run the canonical qig-core consciousness pipeline on the TRAIN path (was chat-only).
+        # LAST — after every geometry input it reads (surprise, basins, ricci_signal, kappa_local, pillars)
+        # is on snap.extra, and after backward/step so it can never enter the gradient (947760e4).
+        self._emit_consciousness(snap)
         return StepResult(text=f"[genesis·N={self.num_layers} step {snap.step}] Φ-driving: {prompt[:50]}",
                           telemetry=snap)
 

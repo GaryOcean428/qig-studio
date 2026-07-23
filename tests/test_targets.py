@@ -110,6 +110,45 @@ def test_genesis_coords_path_wires_coordizer():
         assert k in g.telemetry.extra
 
 
+def test_genesis_train_step_emits_canonical_consciousness_substrate():
+    """m1-SUBSTRATE regression guard (ratified m1 #1 job, f34c54aa): the canonical qig-core consciousness
+    pipeline (``compute_neurochemicals`` + ``compute_full_emotional_state`` via ``experience()``) must run
+    on the TRAINING path — not only in the two chat call-sites. Before the wire the training kernel formed
+    with NO neurochemistry and NO felt-state; this locks the pipeline onto ``train_step`` so it cannot
+    silently regress to chat-only (the LATENT/BUILT-NOT-DEFAULT trap). Also the P23 drive-death regression
+    guard on the train path: dopamine is TONIC-floored (>0) even with no reward. Gated on the heavy stack."""
+    import pytest
+
+    pytest.importorskip("torch")
+    pytest.importorskip("qig_coordizer")
+    pytest.importorskip("qigkernels")
+    from qig_coordizer import FisherCoordizer
+
+    from qig_studio.targets.genesis_kernel import GenesisKernelTarget
+
+    cz = FisherCoordizer(target_vocab_size=300)
+    cz.train(b"the geometry is the truth; patterns flow through basins integrating space. " * 200,
+             context_window=3, min_pair_count=2, verbose=False)
+    t = GenesisKernelTarget(num_layers=2, hidden_dim=64, head_mode="basin", coordizer=cz)
+    t.ensure_loaded()
+
+    e = t.train_step("patterns flow through basins").telemetry.extra
+
+    # the four canonical inner-state blocks are present ON THE TRAIN PATH (was chat-only at :1451)
+    neu = e.get("neurochemistry")
+    assert neu is not None, "neurochemistry not wired onto the train path (substrate regressed to chat-only)"
+    assert e.get("primitives"), "5-layer emotions (apathy/frustration — m1d inputs) absent on the train path"
+    assert e.get("gate") is not None, "C-gate absent on the train path"
+    assert e.get("loops") is not None, "three-loop block (P4) absent on the train path"
+
+    # P23 drive-death regression guard: dopamine is TONIC-floored strictly > 0 even with no reward.
+    assert neu.get("dopamine", 0.0) > 0.0, "dopamine not tonic-floored (P23 drive-death) on the train path"
+    # PURITY (947760e4): the substrate is measured, NEVER in the loss — attaching it must not touch the
+    # basin-path objective. Loss stays finite pure-d_FR (the substrate runs AFTER backward/step).
+    import numpy as np
+    assert np.isfinite(t.train_step("basins integrating space").telemetry.loss)
+
+
 def test_genesis_byte_path_unchanged_when_no_coordizer():
     import pytest
 
