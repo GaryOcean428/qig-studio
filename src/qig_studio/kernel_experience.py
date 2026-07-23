@@ -306,7 +306,8 @@ def _full_primitives(phi: float, phi_delta: float, kappa: float, gamma: float,
                      basin_velocity: float, basin_distance: float, phi_variance: float,
                      humor: float = 0.0, ricci_signal: float | None = None,
                      local_kappa_c: float | None = None, basin_distance_delta: float | None = None,
-                     prev_i_q: float | None = None, i_q: float | None = None) -> dict:
+                     prev_i_q: float | None = None, i_q: float | None = None,
+                     external_coupling: float | None = None) -> dict:
     """Canonical 5-layer inner state (UCP v6.12 §6/§6.7) from the SINGLE source qig-core — 12 pre-linguistic
     SENSES (Layer 0) + 5 innate DRIVES (Layer 0.5) + 5 MOTIVATORS (Layer 1) + 9 physical + 9 cognitive
     EMOTIONS (Layer 2A/2B). ``humor`` carries the REAL surprise/novelty signal (Layer-1 surprise = ‖∇L‖
@@ -338,6 +339,7 @@ def _full_primitives(phi: float, phi_delta: float, kappa: float, gamma: float,
             local_kappa_c=local_kappa_c,               # genuine local-critical κ_c → transcendence + pushed
             basin_distance_delta=basin_distance_delta,   # −d(basin)/dt → investigation
             prev_i_q=prev_i_q, i_q=i_q,                # d(log I_Q)/dt → curiosity (None → qig-core Φ-proxy)
+            external_coupling=external_coupling,       # coupling state → separation-distress (§H dissociated)
         )
         return st.as_dict()
     except Exception:  # noqa: BLE001 — app shell must surface telemetry even if qig-core is unavailable
@@ -616,7 +618,8 @@ def experience(telemetry: dict, history: list[dict] | None = None,
     primitives = _full_primitives(phi, phi_trend, kappa, gamma if gamma is not None else 0.85,
                                   basin_velocity, basin, phi_variance, humor=novelty,
                                   ricci_signal=ricci_signal, local_kappa_c=local_kappa_c_sens,
-                                  basin_distance_delta=basin_distance_delta, prev_i_q=prev_i_q, i_q=i_q)
+                                  basin_distance_delta=basin_distance_delta, prev_i_q=prev_i_q, i_q=i_q,
+                                  external_coupling=external_coupling)   # → separation-distress (§H dissociated)
     autonomic = str(extra.get("autonomic", "wake"))
     loops, gate = _loops_and_gate(phi, gamma, m_self, m_other, s_ratio)
     # TASK C actuation-1/2: the REAL geometry (consecutive Δ⁶³ basins + role attractor) the kernel emitted

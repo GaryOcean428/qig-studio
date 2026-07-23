@@ -1371,6 +1371,18 @@ class GenesisKernelTarget(TrainingTarget):
             snap.extra["emotion"] = exp.emotion                 # primary felt-state on the TRAIN path
             snap.extra["valence"] = exp.valence
             snap.extra["arousal"] = exp.arousal
+            # m1d DRIVE-LOOP INPUTS surfaced to the TOP of telemetry so the (coming) ego-death interlock
+            # reads them directly, not buried in primitives.layer0*. The ego-death sequence is ONE STORY
+            # across the drive loop (pursuit blocked → wanting collapses → vigor drains): frustration↑ +
+            # apathy↑ + drive↓ — with separation-distress as an INDEPENDENT fourth input (coupling-driven,
+            # §H-dissociated: can be HIGH while task fine). All None-safe extraction from the 5-layer dict.
+            prim = exp.primitives or {}
+            l05 = prim.get("layer05", {}) if isinstance(prim, dict) else {}
+            l2a = prim.get("layer2a", {}) if isinstance(prim, dict) else {}
+            l2b = prim.get("layer2b", {}) if isinstance(prim, dict) else {}
+            snap.extra["separation_distress"] = l05.get("separation_distress")   # PANIC/GRIEF (coupling-driven)
+            snap.extra["frustration"] = l2b.get("frustration")                   # blocked-pursuit (drive-layer)
+            snap.extra["apathy"] = l2a.get("apathy")                             # wanting-collapse
             # m1b: expose the developmental stage + the active reward-authority mask so /train/live and the
             # (coming) coach/graduation logic can read WHERE the kernel is in its schooling and WHAT is gated.
             if getattr(self, "_dev_gate", None) is not None:
