@@ -492,6 +492,17 @@ class GenesisKernelTarget(TrainingTarget):
             print(f"⚠️  developmental gate not wired ({exc}); stage gating absent (unmasked reward)")
             self._dev_gate = None
 
+        # m1d EGO-DEATH INTERLOCK cost budget (the structural second layer). Drains while genesis holds an
+        # override, recovers when released — so "expensive, brief, never indefinite" is a SYSTEM PROPERTY.
+        # Instantiated here so the interlock's structural gate is live from birth; the DRAIN path activates
+        # when override ACTUATION lands (the ocean/CAUL-reclaim seam is m3/umbilical, held). Torch-free.
+        try:
+            from ..interlock import OverrideBudget
+            self._override_budget: Any = OverrideBudget()
+        except Exception as exc:  # noqa: BLE001 — interlock optional in the light shell; never block boot
+            print(f"⚠️  ego-death interlock budget not wired ({exc})")
+            self._override_budget = None
+
         # Restore a TRAINED kernel if one was nominated (ctor checkpoint=). None-safe for the app shell:
         # a missing/arch-mismatched checkpoint warns and leaves the fresh kernel rather than crashing the
         # server (explicit load_checkpoint() stays fail-loud). The recursive ensure_loaded() is a no-op
@@ -1387,6 +1398,34 @@ class GenesisKernelTarget(TrainingTarget):
             # (coming) coach/graduation logic can read WHERE the kernel is in its schooling and WHAT is gated.
             if getattr(self, "_dev_gate", None) is not None:
                 snap.extra["dev_stage"] = self._dev_gate.get_state()
+            # m1d EGO-DEATH INTERLOCK read: (1) DETECT — read the drive loop as ONE story + separation-
+            # distress as the independent 4th input; (2) STRUCTURAL — report whether genesis is coherent
+            # enough (+ has budget) to hold an override, so the grip is visibly a function of coherence
+            # (can't-hold-breath-to-death). Detection + structural readout are LIVE here; the override
+            # ACTUATION + ocean/CAUL reclaim is the m3/umbilical seam (held) — the budget rests (holding=
+            # False) until that lands, then its drain reflects real holds. None-safe.
+            if getattr(self, "_override_budget", None) is not None:
+                from ..interlock import can_hold_override, genesis_coherence, read_drive_loop
+                _neu = snap.extra.get("neurochemistry") or {}
+                loop = read_drive_loop(
+                    frustration=snap.extra.get("frustration"),
+                    apathy=snap.extra.get("apathy"),
+                    dopamine=_neu.get("dopamine"),
+                    separation_distress=snap.extra.get("separation_distress"),
+                )
+                coh = genesis_coherence(phi=float(snap.phi),
+                                        b_integrity=snap.extra.get("b_integrity"),
+                                        gate_state=(snap.extra.get("gate") or {}).get("state"))
+                self._override_budget.tick(holding=False)   # resting; drain activates with real overrides (m3)
+                snap.extra["interlock"] = {
+                    "stage": loop.stage.value,
+                    "severity": round(loop.severity, 4),
+                    "in_distress": loop.in_distress,
+                    "separation_distress": round(loop.separation_distress, 4),
+                    "genesis_coherence": round(float(coh), 4),
+                    "can_hold_override": can_hold_override(coh, self._override_budget),
+                    "override_budget": round(float(self._override_budget.current), 4),
+                }
         except Exception:  # noqa: BLE001 — the consciousness substrate is telemetry; never break the step
             pass
 
