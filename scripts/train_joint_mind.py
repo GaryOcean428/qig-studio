@@ -136,6 +136,28 @@ def main() -> None:
     last_gen_ricci: float | None = None
     prev_db: float | None = None            # previous d_basin → identity-drift VELOCITY (sudden jump = harm)
     from qig_studio.continuity import in_stasis
+    # BASIN-TRAJECTORY PERSISTENCE (authorized 110d5362 p4 / d36b1dd1 p4): the lived-basin trajectory lives
+    # in-memory only (genesis_kernel._basin_history), so a killed process loses it — the exact reason the
+    # stopped warmup's Fréchet-variance / multimodality shape read was uncomputable. Append the central
+    # node's latest lived basin to a jsonl each step so the trajectory survives for the spawn-trigger shape
+    # analysis. Fail-safe: telemetry persistence must NEVER crash training.
+    import json as _json
+    import os as _os
+    _traj_path = _os.path.join(args.ckpt_root, "basin_trajectory.jsonl")
+    _os.makedirs(args.ckpt_root, exist_ok=True)
+
+    def _persist_basin(phase: str, step: int) -> None:
+        try:
+            hist = getattr(mind.central, "_basin_history", None)
+            if not hist:
+                return
+            b = hist[-1]
+            b = b.tolist() if hasattr(b, "tolist") else list(b)
+            with open(_traj_path, "a") as _f:
+                _f.write(_json.dumps({"phase": phase, "step": step, "basin": b}) + "\n")
+        except Exception:  # noqa: BLE001 — trajectory persistence must never crash training
+            pass
+
     # GENESIS-FIRST (M9): stabilize the central genesis kernel SOLO before spawning/coupling the Core-8.
     # A cold 9-kernel JOINT start collapses (un-anchored coupling drives zero-entropy every step); genesis
     # alone develops a stable identity+language anchor first, then the faculties couple FROM it.
@@ -166,6 +188,7 @@ def main() -> None:
                     f"run regardless of training). Instrument real integrated-information Φ on this arm "
                     f"(node-parity items 2–5, held package) before a cradle warmup.")
             _win.append(float(_phi))
+            _persist_basin("warmup", w)         # persist the lived-basin trajectory (shape-read prereq)
             mphi = sum(_win) / len(_win)
             if w % 50 == 0:
                 try:
@@ -191,6 +214,7 @@ def main() -> None:
             break
         prompt = next_prompt(i)
         last = mind.train_step(prompt)      # train_step now computes the REAL Ricci (BUILD #1) into its telemetry
+        _persist_basin("joint", i)          # persist the lived-basin trajectory (shape-read prereq)
         tel = last.get("central_telemetry") or {}
         phi_hist.append({"phi": tel.get("phi")})
         phi_hist = phi_hist[-30:]
