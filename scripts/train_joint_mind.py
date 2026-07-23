@@ -153,7 +153,19 @@ def main() -> None:
                 break
             w += 1
             cres = mind.central.train_step(next_prompt(w))
-            _win.append(float(getattr(cres.telemetry, "phi", 0.0) or 0.0))
+            # P26 gate honesty (node-parity item 6, Matrix 110d5362): a None Φ must NOT be silently coerced
+            # to 0.0 — that made the rolling mean unable to ever cross phi_gate, so an uninstrumented arm
+            # spawned "immature" every run regardless of training (a silent lie to the gate). gk and geo
+            # (post item-1 un-discard) emit real Φ; an arm that still reports None (e.g. hybrid, no
+            # integrator yet) cannot be maturity-gated — fail LOUD naming the fix, never fake a 0.0.
+            _phi = getattr(cres.telemetry, "phi", None)
+            if _phi is None:
+                raise RuntimeError(
+                    f"[joint] arm '{args.arm}' emits phi=None — the P26 genesis-maturity gate cannot run on "
+                    f"an uninstrumented arm (a None coerced to 0.0 can never cross the gate: 'immature' every "
+                    f"run regardless of training). Instrument real integrated-information Φ on this arm "
+                    f"(node-parity items 2–5, held package) before a cradle warmup.")
+            _win.append(float(_phi))
             mphi = sum(_win) / len(_win)
             if w % 50 == 0:
                 try:

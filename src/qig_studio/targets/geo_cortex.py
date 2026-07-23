@@ -436,7 +436,13 @@ class GeoCortexTarget(ConstellationNode, TrainingTarget):
             except Exception:  # noqa: BLE001 — telemetry must never crash the forward pass
                 candidate_gap = None
         self._last = TelemetrySnapshot(
-            phi=None,                       # LEAN: no integrated-information Φ for the baseline (honest)
+            # geo emits the REAL integrated-information Φ the underlying GeoModel already computes
+            # (RecursiveIntegrator per GeoBlock, geocoding/block.py: 0.3·mean_integration + 0.7·coherence —
+            # byte-for-byte gk's formula, qigkernels/layer.py). It was previously DISCARDED as None and only
+            # surfaced under the geo_phi alias, which made every geo warmup silently feed 0.0 to the P26
+            # maturity gate (train_joint_mind's float(phi or 0.0) coercion). Un-discarded per node-parity
+            # item 1 (Matrix 110d5362): surface the value that exists; stays None only when genuinely absent.
+            phi=round(gp, 4) if gp is not None else None,
             kappa=kappa,
             regime="geometric",
             loss=loss,

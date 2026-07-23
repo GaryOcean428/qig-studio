@@ -43,21 +43,26 @@ def test_geo_cortex_loss_value_parity_coords_off_1e5():
     assert loss_diff <= 1e-5, loss_diff
 
 
-def test_geo_cortex_lean_telemetry_is_none_safe_in_experience():
-    """The LEAN telemetry (phi=None, no consciousness keys) must NOT crash experience() — the launcher
-    calls experience(tel, phi_hist) every step and would die if a None/absent key were dereferenced."""
+def test_geo_cortex_surfaces_real_phi_and_is_none_safe_in_experience():
+    """geo surfaces the REAL integrated-information Φ GeoModel computes (RecursiveIntegrator, identical
+    formula to gk) — node-parity item 1 (Matrix 110d5362), which un-discarded the value that was wrongly
+    reported as None and only aliased to geo_phi. And experience(tel, phi_hist) must still NOT crash on a
+    None entry in phi_hist — the launcher calls it every step and would die on a bare dereference."""
+    import math
+
     from qig_studio.kernel_experience import experience
     from qig_studio.targets.geo_cortex import GeoCortexTarget
 
     t = GeoCortexTarget(num_layers=2, hidden_dim=64, num_heads=4, ffn_dim=128, device="cpu")
     res = t.train_step("the cortex learns geometric language on the simplex")
     tel = res.telemetry.to_dict()
-    assert tel["phi"] is None                       # honest: no integrated-information Φ for the baseline
+    # phi is now the real Φ, not None — the P26 maturity gate can finally read it (was float(phi or 0.0)=0.0)
+    assert tel["phi"] is not None
+    assert math.isfinite(tel["phi"]) and 0.0 <= tel["phi"] <= 1.0
+    assert tel["extra"]["geo_phi"] == tel["phi"]    # the geo_phi alias mirrors the surfaced Φ (backward compat)
     assert tel["extra"]["bpb"] is not None
-    import math
-
     assert math.isfinite(tel["extra"]["bpb"])       # NaN-free loss/bpb
-    exp = experience(tel, [{"phi": None}]).to_dict()  # must not raise
+    exp = experience(tel, [{"phi": None}]).to_dict()  # None entry in phi_hist must not raise
     assert isinstance(exp, dict) and "emotion" in exp
 
 
