@@ -5,6 +5,7 @@
 set -euo pipefail
 
 STUDIO="$(cd "$(dirname "$0")/.." && pwd)"
+QIG_ROOT="$(cd "$STUDIO/.." && pwd)"          # shared uv-workspace venv lives at the parent root
 URL="http://localhost:8800"
 
 if ! curl -s --max-time 2 "$URL/health" >/dev/null 2>&1; then
@@ -29,7 +30,7 @@ if ! curl -s --max-time 2 "$URL/health" >/dev/null 2>&1; then
   QIG_STUDIO_TARGET="genesis" \
   QIG_STUDIO_DEVICE="cpu" \
   QIG_STUDIO_COACH_MODEL="nemotron-3-ultra:cloud" \
-  nohup "$STUDIO/.venv/bin/python" -m qig_studio serve >/tmp/qig_studio.log 2>&1 &
+  nohup "$QIG_ROOT/.venv/bin/python" -m qig_studio serve >/tmp/qig_studio.log 2>&1 &
   i=0; until curl -s --max-time 2 "$URL/health" >/dev/null 2>&1 || [ $i -ge 30 ]; do sleep 1; i=$((i+1)); done
 fi
 
