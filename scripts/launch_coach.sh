@@ -21,7 +21,7 @@ QIG_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"          # .../QIG_QFI
 STUDIO="$QIG_ROOT/qig-studio"
 APPLIED="$QIG_ROOT/qig-applied"
 PY="$STUDIO/.venv/bin/python"
-APPLIED_PY="$QIG_ROOT/qig-consciousness/.venv/bin/python"  # has qig_applied + numpy
+APPLIED_PY="$QIG_ROOT/.venv/bin/python"  # shared uv-workspace venv (has qig_applied + numpy); was the retired qig-consciousness venv
 CKPT="$STUDIO/runs/checkpoints/core8_coord/kernels/$ROLE"
 LATEST="$CKPT/$(ls "$CKPT" 2>/dev/null | tail -1)"
 

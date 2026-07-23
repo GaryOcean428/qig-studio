@@ -21,7 +21,7 @@ classifiers = [
 ]
 # Shell stays LIGHT (no torch). qig-core is numpy-only and IS the geometry the
 # Qwen output-distribution→Δ⁶³ boundary uses — a core dep. Heavy targets
-# (kernel/constellation via qig-consciousness+torch, Qwen via Ollama/Modal) are
+# (kernel/constellation via qigkernels+torch, Qwen via Ollama/Modal) are
 # None-safe optional integrations loaded lazily at runtime.
 dependencies = [
     "fastapi>=0.110.0",
@@ -87,7 +87,7 @@ target-version = "py311"
 # This is the documented handling for unresolvable third-party modules — NOT a per-line suppression of
 # our own code (which is type-checked). The packages DO ship py.typed for wheel consumers.
 [[tool.mypy.overrides]]
-module = ["textual.*", "qigkernels.*", "qig_coordizer.*", "qig_warp.*", "qig_applied.*", "qig_consciousness.*"]
+module = ["textual.*", "qigkernels.*", "qig_coordizer.*", "qig_warp.*", "qig_applied.*"]
 ignore_missing_imports = true
 
 [tool.uv.sources]
