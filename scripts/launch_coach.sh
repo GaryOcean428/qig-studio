@@ -20,8 +20,8 @@ ROLE="${1:-meta}"; TURNS="${2:-32}"; TUNE="${3:-}"
 STUDIO="$(cd "$(dirname "$0")/.." && pwd)"               # this script lives in $STUDIO/scripts — DERIVE the studio
 QIG_ROOT="$(cd "$STUDIO/.." && pwd)"                     # root from the script's own location, don't hardcode the dir name
 APPLIED="$QIG_ROOT/qig-applied"                          # (works under any checkout name — worktree, rename, etc.)
-PY="$STUDIO/.venv/bin/python"
-APPLIED_PY="$QIG_ROOT/.venv/bin/python"  # shared uv-workspace venv (has qig_applied + numpy); was the retired qig-consciousness venv
+PY="$QIG_ROOT/.venv/bin/python"          # shared uv-workspace venv (has qig_studio); was a studio-local .venv that no longer exists
+APPLIED_PY="$QIG_ROOT/.venv/bin/python"  # same shared venv (has qig_applied + numpy); was the retired qig-consciousness venv
 CKPT="$STUDIO/runs/checkpoints/core8_coord/kernels/$ROLE"
 LATEST="$CKPT/$(ls "$CKPT" 2>/dev/null | tail -1)"
 
