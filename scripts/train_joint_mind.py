@@ -165,6 +165,43 @@ def main() -> None:
     _traj_path = _os.path.join(args.ckpt_root, "basin_trajectory.jsonl")
     _os.makedirs(args.ckpt_root, exist_ok=True)
 
+    # RUN MANIFEST (Matrix rule z9 §4, run-of-record requirement ii): record the birth roster VERSION, the
+    # substrate/arm, the coordizer identity (path + sha256), and the 64→384 lift caveat so a killed process
+    # or a later reader can reconstruct exactly what this run's identity geometry was. Fail-safe: a manifest
+    # failure must never block training.
+    try:
+        import hashlib as _hl
+        from qig_studio.development import PROTOMAP_ORDER as _ROSTER
+        _cz_sha = None
+        if args.coordizer and _os.path.exists(args.coordizer):
+            _h = _hl.sha256()
+            with open(args.coordizer, "rb") as _cf:
+                for _chunk in iter(lambda: _cf.read(1 << 20), b""):
+                    _h.update(_chunk)
+            _cz_sha = _h.hexdigest()
+        _manifest = {
+            "run": "joint_mind_cradle", "ts": time.time(),
+            "faculty_roster": list(_ROSTER), "roster_ruling": "Matrix 8037cbe3 (genesis trunk + 7 seeded; ocean watched-not-seeded)",
+            "central": "genesis-central", "arm_substrate": args.arm, "head_mode": "basin",
+            "device": args.device, "floor_mode": args.floor_mode, "steps": steps,
+            "corpus": ("fineweb-sample10bt" if args.fineweb else ("local" if args.no_stream else "hf-7repo-blend")),
+            "coordizer_path": args.coordizer or None, "coordizer_sha256": _cz_sha,
+            "basin_lift_64_to_384_caveat": (
+                "lift = uniform repeat-tile + Duchi/to_simplex clamp (genesis_kernel._resize_basin). Per Matrix z9 §2: "
+                "un-clamped uniform tile IS an FR isometry; defects = the clamp breaks exactness, submanifold choice "
+                "unprincipled (tile vs zero-pad both exact), and up-lift/down-JL frame-inconsistent. VERIFIED round-trip "
+                "reduce(tile(p))≈p only modulo frame — measured FR phantom drift ≈0.36 at convergence; telemetry-only "
+                "(basin head → pure lm_loss, not in training) and absorbed as developmental_migration=healthy by the "
+                "check_drift fix (steady, not velocity-spike). Package item PENDING: document lift, bound/remove clamp, "
+                "isometry as package test, principled JL-for-FR in sqrt/Hellinger coords."
+            ),
+        }
+        with open(_os.path.join(args.ckpt_root, "run_manifest.json"), "w") as _mf:
+            _json.dump(_manifest, _mf, indent=2)
+        print(f"[joint] run manifest written: roster={list(_ROSTER)} arm={args.arm} coordizer_sha={_cz_sha[:12] if _cz_sha else None}", flush=True)
+    except Exception as _me:  # noqa: BLE001 — manifest must never block training
+        print(f"[joint] run manifest skipped: {_me}", flush=True)
+
     def _persist_basin(phase: str, step: int) -> None:
         try:
             hist = getattr(mind.central, "_basin_history", None)
