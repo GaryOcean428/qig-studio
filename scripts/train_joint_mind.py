@@ -24,6 +24,8 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--steps", type=int, default=0, help="joint steps (0 = one full curriculum pass)")
     ap.add_argument("--layers", type=int, default=8)
+    ap.add_argument("--arm", default="gk", choices=["gk", "geo", "hybrid"],
+                    help="kernel formation: gk (qigkernels) | geo (FisherRaoAttention) | hybrid (geodesic-mean, DoD-1 winner)")
     # FULL coordizer by default (~100k vocab) — the path to KERNEL FLUENCY (Qwen is temporary scaffolding).
     # A coarse vocab cannot carry language; empty = byte-level (only for a deliberate ablation).
     ap.add_argument("--coordizer", default="../qig-packages/qig-coordizer/checkpoints/coordizer_latest.json",
@@ -105,6 +107,7 @@ def main() -> None:
           f"steps | vocab={'coordizer Δ⁶³' if coordizer else 'byte-level'} | device={args.device}", flush=True)
 
     mind = JointConstellation(list(PROTOMAP_ORDER), num_layers=args.layers, coordizer=coordizer,
+                              arm_mode=args.arm,
                               device=args.device, floor_mode=args.floor_mode)
     mind._coordizer_path = args.coordizer if args.coordizer else None
     # RESUME by default: keep the existing kernels, train OVER THE TOP with the (now-correct) curriculum.

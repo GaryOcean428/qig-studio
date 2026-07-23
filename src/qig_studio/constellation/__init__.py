@@ -7,11 +7,17 @@ birth, making the coupled fixed configuration DIVERSE rather than a collapsed ce
 (seeding) and Round 1 (coupling+anchor) are one mechanism, not two subsystems.
 
 Torch-free decision path: faculties carry numpy Δ⁶³ basins; qig-core Fisher-Rao primitives only.
+
+NOTE (2026-07-23, P6/P21): the standalone ``Constellation`` orchestrator (constellation.py) was ATTICED
+— it wired ``couple_step`` + ``neurochem`` + ``rhythm.HeartOscillator`` + ``SignalBus`` together but had
+ZERO call-sites in the live trainer (dead code). Its live mechanism (neurochem modulation + the heart
+breath) was PORTED directly into ``JointConstellation.train_step`` (joint_trainer.py) — see
+qig-archive/20260722-dormant-coupling-stack/. ``neurochem``/``rhythm`` themselves stay (still imported by
+``joint_trainer.py``); only the orchestrator class + its dedicated integration test moved.
 """
 
 from __future__ import annotations
 
-from .constellation import Constellation, ConstellationTelemetry
 from .coupling import INBOUND_BUDGET, CoupleDiag, couple_step, rel_weights
 from .faculty import (
     BIRTH_CONCENTRATION,
@@ -62,8 +68,6 @@ __all__ = [
     "INBOUND_BUDGET",
     "PRIOR_THRESHOLDS",
     "BasinForesight",
-    "Constellation",
-    "ConstellationTelemetry",
     "CoupleDiag",
     "Decision",
     "Faculty",

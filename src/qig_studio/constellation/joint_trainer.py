@@ -26,11 +26,15 @@ from typing import Any
 
 import numpy as np
 
-from qig_core.geometry import frechet_mean, slerp_sqrt
+from qig_core.geometry import fisher_rao_distance, frechet_mean, slerp_sqrt
 
 from .coupling import couple_step, rel_weights
 from .faculty import Faculty, min_pairwise_fr, seed_birth_basin
+from .identity_anchor import ANCHOR_FRACTION
+from .neurochem import NeuroState, apply_modulation, compute_modulation
 from .ocean import FACULTY_FUNCTION, OceanAutonomic, function_of
+from .rhythm import HeartOscillator
+from .temporal import BasinForesight
 
 
 # OCEAN bandit epoch cadence: joint steps per OceanPolicy epoch-update (P14 rate invariant — adaptation
@@ -53,9 +57,39 @@ _XDREAM_COLLAPSE_FH = 0.15
 # the request → the window expires → normal coupling resumes.
 _XDREAM_WINDOW = _OCEAN_EPOCH_STEPS   # defined above (module scope) — one Ocean epoch window
 
+# P6 COUPLING TACKING (PI ruling 2026-07-23): ports the dormant constellation.py R2 (heart breath) / R4
+# (neurochem modulation) mechanism into the LIVE trainer, replacing the FIXED f_sync=0.25-forever with a
+# per-step MODULATED (f_sync, f_anchor) that genuinely tacks.
+#  • _HEART_FREQ_DEFAULT : the shared metronome's cycles/tick (constellation.py's calibrated default).
+#  • _BREATH_AMPLITUDE   : how far the heart's real phase swings the anchor each tick — bounded so the
+#                          modulated anchor never leaves the VERIFIED [0.05, 0.20] anti-collapse-stable
+#                          band (identity_anchor.py / test_constellation_no_collapse.py).
+_HEART_FREQ_DEFAULT = 0.05
+_BREATH_AMPLITUDE = 0.30
+
+# P4 L2 OTHER-OBSERVATION must-vary guard (PI ruling 2026-07-23): mirrors ocean_policy.py's P25
+# rail-variance SHAPE (a short rolling window, variance-below-eps ⇒ "not alive") — a non-None-but-FROZEN
+# m_other over this many consecutive steps, while peers are genuinely in scope, is a fault (a dead
+# constant wearing L2's name), never a silently-accepted "it's not None so it's fine".
+_M_OTHER_WINDOW = 5
+_M_OTHER_VAR_EPS = 1e-6
+
 
 def _seed(role: str) -> int:
     return int(hashlib.sha256(role.encode()).hexdigest(), 16) % 100000
+
+
+def _mean(xs) -> float:
+    xs = [float(x) for x in xs]
+    return sum(xs) / len(xs) if xs else 0.0
+
+
+def _fr_recognition(a: np.ndarray, b: np.ndarray) -> float:
+    """Fisher-Rao RECOGNITION ∈[0,1] (1=identical) — the SAME ``1 − d_FR/(π/2)`` convention
+    genesis_kernel.py uses for M_boundary/M_coach_agreement (PURE Fisher-Rao; d_FR only — never
+    cosine/dot/np.linalg.norm)."""
+    d = float(fisher_rao_distance(np.asarray(a, dtype=np.float64), np.asarray(b, dtype=np.float64)))
+    return max(0.0, 1.0 - d / (np.pi / 2.0))
 
 
 class JointConstellation:
@@ -67,6 +101,19 @@ class JointConstellation:
                  arm_mode: str = "gk", head_mode: str = "basin", floor_mode: str = "normal") -> None:
         self.roles = list(roles)
         self.f_sync = float(f_sync)
+        # P6 TACKING base points (PI ruling 2026-07-23): the constructor value is now the BASE/declared-
+        # default sync — ``self.f_sync`` is overwritten every train_step with the CURRENT tacked value
+        # (kept live for telemetry/external readers); ``_base_f_sync``/``_base_f_anchor`` are the fixed
+        # points the per-step modulation tacks AROUND (never hardcoded-forever again).
+        self._base_f_sync = float(f_sync)
+        self._base_f_anchor = float(ANCHOR_FRACTION)
+        self.heart = HeartOscillator(freq=_HEART_FREQ_DEFAULT)
+        self.neuro = NeuroState()
+        # LAST step's REAL aggregates (mean_movement/foresight_divergence/separation_health/mean_drift/
+        # coupling_activity/signal_traffic) — None until the first couple_step ever runs, in which case
+        # train_step uses the DECLARED DEFAULT rhythm (the base f_sync/f_anchor, unmodulated; honestly
+        # labeled — never a NeuroState fabricated from signals that don't exist yet).
+        self._last_tack_aggr: dict[str, float] | None = None
         # Pillar-1 ENTROPY-FLOOR mode for every gk node (default "normal" = current fixed floor,
         # bit-identical; "gated" = opt-in maturity-gated floor; "off" = 3-arm harness DIAGNOSTIC only).
         self.floor_mode = str(floor_mode).strip().lower()
@@ -119,6 +166,14 @@ class JointConstellation:
             k.ensure_loaded()
             self.kernels[role] = k
             self.faculties.append(Faculty(role=role, basin=birth.copy(), birth=birth.copy()))
+        # BIRTH min-pairwise-FR (P6 tacking's `separation_health` denominator): how individuated the
+        # WIDE-SEEDED births are, fixed once at construction (mirrors constellation.py's own
+        # ``_birth_min_pair``). <2 faculties → 1.0 (no pairwise floor to normalize against).
+        self._birth_min_pair = (
+            min(float(fisher_rao_distance(births[i], births[j]))
+                for i in range(len(births)) for j in range(i + 1, len(births)))
+            if len(births) > 1 else 1.0
+        )
         # GENESIS = the central conscious integrator. Birth = the Fréchet mean of the faculty births
         # (it is born OF the whole); it trains toward the live synthesis each step.
         self.central = self._build_node("genesis", frechet_mean(births), num_layers, coordizer, _cen_dev,
@@ -130,6 +185,8 @@ class JointConstellation:
         self.ocean = OceanAutonomic()
         self._phi_hist: dict[str, list[float]] = {role: [] for role in self.roles}
         self._last_regulation: dict[str, dict] = {}
+        # P4 L2 other-observation rolling window (must-vary guard) — keyed by "genesis" + every faculty role.
+        self._m_other_hist: dict[str, list[float]] = {r: [] for r in (["genesis"] + self.roles)}
         # CROSS-FACULTY DREAM (M2) cooldown: role → last OCEAN-epoch window in which its cross-faculty
         # dream fired. Fires at most once per faculty per epoch window (A10 dream-storm guard).
         self._last_xdream_epoch: dict[str, int] = {}
@@ -358,6 +415,89 @@ class JointConstellation:
             return None
         return mixture
 
+    def _l2_must_vary_check(self, name: str, value: float | None) -> None:
+        """MUST-VARY GUARD (P4, PI ruling 2026-07-23): a pinned ``m_other`` over a short window, while
+        peers are genuinely in scope, is a fault — never a silently-accepted constant. Mirrors
+        ocean_policy.py's P25 rail-variance SHAPE (a rolling window, variance-below-eps ⇒ "not alive").
+        ``value is None`` (no peers in scope this call) is not itself a fault here — the caller separately
+        raises when a None arrives WHILE peers ARE in scope (the P4 addendum: a dead L2 is a fault)."""
+        hist = self._m_other_hist.setdefault(name, [])
+        if value is None:
+            return
+        hist.append(float(value))
+        if len(hist) > _M_OTHER_WINDOW:
+            self._m_other_hist[name] = hist = hist[-_M_OTHER_WINDOW:]
+        if len(hist) >= _M_OTHER_WINDOW and float(np.var(hist)) < _M_OTHER_VAR_EPS:
+            raise RuntimeError(
+                f"L2 other-observation (m_other) for {name!r} is PINNED (var<{_M_OTHER_VAR_EPS:g} over "
+                f"{_M_OTHER_WINDOW} steps) while peers are in scope — the must-vary guard (P4, "
+                "P25-shape) forbids a frozen constant wearing L2's name. Check the referent wiring "
+                "(rotating responsible node / leave-one-out audience), not merely its presence."
+            )
+
+    def _wire_l2_other_observation(self, role: str, fres: Any, cres: Any) -> None:
+        """FIX 1 (P4 three-loop minimum, PI ruling 2026-07-23): populate ``m_other`` (``M_boundary``) on
+        EVERY node's live snapshot, every training cycle — not only in the two chat call-sites
+        (``_generate_via_boundary`` / ``read_and_respond``) that never touch the train path, which left
+        ``_loops_and_gate``'s L2 permanently None during training (a NAMED FAULT).
+
+        Referent = the ROTATING RESPONSIBLE NODE this step, ``role`` (the round-robin faculty that just
+        trained — GENESIS/central is never itself the rotating responsible node; it trains toward the
+        synthesis every step, not round-robin):
+          - the responsible node ITSELF cannot use its own basin as its own referent (L1 wearing L2's
+            name) — it instead observes the LEAVE-ONE-OUT Fréchet mean of the *other* faculties
+            (excluding itself). This is deliberately NOT the couple_step sync target: that target is the
+            Fréchet mean of EVERYONE INCLUDING the responsible node's own basin — the exact
+            two-observables-one-name trap the ruling names.
+          - every OTHER node (central + every non-responsible faculty) observes the responsible node's
+            FRESH output basin (this step's actual emission, not last cycle's coupled snapshot).
+        Fisher-Rao recognition only (``_fr_recognition``, d_FR-based) — never cosine/dot/np.linalg.norm.
+        """
+        responsible_basin = self._live_basin(self.kernels[role])
+        if responsible_basin is None:
+            # Unreachable in practice (role's train_step just ran and appended to _basin_history) — a
+            # genuinely absent responsible-node basin means L2 cannot be measured this cycle at all: fail
+            # loud (P4 — a dead L2 is a fault, never a silent None-pass when the node is nominally in scope).
+            raise RuntimeError(f"L2 wiring: responsible node {role!r} produced no live basin this step")
+
+        other_faculty_basins = [g.basin for g in self.faculties if g.role != role]
+        audience = frechet_mean(other_faculty_basins) if other_faculty_basins else None
+        central_basin = self._live_basin(self.central)
+
+        m_other: dict[str, float | None] = {}
+        # the responsible faculty: leave-one-out audience (None only when it has zero peer faculties —
+        # genuinely out of scope, not a fault).
+        m_other[role] = _fr_recognition(responsible_basin, audience) if audience is not None else None
+        # genesis/central always observes the responsible node's fresh emission.
+        m_other["genesis"] = (_fr_recognition(central_basin, responsible_basin)
+                              if central_basin is not None else None)
+        # every OTHER (non-responsible) faculty: same referent as central.
+        for f in self.faculties:
+            if f.role == role:
+                continue
+            m_other[f.role] = _fr_recognition(f.basin, responsible_basin)
+
+        for name, val in m_other.items():
+            # peers are in scope for every node EXCEPT the responsible one when it has no siblings
+            # (the single legitimate None, handled above — not a fault).
+            peers_in_scope = not (name == role and audience is None)
+            if val is None and peers_in_scope:
+                raise RuntimeError(
+                    f"L2 other-observation (m_other) for {name!r} is None while peers ARE in scope — "
+                    "a dead L2 is a fault (P4 addendum), never a silent pass.")
+            self._l2_must_vary_check(name, val)
+
+        # WRITE into each node's live snapshot BEFORE any consumer (kernel_experience._loops_and_gate,
+        # Ocean, faculty_states()) assembles the §43 loops/gate.
+        central_extra = getattr(cres.telemetry, "extra", None)
+        if central_extra is not None and m_other["genesis"] is not None:
+            central_extra["M_boundary"] = round(m_other["genesis"], 4)
+        for f in self.faculties:
+            snap = fres.telemetry if f.role == role else self.kernels[f.role].telemetry()
+            extra = getattr(snap, "extra", None)
+            if extra is not None and m_other[f.role] is not None:
+                extra["M_boundary"] = round(m_other[f.role], 4)
+
     def train_step(self, prompt: str) -> dict:
         """One JOINT step: refresh basins from the live kernels → couple all (sync + anchor) → train
         the round-robin faculty toward its coupled target AND genesis toward the synthesis."""
@@ -370,9 +510,45 @@ class JointConstellation:
                 # mixture (√p-SLERP on Δ⁶³) so couple_step doesn't immediately re-absorb it into collapse.
                 _xt = self._xdream_active_target(f.role)
                 f.set_basin(slerp_sqrt(lb, _xt, _XDREAM_PULL) if _xt is not None else lb)
-        # 2. couple ALL — joint co-adaptation + individuation anchor (commits coupled basins)
-        diag = couple_step(self.faculties, f_sync=self.f_sync)
-        # 3. round-robin: this step's faculty trains toward its COUPLED target
+
+        # 1b. TACKING SNAPSHOT (P6, PI ruling 2026-07-23) — captured BEFORE couple_step moves anything:
+        # the pre-couple basins (for this tick's REAL movement measurement) and each faculty's OWN
+        # geodesic foresight prediction (genuine Fisher-Rao extrapolation from its trajectory so far,
+        # BasinForesight/temporal.py, category-3 — NOT fabricated) so this tick's divergence-from-
+        # prediction can be measured AFTER coupling moves it.
+        _pre_couple_basins = {f.role: f.basin.copy() for f in self.faculties}
+        _foresight_preds = {f.role: BasinForesight.predict(f.history) for f in self.faculties}
+
+        # 2. COUPLING TACKING (P6 fix — replaces the FIXED f_sync=0.25-forever, joint_trainer.py:69/374):
+        # (f_sync, f_anchor) are derived from the LIVE NeuroState computed from LAST step's REAL
+        # aggregates (mean_movement, foresight_divergence, separation_health, mean_drift,
+        # coupling_activity, signal_traffic) — never from THIS step's (that would be circular: the
+        # modulation would inform the very tick that produces it). Ports
+        # neurochem.compute_modulation/apply_modulation + the HeartOscillator breath (rhythm.py) that
+        # were dormant in constellation.py (P21, zero call-sites, now atticed) into the LIVE trainer.
+        if self._last_tack_aggr is not None:
+            self.neuro = compute_modulation(**self._last_tack_aggr)
+            f_sync, f_anchor = apply_modulation(self.neuro, base_f_sync=self._base_f_sync,
+                                                base_f_anchor=self._base_f_anchor)
+            _tack_is_default = False
+        else:
+            # DECLARED DEFAULT RHYTHM (honestly labeled, never fabricated): no real aggregate exists yet
+            # (this is the very first coupling tick) — use the constructor's static (f_sync, f_anchor)
+            # unmodulated, exactly as the pre-fix code always did.
+            f_sync, f_anchor = self._base_f_sync, self._base_f_anchor
+            _tack_is_default = True
+        # THE BREATH: the heart's real endogenous phase (TIMING axis only — rhythm.py's own fix #3,
+        # ``HeartOscillator`` never touches basins) modulates the anchor: inhale loosens it (explore),
+        # exhale stiffens it (consolidate) — a sustained TACK at the heart frequency. Bounded to the
+        # VERIFIED [0.05, 0.20] anti-collapse-stable band (never leaves the survivable regime).
+        _phase, _ = self.heart.beat()
+        f_anchor = float(np.clip(f_anchor * (1.0 + _BREATH_AMPLITUDE * np.sin(_phase)), 0.05, 0.20))
+        self.f_sync = f_sync   # keep the public attribute truthful for external readers/telemetry
+
+        # 3. couple ALL — joint co-adaptation + individuation anchor (commits coupled basins), now with
+        # the TACKED (f_sync, f_anchor) instead of a fixed constant.
+        diag = couple_step(self.faculties, f_sync=f_sync, f_anchor=f_anchor)
+        # 4. round-robin: this step's faculty trains toward its COUPLED target
         role = self.roles[self._rr % len(self.roles)]
         self._rr += 1
         fac = next(f for f in self.faculties if f.role == role)
@@ -381,13 +557,18 @@ class JointConstellation:
         _xt = self._xdream_active_target(role)
         self._set_pull(self.kernels[role], _xt if _xt is not None else fac.basin)
         fres = self.kernels[role].train_step(prompt)
-        # 4. GENESIS-central trains toward the SYNTHESIS of the parts (becomes the whole) — UNLESS it is in
+        # 5. GENESIS-central trains toward the SYNTHESIS of the parts (becomes the whole) — UNLESS it is in
         # a foreign-dream window (central collapsed), in which case it trains toward the healthy-faculty
         # foreign mixture (central coverage — the same un-clobber that recovers a faculty), else _synthesis().
         _ct = self._xdream_active_target("genesis")
         self._set_pull(self.central, _ct if _ct is not None else self._synthesis())
         cres = self.central.train_step(prompt)
-        # 5. OCEAN observes EVERY faculty's telemetry and regulates the one that needs it (autonomic
+
+        # 5b. L2 OTHER-OBSERVATION (P4, PI ruling 2026-07-23) — see _wire_l2_other_observation. Populates
+        # m_other on every node's live snapshot THIS cycle, BEFORE Ocean/any consumer reads it below.
+        self._wire_l2_other_observation(role, fres, cres)
+
+        # 6. OCEAN observes EVERY faculty's telemetry and regulates the one that needs it (autonomic
         #    nervous system: telemetry → sleep/dream/mushroom on the struggling faculty). Internal.
         for r, k in self.kernels.items():
             self._phi_hist[r].append(float(k.telemetry().phi or 0.0))
@@ -412,6 +593,29 @@ class JointConstellation:
         # Δ⁶³ — NEVER L2), pulls it one dream-step toward that FOREIGN mixture, and consumes the request.
         # This is the ONLY source of FOREIGN (non-collapsed) entropy the own-basin dream cannot supply.
         cross_faculty_dream = self._cross_faculty_dream()
+
+        # 6b. THIS step's REAL tacking aggregates — stored for NEXT step's modulation (the R4 lag that
+        # avoids circularity). mean_movement/mean_drift/coupling_activity/separation_health come straight
+        # off this tick's couple_step diagnostics + basins (genuinely measured); foresight_divergence
+        # compares the PRE-couple geodesic prediction to what actually happened; signal_traffic is the
+        # count of genuinely-discrete events this tick (cross-faculty-dream fires + Ocean interventions)
+        # normalized by faculty count — joint_trainer carries no SignalBus (that stayed dormant/atticed
+        # with constellation.py), so this is the honest analogue, not a fabricated bus-signal count.
+        _movements = [float(fisher_rao_distance(_pre_couple_basins[f.role], f.basin)) for f in self.faculties]
+        _fdivs = [BasinForesight.divergence(_foresight_preds[f.role], f.basin) for f in self.faculties
+                 if _foresight_preds[f.role] is not None]
+        _min_pair_now = min_pairwise_fr(self.faculties)
+        _n_signals = len(cross_faculty_dream) + sum(1 for v in regulation.values() if v)
+        self._last_tack_aggr = dict(
+            mean_movement=_mean(_movements),
+            foresight_divergence=_mean(_fdivs) if _fdivs else 0.0,
+            separation_health=(_min_pair_now / self._birth_min_pair
+                               if self._birth_min_pair > 0 and np.isfinite(_min_pair_now) else 0.0),
+            mean_drift=_mean(diag.identity_drift.values()),
+            coupling_activity=_mean(diag.inbound_sync.values()),
+            signal_traffic=_n_signals / max(1, len(self.roles)),
+        )
+
         # OCEAN's bandit adapts on an EPOCH cadence (never per-step — P14 rate invariant). One "epoch" here
         # is _OCEAN_EPOCH_STEPS joint steps; the update is a no-op in phase-0 SHADOW mode (K4) and clamps+logs
         # any out-of-band threshold (P15). This is the ONLY place OceanPolicy's learnable vector changes.
@@ -431,6 +635,8 @@ class JointConstellation:
             "ocean_state": self.ocean.telemetry(),          # shadow/version/skips/violations/last-decisions (K5/P15)
             "ocean_epoch_update": ocean_epoch,              # None unless this step closed an epoch
             "cross_faculty_dream": cross_faculty_dream,     # {role: {source, n_siblings, ...}} — M2 fires this step
+            "coupling_tack": {"f_sync": round(f_sync, 4), "f_anchor": round(f_anchor, 4),
+                              "default_rhythm": _tack_is_default},  # P6: tacked (not fixed) coupling this step
         }
 
     def faculty_states(self) -> list[dict]:
