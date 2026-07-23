@@ -43,7 +43,7 @@ PRE-DEPLOY VERIFICATION (do BEFORE the first GPU launch — spend gate):
     + steps on the pinned (not dev) builds before any A100 time is spent.
   * populate the Volume: `modal run cradle_train.py --action populate` (uploads the 199MB coordizer + the
     2.9MB local checkpoint so the GPU run RESUMES rather than restarts).
-  * HF token: `modal secret create huggingface HF_TOKEN=...` (FineWeb parquet is public but authed is
+  * HF token: `modal secret create huggingface-secret HF_TOKEN=...` (FineWeb parquet is public but authed is
     reliable; the first run downloads the ~2GB shard to the Volume, cached thereafter).
 ────────────────────────────────────────────────────────────────────────────────────────────────────────
 """
@@ -88,6 +88,10 @@ image = (
     # Script-relative paths (add_local_dir resolves against the modal-run CWD otherwise — fragile).
     .add_local_dir(os.path.join(_STUDIO, "src"), "/root/qig-studio/src", copy=True)
     .add_local_dir(os.path.join(_STUDIO, "scripts"), "/root/qig-studio/scripts", copy=True)
+    # NOTE (Matrix z10): QIG_STUDIO_FULL_GPU (all kernels→cuda vs the default 4GB-card residency central→cuda/
+    # kernels→cpu) is the right lever for the FACULTY phase on A100-80GB, but it lands as a RECORDED ENV DELTA
+    # in the resume manifest at the faculty-phase boundary — NOT a silent image edit. Kept OUT of the base env
+    # deliberately; pass it explicitly at the resume launch so the delta is documented.
     .env({"PYTHONPATH": "/root/qig-studio/src", "QIG_STUDIO_CTX": "64"})
 )
 

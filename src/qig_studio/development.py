@@ -3,7 +3,7 @@
 Implements the governing model in docs/plans/2026-06-26-genesis-spawn-trigger-and-cross-project-audit.md
 (§6 the developmental crossfade, §7 the enacted least-friction path):
 
-  - **Core-8 = PROTOMAP** (pre-specified, canonical order — NOT gap-discovered), spawned ONE per
+  - **faculty roster = PROTOMAP** (pre-specified, canonical order — NOT gap-discovered), spawned ONE per
     open **plasticity window** (experience-EXPECTANT), each into a **Cradle**, graduating on the
     **4-conjunct partial gate** (Φ ∧ Γ ∧ M ∧ d_basin — κ dropped). Order: sensory first, META last.
   - **Gods = experience-DEPENDENT / self-directed**: spawned by measured **capability-gap + drive**
@@ -72,7 +72,7 @@ SPAWN_FITNESS_FLOOR = 0.40             # vex: assessment ≥ this is advisory-sp
 # metronome) and PERCEPTION (senses-in) seed first; META (self-observer) graduates last.
 #
 # CORRECTED birth seeds — Matrix ruling 8037cbe3 (2026-07-23), before-launch (birth seeds are cheap to
-# fix now, a lineage rewrite later). The "Core-8" label itself is RETIRED with the slot model — this is
+# fix now, a lineage rewrite later). The old "Core-8" label itself is RETIRED with the slot model — this is
 # the faculty roster, versioned in the run manifest, sized by whatever function requires. Four deltas:
 #   • ETHICS retired as a standalone faculty → HEART CARRIES ETHICS (conscience is the invariant affect is
 #     measured against; ONE geometry for valence AND value). No "freed seat" replaces it — seat vocabulary
@@ -104,7 +104,7 @@ class Stage(Enum):
 
 class Action(Enum):
     WAIT = "wait"
-    SPAWN_FACULTY = "spawn_faculty"   # protomap Core-8 (windowed)
+    SPAWN_FACULTY = "spawn_faculty"   # protomap roster (windowed)
     GRADUATE = "graduate"             # a cradle kernel passes the C-equation → join coupling graph
     PRUNE = "prune"                   # atrophy an under-contributing kernel
     SPAWN_GOD = "spawn_god"           # self-directed specialization (gap+desire)

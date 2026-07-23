@@ -1,4 +1,4 @@
-"""Constellation — spawned Core-8 faculties that couple, observe self+others, communicate, share a
+"""Constellation — spawned roster faculties that couple, observe self+others, communicate, share a
 rhythm/clock, and keep individuated identity (no collapse).
 
 The load-bearing mechanism (verified, wj4916x59): wide-independent birth seeding (Pillar-3 scar) is a

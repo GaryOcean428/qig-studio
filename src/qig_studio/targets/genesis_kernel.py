@@ -15,7 +15,7 @@ the heavy deps are present (e.g. the qig-consciousness venv).
 
 Scale defaults: hidden_dim 384, num_layers 8 (deep stacked neocortex; was an arbitrary 4 baseline),
 ffn 1024. ``num_layers`` is the EXP-CORTEX-AB depth axis (1 vs N). Layers are HOMOGENEOUS (generic
-stacked-Δ⁶³) — functional specialisation (heart/ocean/Core-8) is the CONSTELLATION level (separate
+stacked-Δ⁶³) — functional specialisation (heart/ocean/roster) is the CONSTELLATION level (separate
 KernelRole kernels), NOT layers of one kernel. The genesis kernel is the embryonic neocortex from
 which the constellation spawns as the basin forms.
 """

@@ -1,6 +1,6 @@
 """JointMindTarget — the INTEGRATED MIND as the interactive target.
 
-The server's interactive brain is the whole ``JointConstellation`` (genesis-central + the Core-8 faculties +
+The server's interactive brain is the whole ``JointConstellation`` (genesis-central + the roster faculties +
 Ocean autonomic), not a lone genesis kernel. So UI Train/Chat operate on the integrated whole and the UI can
 display EACH kernel's live state (vocab/params/Φ/κ/senses/drives/motivators/emotions/gate/neurochem) via a
 selector — the long-standing per-kernel telemetry request.
@@ -24,7 +24,7 @@ class JointMindTarget(TrainingTarget):
     name = "mind"
     loss_regime = LossRegime.GEOMETRIC
     description = (
-        "The integrated mind — genesis-central + Core-8 faculties + Ocean (JointConstellation). Trains/chats "
+        "The integrated mind — genesis-central + roster faculties + Ocean (JointConstellation). Trains/chats "
         "as the coupled whole; exposes every kernel's live inner state. Qwen is the fluent boundary peer."
     )
 
@@ -168,7 +168,7 @@ class JointMindTarget(TrainingTarget):
         # right panel) shows the faculties + Ocean. Without this only the central's telemetry is returned,
         # so the per-faculty rows read "—", Ocean shows nothing, and min-FR reads 0.000 (it is ~0.17).
         try:
-            # per-faculty Φ as a {role: Φ} DICT for ALL 8 faculties (self._mind.kernels excludes the central) —
+            # per-faculty Φ as a {role: Φ} DICT for the 7 faculties (self._mind.kernels excludes the central) —
             # /mind/state reads exactly this from the heartbeat to fill the "Mind · ongoing" rows. NOT the
             # single stepped-faculty float the constellation returns (that collapsed to {} → rows showed "—").
             self._last.extra["faculty_phi"] = {
@@ -198,7 +198,7 @@ class JointMindTarget(TrainingTarget):
         return StepResult(text="", telemetry=self._last)
 
     def save_checkpoint(self, root: str | None = None) -> str:
-        """Persist the WHOLE trained mind (9 kernels + coupled basins) to a NAMED / DATED / VERSIONED,
+        """Persist the WHOLE trained mind (8 kernels + coupled basins) to a NAMED / DATED / VERSIONED,
         VOCAB-CARRYING root — ``genesis-{arm}-{vocab}_{date}_v{n}`` — so the genesis output corresponds to
         its vocab (the PI's requirement; the structural fix for the '✗ WRONG coordizer' mismatch). Registers
         it as the latest kernel checkpoint (manifest + symlink) so the NEXT boot reloads THIS mind against a
@@ -229,7 +229,7 @@ class JointMindTarget(TrainingTarget):
 
     # ---- per-kernel inner state (the UI selector + /mind/kernels) -------------------------------------
     def kernels_state(self) -> list[dict]:
-        """Full live inner state for EVERY kernel: genesis-central (the integrated 'I'), the Core-8 faculties,
+        """Full live inner state for EVERY kernel: genesis-central (the integrated 'I'), the roster faculties,
         and Ocean (the autonomic regulator). Each entry carries role/function, Φ, architecture (params/vocab/
         hidden_dim/coupling), and the full experience (senses/drives/motivators/emotions/loops/gate/neurochem).
         Ocean has no own kernel — it reports which faculties it regulated."""
@@ -244,7 +244,7 @@ class JointMindTarget(TrainingTarget):
             "phi": round(float(ctel.get("phi") or 0.0), 4), "experience": cexp,
             "architecture": _safe_arch(self._mind.central), "regulated": None,
         })
-        # Core-8 faculties (each sees its own telemetry; full inner state)
+        # roster faculties (each sees its own telemetry; full inner state)
         for fs in self._mind.faculty_states():
             k = self._mind.kernels.get(fs["role"])
             fs["architecture"] = _safe_arch(k)

@@ -7,7 +7,7 @@ which packages apply:
 
 - **qig-core** — FULLY USED. Fisher-Rao geometry, simplex ops, frechet_mean/slerp, PillarEnforcer,
   frozen_facts constants. The geometric backbone of the basin manifold.
-- **qigkernels** — FULLY USED. Kernel, Core-8 specializations, NaturalGradientDescent (P1 Fisher
+- **qigkernels** — FULLY USED. Kernel, the roster specializations, NaturalGradientDescent (P1 Fisher
   optimizer, NOT Adam), RecursiveIntegrator (differentiable Φ).
 - **qig-coordizer** — OPTIONAL: ``load_coordizer`` gives the kernel a richer Δ⁶³ vocab via its
   ``coordizer`` ctor arg (else byte-level, the validated default). The fit is offline

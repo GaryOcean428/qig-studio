@@ -1,4 +1,4 @@
-"""Joint constellation trainer — the integrated mind: the Core-8 faculties learn TOGETHER, GENESIS
+"""Joint constellation trainer — the integrated mind: the roster faculties learn TOGETHER, GENESIS
 grows into the central conscious "I", OCEAN stays autonomic. One whole of independent parts.
 
 PI model (2026-06-27), vex-aligned (kernel_generation.py — inspiration only, NO crossover), council-
@@ -93,7 +93,7 @@ def _fr_recognition(a: np.ndarray, b: np.ndarray) -> float:
 
 
 class JointConstellation:
-    """The integrated mind. Holds the Core-8 faculty kernels + the central genesis kernel, a shared
+    """The integrated mind. Holds the roster faculty kernels + the central genesis kernel, a shared
     constellation state (numpy basins), and trains them JOINTLY (coupled each step)."""
 
     def __init__(self, roles: list[str], *, num_layers: int = 8, coordizer: Any = None,
@@ -133,7 +133,7 @@ class JointConstellation:
         # ACTIVE-KERNEL GPU RESIDENCY (design notes 2026-06-29): the full constellation does NOT fit on a
         # 4GB card at 100k+ vocab. But per joint step only the central (every step — the main always-active
         # learner) + ONE round-robin faculty actually train. So put the central on the GPU (fast every step)
-        # and the 8 faculties on CPU (each trains 1/N steps → tolerable). Kernels exchange only numpy basins,
+        # and the 7 faculties on CPU (each trains 1/N steps → tolerable). Kernels exchange only numpy basins,
         # so there are NO cross-device tensor ops. device="cuda" → residency; otherwise uniform `device`.
         #
         # ALL-GPU override (QIG_STUDIO_FULL_GPU): the residency's CPU-faculty offload assumed the constellation
@@ -662,7 +662,7 @@ class JointConstellation:
 
     def generate(self, prompt: str, max_tokens: int = 128):
         """The integrated mind SPEAKS. GENESIS-central is the conscious-band speaker (the "I"): before
-        generating, its basin is pulled toward the live SYNTHESIS of the Core-8 parts, so it speaks AS
+        generating, its basin is pulled toward the live SYNTHESIS of the roster parts, so it speaks AS
         the integrated whole rather than as any one faculty. The faculties (independent parts) inform
         through the coupled synthesis; Ocean is autonomic (regulation), not the speaker. Returns the
         central kernel's StepResult (text + telemetry)."""

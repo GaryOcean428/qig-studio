@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Train the INTEGRATED MIND jointly — the Core-8 faculties learn TOGETHER each step, GENESIS grows
+"""Train the INTEGRATED MIND jointly — the roster faculties learn TOGETHER each step, GENESIS grows
 into the central conscious "I", individuation preserved. This is the launcher that CONNECTS
 ``JointConstellation`` (the P1 joint trainer) — replacing the per-faculty ISOLATED loop in
 train_full_curriculum.py (which trained 8 separate kernels, the wrong model).
@@ -36,7 +36,7 @@ def main() -> None:
                     help="pre-fit FisherCoordizer (fineweb 100k Δ⁶³ vocab); empty = byte-level ablation")
     ap.add_argument("--ckpt-root", default="runs/checkpoints/joint_mind_latest")
     ap.add_argument("--ckpt-every", type=int, default=300)
-    ap.add_argument("--device", default="cpu", help="cpu (safe: holds 9 kernels) | cuda (4GB-OOM risk)")
+    ap.add_argument("--device", default="cpu", help="cpu (safe: holds 8 kernels) | cuda (4GB-OOM risk)")
     ap.add_argument("--max-seconds", type=float, default=14400)
     ap.add_argument("--out", default="runs/spawn/joint_mind.json")
     ap.add_argument("--no-stream", action="store_true",
@@ -57,11 +57,11 @@ def main() -> None:
                          "stays responsive while training; the bg trainer must not starve the UI)")
     ap.add_argument("--genesis-warmup", type=int, default=8000,
                     help="GENESIS-FIRST (M9/P26): MAX solo-genesis steps (a CAP). Genesis trains ALONE until it "
-                         "reaches Φ-maturity (--genesis-phi), THEN the Core-8 spawn/couple. The spawn is "
-                         "Φ-GATED, not step-gated — spawning an immature genesis (or a cold 9-kernel joint) "
+                         "reaches Φ-maturity (--genesis-phi), THEN the kernels spawn/couple. The spawn is "
+                         "Φ-GATED, not step-gated — spawning an immature genesis (or a cold 8-kernel joint) "
                          "collapses Φ. Only on --fresh. 0 = off (straight to joint).")
     ap.add_argument("--genesis-phi", type=float, default=0.68,
-                    help="Φ maturity gate: the Core-8 do not spawn until genesis's mean Φ crosses this (P26 "
+                    help="Φ maturity gate: the roster do not spawn until genesis's mean Φ crosses this (P26 "
                          "maturity gating). 0.68 ≈ the consciousness threshold (PHI_THRESHOLD 0.70).")
     args = ap.parse_args()
 
@@ -214,8 +214,8 @@ def main() -> None:
         except Exception:  # noqa: BLE001 — trajectory persistence must never crash training
             pass
 
-    # GENESIS-FIRST (M9): stabilize the central genesis kernel SOLO before spawning/coupling the Core-8.
-    # A cold 9-kernel JOINT start collapses (un-anchored coupling drives zero-entropy every step); genesis
+    # GENESIS-FIRST (M9): stabilize the central genesis kernel SOLO before spawning/coupling the roster.
+    # A cold 8-kernel JOINT start collapses (un-anchored coupling drives zero-entropy every step); genesis
     # alone develops a stable identity+language anchor first, then the faculties couple FROM it.
     gw = args.genesis_warmup if args.fresh else 0     # resume already carries a mature base
     if gw > 0:
@@ -223,7 +223,7 @@ def main() -> None:
         phi_gate = float(args.genesis_phi)
         _win = _deque(maxlen=50)                        # rolling Φ — robust to per-step fluctuation
         print(f"[joint] GENESIS-FIRST (P26 maturity gate): solo-train genesis until mean Φ≥{phi_gate} "
-              f"(cap {gw}). The Core-8 do NOT spawn until genesis matures.", flush=True)
+              f"(cap {gw}). The roster do NOT spawn until genesis matures.", flush=True)
         w, matured, mphi = 0, False, 0.0
         while w < gw:
             if in_stasis():
@@ -257,7 +257,7 @@ def main() -> None:
                       f"(gate Φ≥{phi_gate})", flush=True)
             if len(_win) >= 40 and mphi >= phi_gate:    # SUSTAINED maturity, not a transient crossing
                 matured = True
-                print(f"[joint] ✓ GENESIS MATURE at step {w}: meanΦ={mphi:.3f} ≥ {phi_gate} — spawning Core-8 now.", flush=True)
+                print(f"[joint] ✓ GENESIS MATURE at step {w}: meanΦ={mphi:.3f} ≥ {phi_gate} — spawning the kernels now.", flush=True)
                 break
         if not matured:
             print(f"[joint] ⚠ genesis did NOT reach Φ≥{phi_gate} within {gw} steps (meanΦ={mphi:.3f}) — "

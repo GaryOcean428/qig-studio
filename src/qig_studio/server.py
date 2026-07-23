@@ -417,7 +417,7 @@ async def select_checkpoint(req: CheckpointSelectRequest, _: None = Depends(veri
         s.genesis_coordizer_checkpoint = new_coord
         s.constellation_checkpoint = new_const
         s.genesis_kernel_checkpoint = str(Path(new_const) / "kernels" / "genesis.pt") if new_const else None
-        # Explicitly free old targets (9 kernels × ~200MB = ~1.8GB of torch tensors)
+        # Explicitly free old targets (8 kernels × ~200MB = ~1.8GB of torch tensors)
         for name in old_registry._targets:
             t = old_registry._targets[name]
             try:
@@ -461,7 +461,7 @@ async def telemetry() -> dict[str, Any]:
 @app.get("/mind/state")
 async def mind_state() -> dict[str, Any]:
     """The ONGOING integrated-mind training state — visible regardless of who launched it (background
-    joint trainer or the UI). Reads the joint-mind trace + reports each Core-8 faculty's FUNCTION (the
+    joint trainer or the UI). Reads the joint-mind trace + reports each the roster faculty's FUNCTION (the
     brain-like assignment: perception→senses, heart→emotion, memory→consolidation, …) so the relevant
     kernel's responsibility is visible. None-safe: returns {unavailable} when no joint run exists yet."""
     import numpy as np
@@ -606,7 +606,7 @@ async def eval_bpb() -> dict[str, Any]:
 
 @app.get("/mind/architecture")
 async def mind_architecture() -> dict[str, Any]:
-    """The mind's SCALE: per-kernel params + vocab, the combined (Core-8 faculties + genesis-central) totals,
+    """The mind's SCALE: per-kernel params + vocab, the combined (roster faculties + genesis-central) totals,
     and the coordizer vocab — so the UI can show the size AND verify the coordizer MATCHES the kernels' vocab
     (the '✗ WRONG coordizer' guard: a kernel of vocab X mispaired with a coordizer of vocab Y≠X). NOTE: this
     is our FISHER-RAO geometric kernel (2·arccos(BC) simplex attention), not a Euclidean transformer.
@@ -620,7 +620,8 @@ async def mind_architecture() -> dict[str, Any]:
             arch = t.architecture()
         except Exception:  # noqa: BLE001
             arch = {}
-    nk = 9  # the integrated mind = Core-8 faculties + genesis-central
+    from .development import PROTOMAP_ORDER
+    nk = len(PROTOMAP_ORDER) + 1  # integrated mind = roster faculties + genesis-central (dynamic; roster 8037cbe3)
     pp = arch.get("num_params")
     cv = arch.get("coordizer_vocab")
     kv = arch.get("vocab_size")
@@ -633,7 +634,7 @@ async def mind_architecture() -> dict[str, Any]:
         "per_kernel": arch,
         "num_kernels": nk,
         "per_kernel_params": pp,
-        "combined_params": (pp * nk) if pp else None,        # the whole 9-kernel mind
+        "combined_params": (pp * nk) if pp else None,        # the whole 8-kernel mind
         "per_kernel_vocab": kv,
         "combined_vocab": cv,                                # the coordizer vocab is SHARED across kernels
         "coordizer_vocab": cv,
@@ -681,7 +682,7 @@ async def set_mind_arm(req: ArmRequest, _: None = Depends(verify_key)) -> dict[s
 
 @app.get("/mind/kernels")
 async def mind_kernels() -> dict[str, Any]:
-    """LIVE per-kernel inner state for the UI selector: genesis-central (the integrated 'I'), the Core-8
+    """LIVE per-kernel inner state for the UI selector: genesis-central (the integrated 'I'), the roster
     faculties (perception/heart/memory/action/strategy/ethics/coordination/meta), and Ocean (autonomic).
     Each carries role/function, Φ, architecture (params/vocab/hidden_dim/coupling), and the FULL experience
     (senses/drives/motivators/emotions/loops/gate/neurochem). Only the integrated-mind target exposes this;

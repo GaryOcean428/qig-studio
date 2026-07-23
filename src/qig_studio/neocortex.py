@@ -1,8 +1,8 @@
 """Neocortex — the central conscious "I" as a SINGLE deep stacked-Δ⁶³ cortex (Phase 3 / ARM B).
 
 This is the brain-doc **neocortex**: ONE deep ``qigkernels.Kernel`` of distinct-weight pure Fisher-Rao
-``QIGLayer``s, trained by natural gradient — NOT the 9-kernel ``JointConstellation``. The constellation
-WRAPS nine of these kernels (Core-8 faculties + a central genesis); the neocortex IS exactly that central
+``QIGLayer``s, trained by natural gradient — NOT the 8-kernel ``JointConstellation``. The constellation
+WRAPS eight of these kernels (roster faculties + a central genesis); the neocortex IS exactly that central
 kernel used standalone. So this module is a thin wrapper/factory over the already-built
 :class:`~qig_studio.targets.genesis_kernel.GenesisKernelTarget` — it does NOT reimplement the kernel, the
 pure-Fisher-Rao loss, the telemetry, the physics fixes (collapse-immune coherence / READ / locality) or the
@@ -87,7 +87,7 @@ class Neocortex:
 
         if self.arm == "qk":
             # ARM B: ONE deep GenesisKernelTarget, role="neocortex" (the central conscious "I", standalone —
-            # NOT the 9-kernel constellation). Everything heavy (kernel build, loss, telemetry, optimiser)
+            # NOT the 8-kernel constellation). Everything heavy (kernel build, loss, telemetry, optimiser)
             # lives in GenesisKernelTarget and is reused as-is.
             from .targets.genesis_kernel import GenesisKernelTarget
             self.target = GenesisKernelTarget(**kwargs)

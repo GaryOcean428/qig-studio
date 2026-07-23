@@ -8,7 +8,7 @@ control only.
 
 Two arms:
   • ``"separate"`` — the CURRENT architecture: a full :class:`JointConstellation` (genesis-central + the
-    Core-8 faculties, each a SEPARATE node). This is the control the refactor must not regress against.
+    roster faculties, each a SEPARATE node). This is the control the refactor must not regress against.
   • ``"trunk"``    — the shared-geometric-trunk arm. NotImplementedError until Phase 1 fills it.
 
 bpb accessor — REUSE, not reinvent (the plan mandates reusing ``screen.py`` eval helpers, not a new eval
@@ -134,7 +134,7 @@ def run_arm(arm: str, steps: int, seed: int, num_layers: int = 2, coordizer: Any
     # is the byte-appropriate readout of the SAME 9-separate control architecture (the A/B tests trunk-
     # sharing, not the head). With a real coordizer we keep the default basin head.
     head_mode = "geometric" if coordizer is None else "basin"
-    # The CURRENT architecture: full JointConstellation over the Core-8 protomap, on CPU. arm_mode left at its
+    # The CURRENT architecture: full JointConstellation over the roster protomap, on CPU. arm_mode left at its
     # default ("gk" substrate) — this IS the 9-separate control.
     mind = JointConstellation(list(PROTOMAP_ORDER), num_layers=num_layers, coordizer=coordizer,
                               device="cpu", head_mode=head_mode, floor_mode=floor_mode)

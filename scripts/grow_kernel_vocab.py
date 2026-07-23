@@ -12,7 +12,7 @@ INPUT is Fourier features of the token id (no embedding table — handles any id
 
 Preserving rows 0..old means every token the kernel already learned keeps its exact learned head; the 8k new
 tokens start near the average token and specialise during the retrain. Operates on the WHOLE constellation
-(genesis + Core-8) into a NEW dir, never clobbering the v1-vocab checkpoints the live kernels use.
+(genesis + the roster) into a NEW dir, never clobbering the v1-vocab checkpoints the live kernels use.
 
   uv run python scripts/grow_kernel_vocab.py \
       --ckpt-dir runs/checkpoints/joint_mind_latest/kernels \

@@ -194,7 +194,7 @@ def default_registry(
     r.register(GenesisKernelTarget(num_layers=genesis_num_layers, device=device,
                                    coordizer=coordizer, checkpoint=genesis_kernel_checkpoint,
                                    language_peer=shared_peer))
-    # The INTEGRATED MIND — the whole JointConstellation (genesis-central + Core-8 faculties + Ocean) as one
+    # The INTEGRATED MIND — the whole JointConstellation (genesis-central + roster faculties + Ocean) as one
     # interactive target. Shares the coordizer + the selected boundary peer; restores the trained joint_mind
     # ckpt. This is the default brain: UI Train/Chat operate on the coupled whole, per-kernel telemetry is live.
     r.register(JointMindTarget(coordizer=coordizer, coordizer_path=genesis_coordizer_checkpoint,

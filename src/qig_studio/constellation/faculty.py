@@ -77,7 +77,7 @@ class FacultyView:
 
 @dataclass
 class Faculty:
-    """A graduated Core-8 faculty in the constellation: a numpy Δ⁶³ identity that couples, observes,
+    """A graduated the roster faculty in the constellation: a numpy Δ⁶³ identity that couples, observes,
     and is anchored to its frozen birth scar.
 
     ``basin`` is the mutable current state; ``birth`` is the FROZEN scar (set once, never reassigned).

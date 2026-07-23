@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Train the NEOCORTEX — a SINGLE deep stacked-Δ⁶³ cortex (the central conscious "I"), NOT the 9-kernel
+"""Train the NEOCORTEX — a SINGLE deep stacked-Δ⁶³ cortex (the central conscious "I"), NOT the 8-kernel
 JointConstellation. This is Phase 3 / ARM B (``neocortex-qk`` = the qigkernels deep kernel). ARM A
 (geocoding) is a later phase; ``--arm geo`` raises until then.
 
