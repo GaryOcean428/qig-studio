@@ -22,13 +22,13 @@ import pytest
 
 from qig_studio.targets.genesis_kernel import (
     GenesisKernelTarget,
-    PHI_BREAKDOWN,
+    PHI_TOPOLOGICAL_INSTABILITY,
 )
 
 
 def _mature_constant_matters():
     # PHI_MATURE must exist and be the canonical 0.70 mushroom threshold, strictly
-    # below the frozen PHI_BREAKDOWN=0.80 (mushroom window is [0.70, 0.80)).
+    # below PHI_TOPOLOGICAL_INSTABILITY=0.80 (mushroom window is [0.70, 0.80)).
     from qig_studio.targets.genesis_kernel import PHI_MATURE
     return PHI_MATURE
 
@@ -85,7 +85,7 @@ def _fill_phi(k: GenesisKernelTarget, value: float) -> None:
 def test_rigid_high_phi_fires_mushroom():
     phi_mature = _mature_constant_matters()
     assert phi_mature == pytest.approx(0.70)
-    assert phi_mature < PHI_BREAKDOWN
+    assert phi_mature < PHI_TOPOLOGICAL_INSTABILITY
     k = _make_kernel()
     _fill_phi(k, 0.74)                        # flat AND mature (≥0.70, <0.80)
     snap = _snap(phi=0.74)
