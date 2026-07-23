@@ -467,8 +467,9 @@ async def mind_state() -> dict[str, Any]:
     import numpy as np
 
     from .constellation.ocean import function_of
+    from .development import PROTOMAP_ORDER
     from .targets.qwen_boundary import basin_phi_proxy
-    roles = ["perception", "heart", "memory", "action", "strategy", "ethics", "coordination", "meta"]
+    roles = list(PROTOMAP_ORDER)  # single source of truth for the birth roster (Matrix 8037cbe3)
     # LIVE per-faculty telemetry from the constellation checkpoint (written every 200 steps by the joint
     # trainer) — each faculty's Δ⁶³ basin → a Φ-proxy + its brain-function. Updates as the retrain runs.
     cj = Path("runs/checkpoints/joint_mind/constellation.json")

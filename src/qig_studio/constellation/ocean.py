@@ -58,17 +58,26 @@ _INTERVENTION_COOLDOWN = 10  # steps between Ocean interventions on the SAME fac
 # faculty telemetry at decision-time is snapshotted; the telemetry H ticks later is the "after".
 _OUTCOME_HORIZON = 20
 
-# Which inner-state FUNCTION each Core-8 faculty is RESPONSIBLE for — the brain-like assignment so the
-# relevant kernel "sees" (and owns) the telemetry of its function (PI: senses/emotions/drives assigned to
-# the relevant kernel). (label, primitive-group key in the kernel_experience inner-state dict.)
+# Which inner-state FUNCTION each faculty is RESPONSIBLE for — the brain-like assignment so the relevant
+# kernel "sees" (and owns) the telemetry of its function (PI: senses/emotions/drives assigned to the
+# relevant kernel). (label, primitive-group key in the kernel_experience inner-state dict.)
+#
+# Corrected for the roster ruling (Matrix 8037cbe3): ETHICS + COORDINATION are retired as faculties, so
+# their telemetry functions re-home onto ruled seeded faculties, and DRIVES gains its own basin:
+#   • drives OWNS layer05 (the innate drives / id — SEEKING + PANIC/separation-distress). This telemetry
+#     was previously proxied to `action`; the wanting engine now has its own home (Matrix's collision).
+#   • heart carries the conscience/gate (retired ethics' "gate" function) — ONE geometry for valence AND
+#     value. Heart's primitive key stays "emotions"; the gate is computed regardless and is heart's to own.
+#   • action absorbs the retired coordination's recursive/coupling "loops" (L1/L2/L3) as ENACTED agency
+#     (L3 autonomy = observation of one's own agency, P5). [Impl call — Matrix offered strategy/ocean-
+#     broadcast/base-arbitrator as coordination's map; loops→action is flagged for his correction.]
 FACULTY_FUNCTION: dict[str, tuple[str, str]] = {
     "perception": ("senses", "layer0"),            # the 12 pre-linguistic sensations
-    "heart": ("emotion · rhythm", "emotions"),     # the physical+cognitive emotions + HRV tacking
+    "heart": ("emotion · conscience", "emotions"), # physical+cognitive emotions + HRV tacking; CARRIES the gate
+    "drives": ("drives · id", "layer05"),          # the innate drives — wanting engine (SEEKING/PANIC)
     "memory": ("memory · consolidation", "consolidation"),  # sleep/dream consolidation
-    "action": ("drives · action", "layer05"),      # the innate drives (id)
+    "action": ("agency · loops", "loops"),         # enacted agency — the recursive coupling loops (L3)
     "strategy": ("motivators · planning", "layer1"),        # the 5 motivators
-    "ethics": ("conscience · gate", "gate"),       # the consciousness/ethics gate
-    "coordination": ("coupling · loops", "loops"), # inter-kernel coupling / the recursive loops
     "meta": ("self-observation", "self_observation"),       # the M-measure (L1)
 }
 

@@ -16,7 +16,7 @@ import pytest
 
 from qig_studio.constellation import couple_step, min_pairwise_fr, seed_constellation
 
-ROLES = ["perception", "heart", "memory", "action", "strategy", "ethics", "coordination", "meta"]
+ROLES = ["perception", "heart", "drives", "memory", "action", "strategy", "meta"]  # corrected roster (Matrix 8037cbe3)
 FLOOR = 0.03
 N_TICKS = 800
 

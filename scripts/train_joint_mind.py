@@ -118,7 +118,7 @@ def main() -> None:
         print(f"[joint] optimisation wiring skipped: {_e}", flush=True)
 
     t0 = time.time()
-    print(f"[joint] integrated mind: Core-8 {list(PROTOMAP_ORDER)} + genesis-central | {steps} joint "
+    print(f"[joint] integrated mind: faculty roster {list(PROTOMAP_ORDER)} + genesis-central | {steps} joint "
           f"steps | vocab={'coordizer Δ⁶³' if coordizer else 'byte-level'} | device={args.device}", flush=True)
 
     # head_mode PINNED to "basin" explicitly (not relying on the JointConstellation default): on the

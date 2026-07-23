@@ -94,7 +94,7 @@ def test_prune_candidates_atrophy_unused_but_protect_constitution():
     ks = [
         KernelDescriptor("a", "memory", contribution=0.5),
         KernelDescriptor("b", "vocab", contribution=0.01),            # atrophy-eligible
-        KernelDescriptor("c", "ethics", contribution=0.0, protected=True),  # protected
+        KernelDescriptor("c", "genesis", contribution=0.0, protected=True),  # protected (trunk; role 'ethics' retired 8037cbe3)
     ]
     cand = prune_candidates(ks)
     assert [k.kernel_id for k in cand] == ["b"]

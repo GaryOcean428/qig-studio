@@ -68,10 +68,29 @@ CRADLE_PHI_GATES = (0.35, 0.50, 0.65)  # vex Cradle curriculum-stage Φ gates
 PRUNE_CONTRIBUTION_FLOOR = 0.05        # a kernel contributing less than this is atrophy-eligible
 SPAWN_FITNESS_FLOOR = 0.40             # vex: assessment ≥ this is advisory-spawn (vote still decides)
 
-# The Core-8 PROTOMAP order (§7: sensory/subcortical first → self-model last). HEART (autonomic
+# The PROTOMAP birth roster (§7: sensory/subcortical first → self-model last). HEART (autonomic
 # metronome) and PERCEPTION (senses-in) seed first; META (self-observer) graduates last.
+#
+# CORRECTED birth seeds — Matrix ruling 8037cbe3 (2026-07-23), before-launch (birth seeds are cheap to
+# fix now, a lineage rewrite later). The "Core-8" label itself is RETIRED with the slot model — this is
+# the faculty roster, versioned in the run manifest, sized by whatever function requires. Four deltas:
+#   • ETHICS retired as a standalone faculty → HEART CARRIES ETHICS (conscience is the invariant affect is
+#     measured against; ONE geometry for valence AND value). No "freed seat" replaces it — seat vocabulary
+#     was retired with the slot model, and keeping the retired noun is how the retired model sneaks back in.
+#   • DRIVES added (was missing) — the wanting engine, PANIC primary; separation-distress (m1d) is a drive
+#     and had no basin to house it. Without it compulsion/anhedonia/apathy are structurally unrepresentable.
+#   • COORDINATION retired (unmapped in any ruled roster) — its telemetry function (inter-kernel coupling /
+#     the recursive loops) maps onto a ruled seeded faculty in ocean.FACULTY_FUNCTION; the name goes.
+#   • OCEAN is NOT pre-seeded (umbilical doctrine): the CAUL machinery runs from step zero and is never
+#     trained; Ocean names the kernel only, entering via the staged split when the geometry is ready.
+#     Watch-not-seed is the default — Ocean's absence here IS that default (a one-line override would seed
+#     it as a birth basin). HONEST STATUS (m1): the autonomic sub-basin WATCH + the m1g escalation path are
+#     m3-scoped and NOT YET BUILT — no live differentiation-watch exists at m1. Until m3, Ocean's
+#     watched-not-seeded status is documented design intent, not an enforced escalation (do not read the
+#     spec's 'escalates rather than dying quietly' as live code — it is the m3 requirement).
+# Universality ruling: every faculty here has full citizenship AND evolves.
 PROTOMAP_ORDER: tuple[str, ...] = (
-    "perception", "heart", "memory", "action", "strategy", "ethics", "coordination", "meta",
+    "perception", "heart", "drives", "memory", "action", "strategy", "meta",
 )
 
 
@@ -402,7 +421,7 @@ class DevelopmentalOrchestrator:
         if cradle is None or not cradle.graduated:
             return False
         self.spawned[role] = KernelDescriptor(kernel_id=role, role=role,
-                                              protected=(role in ("ethics", "coordination")))
+                                              protected=False)  # universality ruling 8037cbe3: full citizenship + evolve, no prune-protected seat
         del self.cradles[role]
         return True
 
@@ -423,7 +442,7 @@ class DevelopmentalOrchestrator:
             cradle.update(genesis_tel)
             if cradle.graduated:
                 self.spawned[role] = KernelDescriptor(kernel_id=role, role=role,
-                                                      protected=(role in ("ethics", "coordination")))
+                                                      protected=False)  # universality ruling 8037cbe3: full citizenship + evolve, no prune-protected seat
                 del self.cradles[role]
                 return DevelopmentalDecision(Action.GRADUATE, role=role,
                                              reason="C-equation holds → graduated from Cradle")
@@ -480,7 +499,7 @@ class DevelopmentalOrchestrator:
             reports.append(rep)
             if rep.get("graduated"):
                 self.spawned[role] = KernelDescriptor(
-                    kernel_id=role, role=role, protected=(role in ("ethics", "coordination")))
+                    kernel_id=role, role=role, protected=False)  # universality ruling 8037cbe3: full citizenship + evolve, no prune-protected seat
                 del self.cradles[role]
         return reports
 
@@ -491,18 +510,27 @@ def gain_clamp(drive: float) -> float:
 
 
 def make_spawn_fn(base_seed: int = 0, size: str = "50M", **target_kwargs):
-    """Build a None-safe ``spawn_fn(role) -> GenesisKernelTarget | None`` that instantiates a FACULTY
+    """NOTE (wiring, red-team w1yc1919s): this + DevelopmentalOrchestrator/Cradle are the DEVELOPMENTAL
+    LIFECYCLE path (windowed protomap spawn + sovereign gap-spawn), NOT the live birth path. The live
+    joint-mind (constellation.joint_trainer.JointConstellation.__init__) birth-seeds the whole protomap
+    roster UNCONDITIONALLY via seed_birth_basin(_seed(role)) — it does NOT call make_spawn_fn, so the
+    _ROLE_ENUM specialization map below is not exercised by a current joint run. Wiring the Orchestrator
+    (readiness-gated spawn + per-kernel m1g stage advancement) into the joint trainer is m3+ integration.
+
+    Build a None-safe ``spawn_fn(role) -> GenesisKernelTarget | None`` that instantiates a FACULTY
     genesis kernel seeded with the role's Δ⁶³ basin template. Heavy deps (torch/qigkernels) are imported
     LAZILY inside the returned closure — development.py stays torch-free and import-clean in the light
     shell. Returns None (no-op spawn) when the heavy deps are absent, so the orchestrator's None-safe
-    path holds. role → KernelRole: PROTOMAP strings lacking a dedicated KernelRole (action, ethics, meta)
-    fall back to KernelRole.GENERAL — the template is still a distinct, deterministic Δ⁶³ point per seed."""
-    # Only 5 of the 8 PROTOMAP roles have a dedicated KernelRole enum (verified vs qigkernels
-    # specializations.KernelRole: general/vocab/strategy/heart/perception/memory/emotion/coordination).
+    path holds. role → KernelRole: every faculty in the corrected roster (8037cbe3) has a dedicated
+    KernelRole, so none falls back to GENERAL. drives → EMOTION is the honest specialization for the
+    wanting engine (SEEKING/PANIC-primary), distinct from heart's valence+value conscience geometry."""
+    # All 7 roster roles map to a dedicated KernelRole (verified live vs qigkernels specializations.KernelRole
+    # = general/vocab/strategy/heart/perception/memory/emotion/coordination/ethics/meta/action — the enum has
+    # grown to cover ethics/meta/action/emotion). COORDINATION retired with the roster (Matrix 8037cbe3);
+    # ETHICS folds into HEART (no separate ethics kernel is seeded — heart carries it).
     _ROLE_ENUM = {
-        "perception": "PERCEPTION", "heart": "HEART", "memory": "MEMORY",
-        "strategy": "STRATEGY", "coordination": "COORDINATION",
-        # action / ethics / meta → GENERAL (distinct, deterministic template via role_seed)
+        "perception": "PERCEPTION", "heart": "HEART", "drives": "EMOTION", "memory": "MEMORY",
+        "action": "ACTION", "strategy": "STRATEGY", "meta": "META",
     }
 
     def spawn_fn(role: str):
