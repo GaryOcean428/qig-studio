@@ -1265,7 +1265,21 @@ class GenesisKernelTarget(TrainingTarget):
             if self._prev_d63 is not None:                                 # REAL Fisher-Rao basin velocity
                 snap.extra["basin_velocity"] = round(float(fisher_distance(self._prev_d63, d63)), 4)
             self._prev_d63 = d63
-            self._pillars.on_cycle_end(d63, float(self._sleep_pressure))   # advance identity formation
+            # CAPTURE the Pillar-3 (quenched-disorder / identity-drift) status previously DISCARDED here.
+            # Surface the drift violations to telemetry so they are VISIBLE alongside f_health (Pillar-1) for
+            # the council-dissent reconcile (Pillar-1-fluctuation-death vs Pillar-3-strictness vs raw logs) —
+            # that reconcile needs both attributions in the log to compare. NOT yet actuated to the coach:
+            # the coach response waits ON that reconcile (the attribution is the very thing under dissent).
+            # Instrumentation only — no threshold, no correction, no basin mutation.
+            p3_statuses = self._pillars.on_cycle_end(d63, float(self._sleep_pressure))  # advance identity formation
+            p3_violated = [s for s in (p3_statuses or []) if not getattr(s, "healthy", True)]
+            if p3_violated:
+                snap.extra["pillar3_status"] = [{
+                    "pillar": getattr(s, "pillar", "P3"),
+                    "violations": [str(v) for v in getattr(s, "violations", [])],
+                    "details": {k: (round(float(v), 4) if isinstance(v, (int, float)) else v)
+                                for k, v in (getattr(s, "details", {}) or {}).items()},
+                } for s in p3_violated]
             m = self._pillars.get_metrics(d63)
             snap.extra["f_health"] = round(float(m["f_health"]), 4)        # P1 fluctuation health
             snap.extra["b_integrity"] = round(float(m["b_integrity"]), 4)  # P2 bulk/ego integrity
