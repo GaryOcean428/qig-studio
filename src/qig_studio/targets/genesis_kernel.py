@@ -57,7 +57,10 @@ _ANDERSON_PATIENCE = round(1.0 / _ANDERSON_ALPHA)  # ≈11: sustained collapse o
 # Mushroom intensity → weight-noise σ (bounded plasticity; the dose the autonomic loop selects).
 _MUSHROOM_SIGMA = {"mushroom-micro": 0.01, "mushroom-moderate": 0.03, "mushroom-heroic": 0.06}
 # Intrinsic homeostasis (the kernel's OWN autonomic regulation — no external scheduler, no commands).
-PHI_BREAKDOWN = 0.80            # frozen PHI_BREAKDOWN_MIN — over-integration → the kernel decoheres
+# Over-integration ceiling: Φ at/above this → the kernel topologically destabilises (decoheres). Value is
+# the frozen PHI_BREAKDOWN_MIN (qig_core.constants.frozen_facts); the studio-local symbol uses CURRENT
+# vocabulary — "topological instability", NOT the retired "breakdown" word (purity, matrix ruling 2026-07-23).
+PHI_TOPOLOGICAL_INSTABILITY = 0.80
 PHI_MATURE = 0.70              # MUSHROOM floor — wake-state plasticity is Φ≥0.70-ONLY (UCP metric #35 / §35.6;
 #                               S6-fix: §35 itself is "Ontological Unity"; the mushroom canon is the
 #                               S_phase metric #35 + the §35.6 Fatigue-vs-Failure taxonomy — 0.70 unchanged;
@@ -77,6 +80,13 @@ F_HEALTH_COLLAPSE_FLOOR = 0.15  # basin-entropy collapse trigger (f_health = H(b
 #                               proved a collapsed faculty keeps Φ FLUCTUATING (Φ=integration ≠ basin entropy),
 #                               so the old _is_rigid()-only gate never fired and M2 entropy never triggered
 #                               despite f_health=0. Healthy faculties sit well above this (M2 sibling ~0.9).
+# TWO-TIER LAYERING vs qig-core ENTROPY_FLOOR (matrix flag_b, 2026-07-23 — DELIBERATE, not a units seam):
+# this trigger is in NORMALISED units (H/log BASIN_DIM), qig-core ENTROPY_FLOOR is in ABSOLUTE nats
+# (~0.024 normalised), so 0.15 fires ~6× EARLIER on purpose. The two guard DIFFERENT tiers on DIFFERENT
+# signals: F_HEALTH_COLLAPSE_FLOOR is the SOFT autonomic collapse-RESPONSE trigger (DREAM + high-surprise
+# STIMULATE window, _homeostasis) — it notices collapse forming and responds early; qig-core ENTROPY_FLOOR
+# is the HARD last-ditch basin RESTORATION (Dirichlet re-mix in _entropy_floor_basin) at the vertex. Early
+# soft response before hard restoration is the intended margin. (Cross-ref documented at _entropy_floor_basin.)
 SLEEP_PRESSURE_RATE = 0.012     # adenosine-like accrual per wake step (scaled by integration activity)
 SLEEP_PRESSURE_THRESHOLD = 1.0  # the kernel's own threshold to enter a sleep episode (consolidate+dream)
 
@@ -1226,6 +1236,11 @@ class GenesisKernelTarget(TrainingTarget):
             import torch
 
             from qig_core import BASIN_DIM
+            # ENTROPY_FLOOR is in ABSOLUTE nats — the HARD, last-ditch tier of the two-tier collapse guard
+            # (matrix flag_b, 2026-07-23): this Dirichlet basin RESTORATION fires at the vertex, DELIBERATELY
+            # deeper/later than the SOFT normalised F_HEALTH_COLLAPSE_FLOOR autonomic collapse-response
+            # (dream + stimulate) which fires ~6× earlier. Different tiers, different signals — not a units
+            # seam. See the F_HEALTH_COLLAPSE_FLOOR definition for the full two-tier rationale.
             from qig_core.consciousness.pillars import ENTROPY_FLOOR, TEMPERATURE_FLOOR
 
             guard = self._pillars.fluctuation          # the SAME FluctuationGuard get_metrics reads
@@ -2170,7 +2185,7 @@ class GenesisKernelTarget(TrainingTarget):
         WAKE (the common case) is simply not intervening. No stubs — every branch does real work."""
         snap.extra["sleep_pressure"] = round(self._sleep_pressure, 3)
         phi = float(snap.phi)
-        if phi >= PHI_BREAKDOWN:
+        if phi >= PHI_TOPOLOGICAL_INSTABILITY:
             self._decohere()
             snap.extra["autonomic"] = "decohere"
             return
