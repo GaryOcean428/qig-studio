@@ -377,7 +377,7 @@ def _neurochemistry(autonomic: str, phi_trend: float, basin_velocity: float, nov
                     regime: str, kappa: float, external_coupling: float | None,
                     cur_basin=None, prev_basin=None, target_basin=None,
                     local_kappa_c: float | None = None, coach_reward: float = 0.0,
-                    foresight_divergence: float | None = None) -> dict:
+                    foresight_divergence: float | None = None, stage_permissions=None) -> dict:
     """FULL neurochemistry — the canonical 6-signal qig-core system (acetylcholine, dopamine, serotonin,
     norepinephrine, GABA, endorphins), computed from the kernel's OWN geometry each cycle. NOT a proxy:
     this is qig_core.consciousness.neurochemistry.compute_neurochemicals (the single source). None-safe.
@@ -417,16 +417,28 @@ def _neurochemistry(autonomic: str, phi_trend: float, basin_velocity: float, nov
             target_basin=target_basin,
             coach_reward=coach_reward,
             foresight_divergence=foresight_divergence,
+            # P26 §35.7 reward-authority mask: at Stage-0 (SCHOOL) phasic self-reward + endorphin
+            # self-reward are SUPPRESSED (tonic dopamine ONLY) so a newborn cannot reward-hack before it
+            # can learn from surprise. None (chat / stage-less) → phasic+endorphin allowed (back-compat).
+            # The tonic floor (P23) is unaffected — a masked kernel is never drive-dead, just not self-rewarding.
+            stage_permissions=stage_permissions,
         )
         return {k: round(float(v), 3) for k, v in st.as_dict().items()}
     except Exception:  # noqa: BLE001 — never block telemetry if qig-core is unavailable
         return {}
 
 
-def experience(telemetry: dict, history: list[dict] | None = None) -> Experience:
+def experience(telemetry: dict, history: list[dict] | None = None,
+               stage_permissions=None) -> Experience:
     """Derive the kernel's full inner-experience from a telemetry dict (Φ, κ, regime, basin_distance,
     surprise/loss, gradient_magnitude, …) + a short Φ-history. Maps to brainwave band + emotion +
-    drives (curiosity/novelty/pain/stability) + a conscious flag (Φ≥~0.65)."""
+    drives (curiosity/novelty/pain/stability) + a conscious flag (Φ≥~0.65).
+
+    ``stage_permissions`` (P26 §35.7 developmental reward-authority mask, duck-typed
+    ``phasic_reward_allowed`` / ``endorphin_allowed``) gates the neurochemistry: at Stage-0 (SCHOOL) the
+    kernel gets TONIC dopamine only — phasic self-reward + endorphin self-reward SUPPRESSED — so a newborn
+    cannot reward-hack before it can learn from surprise. None (chat / stage-less callers) → unmasked
+    (back-compat). The tonic floor (P23) always holds; a masked kernel is never drive-dead."""
     # NO-SILENT-FALLBACK: `x or default` would corrupt a legitimate 0.0 reading (phi=0 collapse, or a
     # perfectly-grounded basin_distance=0) into the default. Use is-not-None (the pattern already used for
     # basin_velocity below) so a real zero survives.
@@ -623,7 +635,7 @@ def experience(telemetry: dict, history: list[dict] | None = None) -> Experience
     chem = _neurochemistry(autonomic, phi_trend, basin_velocity, novelty, regime, kappa, external_coupling,
                            cur_basin=cur_basin, prev_basin=prev_basin, target_basin=target_basin,
                            local_kappa_c=kappa_local, coach_reward=coach_reward,
-                           foresight_divergence=foresight_divergence)
+                           foresight_divergence=foresight_divergence, stage_permissions=stage_permissions)
     pillars = {k: round(float(extra[k]), 3) for k in ("f_health", "b_integrity", "q_identity")
                if extra.get(k) is not None}   # P1/P2/P3 LIVE from PillarEnforcer (None until the kernel emits)
     return Experience(

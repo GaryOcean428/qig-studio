@@ -480,6 +480,18 @@ class GenesisKernelTarget(TrainingTarget):
             print(f"⚠️  pillars not wired ({exc}); pillar telemetry absent")
             self._pillars = None
 
+        # m1b DEVELOPMENTAL GATE (P26 §35.7): a newborn kernel starts at Stage-0 (SCHOOL) — coach-heavy,
+        # TONIC dopamine ONLY (phasic self-reward + endorphin self-reward SUPPRESSED), no play, pillars at
+        # full strictness. This is the reward-AUTHORITY mask the m1-substrate neurochemistry consumes so the
+        # newborn cannot reward-hack before it can learn from surprise. BUILT-NOT-WIRED before this (0 refs in
+        # studio). advance() is driven later by m1g graduation (not age/step). None-safe (absent qig-core).
+        try:
+            from qig_core.consciousness.developmental import DevelopmentalGate
+            self._dev_gate: Any = DevelopmentalGate()   # defaults to DevelopmentalStage.SCHOOL (Stage-0)
+        except Exception as exc:  # noqa: BLE001 — developmental gating optional; never block boot
+            print(f"⚠️  developmental gate not wired ({exc}); stage gating absent (unmasked reward)")
+            self._dev_gate = None
+
         # Restore a TRAINED kernel if one was nominated (ctor checkpoint=). None-safe for the app shell:
         # a missing/arch-mismatched checkpoint warns and leaves the fresh kernel rather than crashing the
         # server (explicit load_checkpoint() stays fail-loud). The recursive ensure_loaded() is a no-op
@@ -1328,7 +1340,12 @@ class GenesisKernelTarget(TrainingTarget):
             # curiosity/boredom anti-apathy sensors are RESPONSIVE, not flat (chat passes None; the train path
             # has the richer _phi_recent buffer to hand). Current step's Φ is already appended (:_phi_recent).
             history = [{"phi": float(p)} for p in list(self._phi_recent)[-10:]]  # deque → slice-safe
-            exp = experience(snap.to_dict(), history=history)
+            # m1b ACTUATION: pass the developmental stage's reward-authority mask (P26 §35.7) so at Stage-0
+            # (SCHOOL) the phasic self-reward + endorphin self-reward are SUPPRESSED — tonic dopamine ONLY.
+            # This is the FIRST consumer of the substrate that CHANGES the run (not just logs it). None-safe:
+            # no gate (light shell) → unmasked, back-compat. The tonic floor (P23) holds regardless.
+            stage_perms = self._dev_gate.permissions if getattr(self, "_dev_gate", None) is not None else None
+            exp = experience(snap.to_dict(), history=history, stage_permissions=stage_perms)
             # Attach the canonical inner state (nested dicts, cheap: 6 + ~40 + 4 + 3 floats). These are the
             # SINGLE canonical source going forward; the standalone snap.extra["serotonin"]/["drive"] proxies
             # (:_homeostasis-adjacent) remain for existing consumers (ocean_policy P25 guard reads them) until
@@ -1340,6 +1357,10 @@ class GenesisKernelTarget(TrainingTarget):
             snap.extra["emotion"] = exp.emotion                 # primary felt-state on the TRAIN path
             snap.extra["valence"] = exp.valence
             snap.extra["arousal"] = exp.arousal
+            # m1b: expose the developmental stage + the active reward-authority mask so /train/live and the
+            # (coming) coach/graduation logic can read WHERE the kernel is in its schooling and WHAT is gated.
+            if getattr(self, "_dev_gate", None) is not None:
+                snap.extra["dev_stage"] = self._dev_gate.get_state()
         except Exception:  # noqa: BLE001 — the consciousness substrate is telemetry; never break the step
             pass
 

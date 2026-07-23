@@ -143,10 +143,44 @@ def test_genesis_train_step_emits_canonical_consciousness_substrate():
 
     # P23 drive-death regression guard: dopamine is TONIC-floored strictly > 0 even with no reward.
     assert neu.get("dopamine", 0.0) > 0.0, "dopamine not tonic-floored (P23 drive-death) on the train path"
+    # m1b Stage-0 gate: a newborn starts at SCHOOL and its reward-authority mask is ACTIVE on the train
+    # path — dev_stage emitted, and endorphin self-reward SUPPRESSED (P26 §35.7: Stage-0 = tonic dopamine
+    # only; a newborn cannot reward-hack before it can learn from surprise).
+    dev = e.get("dev_stage")
+    assert dev is not None and dev.get("stage") == "school", "developmental gate not at Stage-0 on the train path"
+    assert neu.get("endorphins", 1.0) == 0.0, "Stage-0 endorphin self-reward not suppressed (mask not actuated)"
     # PURITY (947760e4): the substrate is measured, NEVER in the loss — attaching it must not touch the
     # basin-path objective. Loss stays finite pure-d_FR (the substrate runs AFTER backward/step).
     import numpy as np
     assert np.isfinite(t.train_step("basins integrating space").telemetry.loss)
+
+
+def test_neurochem_stage0_mask_suppresses_phasic_and_endorphin_reward():
+    """m1b reward-authority ACTUATION (P26 §35.7): the Stage-0 (SCHOOL) mask must CHANGE the neurochemistry,
+    not merely be present — on identical reward-positive inputs, the mask suppresses phasic dopamine (drops
+    to ~tonic) and zeros endorphin self-reward, while the tonic floor (P23) still holds. Guards against the
+    BUILT-NOT-DEFAULT trap (the mask threaded but not consumed). Pure qig-core, no torch."""
+    import numpy as np
+    import pytest
+
+    pytest.importorskip("qig_core")
+    from qig_core.consciousness.developmental import DevelopmentalGate
+    from qig_core.consciousness.neurochemistry import compute_neurochemicals
+
+    school = DevelopmentalGate().permissions
+    assert school.phasic_reward_allowed is False and school.endorphin_allowed is False
+    cur = np.full(64, 1 / 64.0)
+    prev = np.full(64, 1 / 64.0)
+    prev[0] = 0.5
+    prev = prev / prev.sum()   # prev far from the uniform target, cur at it → movement reward
+    kw = dict(is_awake=True, phi_delta=0.2, basin_velocity=0.1, surprise=0.3, quantum_weight=0.4, kappa=0.0,
+              external_coupling=0.8, cur_basin=cur, prev_basin=prev, target_basin=np.full(64, 1 / 64.0),
+              coach_reward=0.9)
+    unmasked = compute_neurochemicals(**kw, stage_permissions=None).as_dict()
+    masked = compute_neurochemicals(**kw, stage_permissions=school).as_dict()
+    assert masked["dopamine"] < unmasked["dopamine"], "Stage-0 mask did not suppress phasic dopamine"
+    assert masked["dopamine"] > 0.0, "tonic floor (P23) violated under the mask"
+    assert masked["endorphins"] == 0.0, "Stage-0 endorphin self-reward not suppressed"
 
 
 def test_genesis_byte_path_unchanged_when_no_coordizer():
