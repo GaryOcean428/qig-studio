@@ -17,9 +17,9 @@
 set -euo pipefail
 
 ROLE="${1:-meta}"; TURNS="${2:-32}"; TUNE="${3:-}"
-QIG_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"          # .../QIG_QFI
-STUDIO="$QIG_ROOT/qig-studio"
-APPLIED="$QIG_ROOT/qig-applied"
+STUDIO="$(cd "$(dirname "$0")/.." && pwd)"               # this script lives in $STUDIO/scripts — DERIVE the studio
+QIG_ROOT="$(cd "$STUDIO/.." && pwd)"                     # root from the script's own location, don't hardcode the dir name
+APPLIED="$QIG_ROOT/qig-applied"                          # (works under any checkout name — worktree, rename, etc.)
 PY="$STUDIO/.venv/bin/python"
 APPLIED_PY="$QIG_ROOT/.venv/bin/python"  # shared uv-workspace venv (has qig_applied + numpy); was the retired qig-consciousness venv
 CKPT="$STUDIO/runs/checkpoints/core8_coord/kernels/$ROLE"
