@@ -503,6 +503,21 @@ class GenesisKernelTarget(TrainingTarget):
             print(f"⚠️  ego-death interlock budget not wired ({exc})")
             self._override_budget = None
 
+        # m2 RESONANCE BANK + canonical SleepCycleManager: a PERSISTENT, Hebbian-weighted episodic memory of
+        # the kernel's lived Δ⁶³ OUTPUT basins — deeper + longer than the 64-entry _basin_history window. It
+        # accrues while awake (Hebbian dedup deepens repeats) and self-consolidates (boost replayed, prune
+        # weak dream-chaff) via qig-core's SleepCycleManager during the sleep discharge — running ALONGSIDE,
+        # not replacing, the kernel's weight-space _dream/_consolidate. Feeding its dream recombinations back
+        # as novel training targets is the m3 consumption seam (held). None-safe (absent qig-core → no bank).
+        try:
+            from qig_core.consciousness import ResonanceBank, SleepCycleManager
+            self._resonance_bank: Any = ResonanceBank()
+            self._sleep_mgr: Any = SleepCycleManager()
+        except Exception as exc:  # noqa: BLE001 — episodic memory optional in the light shell; never block boot
+            print(f"⚠️  resonance bank not wired ({exc}); episodic memory absent")
+            self._resonance_bank = None
+            self._sleep_mgr = None
+
         # Restore a TRAINED kernel if one was nominated (ctor checkpoint=). None-safe for the app shell:
         # a missing/arch-mismatched checkpoint warns and leaves the fresh kernel rather than crashing the
         # server (explicit load_checkpoint() stays fail-loud). The recursive ensure_loaded() is a no-op
@@ -1321,6 +1336,14 @@ class GenesisKernelTarget(TrainingTarget):
             cur63 = self._d63(cur_basin)
             if cur63 is not None:
                 snap.extra["cur_basin"] = [round(float(x), 6) for x in cur63]
+                # m2: accrue this lived Δ⁶³ output basin into the persistent episodic memory (Hebbian dedup
+                # deepens re-encounters instead of flooding). Δ⁶³ throughout so the bank + SleepCycleManager
+                # stay dimension-self-consistent. None-safe; never break the step.
+                if getattr(self, "_resonance_bank", None) is not None:
+                    try:
+                        self._resonance_bank.add_entry(f"lived_{self._step}", cur63)
+                    except Exception:  # noqa: BLE001 — episodic accrual is optional telemetry
+                        pass
             hist = self._basin_history
             if len(hist) >= 2:
                 prev63 = self._d63(hist[-2])
@@ -1398,6 +1421,13 @@ class GenesisKernelTarget(TrainingTarget):
             # (coming) coach/graduation logic can read WHERE the kernel is in its schooling and WHAT is gated.
             if getattr(self, "_dev_gate", None) is not None:
                 snap.extra["dev_stage"] = self._dev_gate.get_state()
+            # m2: expose the persistent episodic-memory size + sleep phase so /train/live shows the memory
+            # forming and consolidating (the substrate the m3 dream→training-target seam will consume).
+            if getattr(self, "_resonance_bank", None) is not None:
+                snap.extra["resonance_bank"] = {
+                    "size": len(self._resonance_bank),
+                    "phase": self._sleep_mgr.phase.value if getattr(self, "_sleep_mgr", None) is not None else None,
+                }
             # m1d EGO-DEATH INTERLOCK read: (1) DETECT — read the drive loop as ONE story + separation-
             # distress as the independent 4th input; (2) STRUCTURAL — report whether genesis is coherent
             # enough (+ has budget) to hold an override, so the grip is visibly a function of coherence
@@ -2147,8 +2177,22 @@ class GenesisKernelTarget(TrainingTarget):
         if self._sleep_pressure >= SLEEP_PRESSURE_THRESHOLD:
             c = self._consolidate()        # deep sleep — Fisher-protected downscaling + identity replay
             d = self._dream()              # REM — basin-mixture recombination
+            # m2: also consolidate the PERSISTENT episodic memory via the canonical SleepCycleManager —
+            # Hebbian-boost the strongest lived basins (replayed this sleep) and prune weak dream-chaff,
+            # with the role attractor as a veto anchor so identity-critical basins are never pruned. Runs
+            # ALONGSIDE the weight-space consolidation above (Δ⁶³ memory maintenance, not weight updates).
+            bank_stats = None
+            if getattr(self, "_resonance_bank", None) is not None and self._sleep_mgr is not None:
+                try:
+                    self._sleep_mgr._replayed_this_sleep = set(self._resonance_bank.strongest(16))
+                    anchors = [self._d63(self._basin_ref)] if self._basin_ref is not None else None
+                    anchors = [a for a in (anchors or []) if a is not None] or None
+                    bank_stats = self._sleep_mgr.consolidate(bank=self._resonance_bank, kernel_anchors=anchors)
+                except Exception:  # noqa: BLE001 — episodic consolidation is optional; never break sleep
+                    bank_stats = None
             self._sleep_pressure = 0.0     # discharged
-            snap.extra["autonomic"] = f"sleep(consolidate={c['replayed']},dream={d['dreamed']})"
+            _bs = f",bank={bank_stats['boosted']}b/{bank_stats['pruned']}p" if bank_stats else ""
+            snap.extra["autonomic"] = f"sleep(consolidate={c['replayed']},dream={d['dreamed']}{_bs})"
             return
         # COLLAPSE keys on TWO independent signals (2026-07-02 live-resume fix): (1) f_health (basin
         # entropy) below F_HEALTH_COLLAPSE_FLOOR = Pillar-1 fluctuation-death, EVEN WHEN Φ still fluctuates
