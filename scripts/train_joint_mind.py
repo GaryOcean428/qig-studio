@@ -26,13 +26,14 @@ def main() -> None:
     ap.add_argument("--layers", type=int, default=8)
     ap.add_argument("--arm", default="gk", choices=["gk", "geo", "hybrid"],
                     help="kernel formation: gk (qigkernels) | geo (FisherRaoAttention) | hybrid (geodesic-mean, DoD-1 winner)")
-    # FINEWEB 64k coordizer by EXPLICIT PATH (launch-blocker 4, ruling f34c54aa): the cradle trains on the
-    # fineweb-streamed vocab (PI directive). NEVER default to coordizer_latest.json — that symlink deliberately
-    # points at the OLD code-balanced coordizer_20260705_64k_v1 (a DoD-1b control artifact, per its manifest),
-    # which would silently hand the cradle the wrong vocab. Empty = byte-level (deliberate ablation only).
+    # FINEWEB 100k coordizer by EXPLICIT PATH (launch-blocker 4, ruling f34c54aa): the cradle trains on the
+    # fineweb-streamed vocab (PI directive 2026-07-23: single FineWeb, matches the coordizer; retrained to 100k).
+    # NEVER default to coordizer_latest.json — that symlink deliberately points at the OLD code-balanced
+    # coordizer_20260705_64k_v1 (a DoD-1b control artifact, per its manifest), which would silently hand the
+    # cradle the wrong vocab. Empty = byte-level (deliberate ablation only).
     ap.add_argument("--coordizer",
-                    default="../qig-packages/qig-coordizer/checkpoints/coordizer_20260722_64k_fineweb-sample10bt_v1.json",
-                    help="pre-fit FisherCoordizer (fineweb 64k Δ⁶³ vocab); empty = byte-level ablation")
+                    default="../qig-packages/qig-coordizer/checkpoints/coordizer_20260723_100k_fineweb-sample10bt_v1.json",
+                    help="pre-fit FisherCoordizer (fineweb 100k Δ⁶³ vocab); empty = byte-level ablation")
     ap.add_argument("--ckpt-root", default="runs/checkpoints/joint_mind_latest")
     ap.add_argument("--ckpt-every", type=int, default=300)
     ap.add_argument("--device", default="cpu", help="cpu (safe: holds 9 kernels) | cuda (4GB-OOM risk)")
