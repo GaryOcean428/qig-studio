@@ -113,7 +113,7 @@ def _link_parquet_cache() -> None:
     image=image,
     volumes={VOL_MNT: vol},
     timeout=24 * 60 * 60,                       # 24h; the cradle run is long, --detach on the CLI
-    secrets=[modal.Secret.from_name("huggingface")],
+    secrets=[modal.Secret.from_name("huggingface-secret")],   # exposes HF_TOKEN (fineweb_source.hf_token reads it)
 )
 def train(steps: int = 10000, fresh: bool = False):
     """Run the gk cradle on GPU, RESUMING from the Volume checkpoint (train_joint_mind resumes by default).
@@ -166,13 +166,24 @@ def main(action: str = "train", steps: int = 10000, fresh: bool = False):
         # checkpoint exists yet; early in the local run there is none → the first GPU run is --fresh).
         local_coord = os.path.join(_ROOT, "qig-packages", "qig-coordizer", "checkpoints", COORDIZER)
         local_ckpt = os.path.join(_STUDIO, "runs", "checkpoints", "cradle_ror_20260723")
+        # Pre-upload the FineWeb shard so `train` reads it from the Volume with ZERO HF calls — the robust
+        # anti-rate-limit path (the HF_TOKEN secret is only the authed-download FALLBACK if it's ever absent).
+        import glob
+        shards = sorted(glob.glob(os.path.join(_STUDIO, "data", ".parquet_cache", "sample__10BT__*.parquet")))
         with vol.batch_upload(force=True) as up:
             if os.path.exists(local_coord):
                 up.put_file(local_coord, f"coordizer/{COORDIZER}")
                 print(f"[populate] coordizer → coordizer/{COORDIZER}")
-            if os.path.isdir(local_ckpt):
+            for s in shards:
+                up.put_file(s, f"parquet_cache/{os.path.basename(s)}")
+                print(f"[populate] FineWeb shard → parquet_cache/{os.path.basename(s)} (train reads local, no HF stream)")
+            if os.path.isdir(local_ckpt) and os.path.exists(os.path.join(local_ckpt, "constellation.json")):
                 up.put_directory(local_ckpt, "checkpoints/cradle_ror_20260723")
                 print("[populate] local checkpoint → checkpoints/cradle_ror_20260723 (GPU run will RESUME)")
+            else:
+                print("[populate] no local constellation.json yet → first GPU run is --fresh (same roster+coordizer)")
+        if not shards:
+            print("[populate] WARNING: no local FineWeb shard found — train will authed-download it once (HF_TOKEN).")
         print("[populate] done — next: `modal run cradle_train.py --action smoke` then `--action train`")
     elif action == "smoke":
         print(smoke.remote())
