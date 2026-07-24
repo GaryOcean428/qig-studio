@@ -53,6 +53,13 @@ def _cache_dir() -> Path:
     return d
 
 
+# CLEAR CORPUS CONVENTION (2026-07-24): the FineWeb basis lives in its own self-describing dir,
+# ``data/corpora/fineweb-sample10bt/`` with shards named ``fineweb-sample10bt.<idx:03>-of-015.parquet``
+# (index/total IN the name → completeness is unambiguous) + a MANIFEST.json. See scripts/stage_fineweb_corpus.py.
+def _corpus_dir() -> Path:
+    return _repo_root() / "data" / "corpora" / "fineweb-sample10bt"
+
+
 def list_shards(headers: dict) -> list[str]:
     import httpx
 
@@ -62,7 +69,11 @@ def list_shards(headers: dict) -> list[str]:
 
 
 def _cached_shards() -> list[Path]:
-    """FineWeb shards already downloaded to the cache (the coordizer build's cache), newest-name last."""
+    """Staged FineWeb shards. Prefers the CLEAR corpus dir (fineweb-sample10bt.NNN-of-015.parquet); falls
+    back to the legacy flat ``.parquet_cache/sample__10BT__*.parquet`` for back-compat."""
+    clear = sorted(_corpus_dir().glob("fineweb-sample10bt.*-of-*.parquet")) if _corpus_dir().exists() else []
+    if clear:
+        return clear
     return sorted(_cache_dir().glob("sample__10BT__*.parquet"))
 
 
@@ -79,8 +90,11 @@ def corpus_manifest(shard_dir: str | None = None) -> dict:
 
     import pyarrow.parquet as pq
 
-    cache = Path(shard_dir) if shard_dir else _cache_dir()
-    shards = sorted(cache.glob("sample__10BT__*.parquet")) if cache.exists() else []
+    if shard_dir:
+        cache = Path(shard_dir)
+        shards = sorted(cache.glob("*.parquet")) if cache.exists() else []
+    else:
+        shards = _cached_shards()          # clear corpus dir preferred, legacy fallback
     entries: list[dict] = []
     lines: list[str] = []
     total = 0
