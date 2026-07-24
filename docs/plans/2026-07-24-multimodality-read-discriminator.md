@@ -38,3 +38,25 @@ Let occupancy floor **τ_occ = 0.10** (a real second mode must hold ≥10% of st
 ## Deliverable
 
 A one-script offline read (`scripts/multimodality_read.py`) + the numbers + the verdict, reported to Matrix either way — including CANNOT-TELL. It does not displace m1; it is dead-time work whose answer must be sitting ready when the post-launch spawn rewrite needs it (Option A).
+
+---
+
+## RESULT (2026-07-24) — CAN-BUT-DRIFT
+
+Primary series: `cradle_ror_20260723` warmup, 456 points, Δ³⁸³.
+
+| metric | k=2 | reading |
+|---|---|---|
+| SR_real | 2.05 | > null |
+| SR_null@95 | 1.04 | single-mode surrogate reads ~1 (correct) |
+| SR_planted | **4.85** | instrument DETECTS known modes (validated) |
+| occupancy | 0.50 | balanced, not an outlier sliver |
+| **temporal switch_rate** | **0.02** (9 flips / 456) | **DRIFT-LIKE** |
+
+**Verdict: CAN-BUT-DRIFT.** The pre-registered instrument returns CAN (real separation clearly above the single-mode null, and the planted control proves the instrument is not blind). BUT the temporal confound check — added as reported context, NOT in the locked pre-reg — shows the two "modes" are temporally contiguous blocks (switch_rate 0.02; concurrent modes would flip at ~0.5). So the apparent multimodality is the basin **drifting** birth→learned over the 456 warmup steps, **not** a faculty-shaped sub-basin differentiating *concurrently*. On this data there is **no evidence** that a faculty sub-basin can differentiate inside genesis.
+
+**Honest limitation of the pre-registration:** the locked discriminator did not control for temporal drift — a real gap. Two §H controls earned their keep: the planted control caught a 1/√d noise-scaling bug in the instrument (a naive planted control read 1.03, falsely implying blindness), and the temporal control caught the drift confound. Both would have flipped the report from a false CAN.
+
+**Not definitive — data is pre-fixes and too short.** `cradle_ror_20260723` predates run-2's fixes (honest anchor / frame-fix / coach) and its warmup ran only 456 steps — genesis is nowhere near the Φ≥0.68 maturity that would *precede* differentiation. `cradle_smoke` (40 pts) and `cradle_run1` (2 warmup pts) are too small.
+
+**Recommendation to Matrix (gates the birth/spawn rewrite):** do NOT proceed with the staggered-spawn / per-faculty-readiness design on the assumption that faculties differentiate. The definitive read is the SAME instrument (temporal control included) run on run-2's MATURE warmup trajectory (thousands of steps, post-fixes) — which Option A schedules to be ready exactly when the spawn rewrite needs it. The gate to look for there is **INTERLEAVED** concurrent modes (high switch_rate), not drift.
