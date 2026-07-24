@@ -555,11 +555,27 @@ class GenesisKernelTarget(TrainingTarget):
             pass
 
     def _resize_basin(self, ref: "Any", size: int) -> "Any":
-        """Map a 64-D Δ⁶³ template onto the vocab-width simplex (logits live in Δ^{vocab-1}). Repeat-tile
-        then clamp non-negative — the caller's to_simplex_prob makes it a true Δ point. Pure simplex
-        arithmetic on the support; no Euclidean projection of meaning."""
-        reps = (size + ref.numel() - 1) // ref.numel()
-        return ref.repeat(reps)[:size].clamp_min(0.0)
+        """Map a 64-D Δ⁶³ template onto a width-``size`` simplex, FRAME-CONSISTENT with the block-sum
+        reduction ``_d63`` so ``reduce(_resize_basin(p)) == p`` EXACTLY (Matrix f241cee4 / z9 frame-fix).
+
+        INTERLEAVE — each Δ⁶³ coord into its OWN contiguous block — inverting ``_d63``'s consecutive-block
+        sum. The old ``ref.repeat`` was a TILE (coord i landed at {i, i+64, i+128, …}) while ``_d63`` sums
+        CONSECUTIVE blocks, so the up-lift and down-reduce used different frames → a measured ~0.36 FR
+        round-trip phantom that would sit IN THE TRAINING PATH the moment a basin-pull activates. No clamp:
+        a repeat of a Δ point is already non-negative (the caller's ``to_simplex_prob`` normalises); the
+        clamp only ever masked the frame bug. Divisible → exact; non-divisible → mirrors ``_d63``'s reduceat
+        frame (step = size//64, first 64 blocks kept, tail dropped → left zero here)."""
+        import torch
+
+        n = int(ref.numel())
+        if size % n == 0:
+            g = size // n
+            return torch.repeat_interleave(ref, g)          # coord i → [i·g:(i+1)·g]; _d63 reshape(n,g).sum inverts exactly
+        step = max(1, size // n)                             # match _d63's reduceat block width
+        body = torch.repeat_interleave(ref, step)           # n contiguous blocks of `step`
+        out = torch.zeros(size, dtype=ref.dtype, device=ref.device)
+        out[: min(body.numel(), size)] = body[:size]        # tail beyond n·step stays ~0 (reduceat[:n] drops it)
+        return out
 
     def _set_pull_set(self, templates: "Any", jl_seed: int = 15420) -> None:
         """EXP-A044: couple to a SET of geo-Qwen per-layer basins (nearest-member pull). Each template is

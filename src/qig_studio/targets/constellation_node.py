@@ -98,11 +98,20 @@ class ConstellationNode:
 
     # --- the coupled-pull plumbing (constellation reads/writes these) ----------------------------------
     def _resize_basin(self, ref: "Any", size: int) -> "Any":
-        """Map a 64-D Δ⁶³ template onto the vocab-width simplex (logits live in Δ^{vocab-1}). Repeat-tile
-        then clamp non-negative — the caller's ``to_simplex_prob`` makes it a true Δ point. Pure simplex
-        arithmetic on the support; no Euclidean projection of meaning. Mirrors GenesisKernelTarget."""
-        reps = (size + ref.numel() - 1) // ref.numel()
-        return ref.repeat(reps)[:size].clamp_min(0.0)
+        """FRAME-CONSISTENT up-map: ``reduce(_resize_basin(p)) == p`` exactly (Matrix f241cee4/z9 frame-fix).
+        INTERLEAVE — each Δ⁶³ coord into its OWN contiguous block — inverting the block-sum reduction; the
+        old ``ref.repeat`` was a TILE (wrong frame → ~0.36 FR round-trip phantom). No clamp: a repeat of a
+        Δ point is non-negative (caller's ``to_simplex_prob`` normalises). Mirrors GenesisKernelTarget."""
+        import torch
+
+        n = int(ref.numel())
+        if size % n == 0:
+            return torch.repeat_interleave(ref, size // n)
+        step = max(1, size // n)
+        body = torch.repeat_interleave(ref, step)
+        out = torch.zeros(size, dtype=ref.dtype, device=ref.device)
+        out[: min(body.numel(), size)] = body[:size]
+        return out
 
     def _set_pull_set(self, templates: "Any") -> None:
         """EXP-A044: couple to a SET of geo-Qwen per-layer basins (nearest-member pull). Each template is
