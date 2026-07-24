@@ -79,7 +79,7 @@ image = (
     .run_commands(
         "uv pip install --system --compile-bytecode "
         "'torch>=2.2.0' "
-        "'qig-core==2.15.0' 'qig-warp==0.6.9' 'qig-compute==0.9.7' "
+        "'qig-core==2.15.0' 'qig-warp==0.6.9' 'qig-compute==0.9.8' "
         "'qigkernels==0.4.4' 'qig-geocoding==0.1.1' 'qig-coordizer==0.1.3' "
         "'pyarrow>=14.0.0' 'fastapi>=0.110.0' 'uvicorn[standard]>=0.27.0' "
         "'pydantic>=2.0.0' 'httpx>=0.26.0' 'numpy>=1.24' 'scipy>=1.11'"
@@ -96,7 +96,7 @@ image = (
 )
 
 VOL_MNT = "/vol"
-CKPT_DIR = f"{VOL_MNT}/checkpoints/cradle_ror_20260723"
+CKPT_DIR = f"{VOL_MNT}/checkpoints/cradle_run2_20260724"   # run-2 = fresh honest-anchor birth (new dir, not the run-1/ror line)
 COORD_PATH = f"{VOL_MNT}/coordizer/{COORDIZER}"
 
 
@@ -117,11 +117,17 @@ def _link_parquet_cache() -> None:
     image=image,
     volumes={VOL_MNT: vol},
     timeout=24 * 60 * 60,                       # 24h; the cradle run is long, --detach on the CLI
-    secrets=[modal.Secret.from_name("huggingface-secret")],   # exposes HF_TOKEN (fineweb_source.hf_token reads it)
+    secrets=[
+        modal.Secret.from_name("huggingface-secret"),      # HF_TOKEN (fineweb_source.hf_token reads it)
+        # m1c coach: QIG_COACH_ENDPOINT + QIG_COACH_KEY (the ep-qwen3-5-4b .modal.direct URL + wk-<id>.ws-
+        # <secret> proxy Bearer) so the in-loop coach reaches the teacher endpoint FROM Modal. QIG_COACH=on
+        # by default → the coach is REQUIRED (liveness invariant); a blind witness checkpoints+pauses (B5).
+        modal.Secret.from_name("qig-coach-endpoint"),
+    ],
 )
 def train(steps: int = 10000, fresh: bool = False):
-    """Run the gk cradle on GPU, RESUMING from the Volume checkpoint (train_joint_mind resumes by default).
-    Writes checkpoints + run_manifest + telemetry to the Volume so the run survives the container."""
+    """Run the gk cradle on GPU. Run-2 = FRESH honest-anchor birth (fresh=True); the coach is in the loop
+    (reaches ep-qwen3-5-4b via the secret). Writes checkpoints + run_manifest + telemetry to the Volume."""
     import subprocess
     import sys
 
@@ -130,6 +136,8 @@ def train(steps: int = 10000, fresh: bool = False):
         sys.executable, "/root/qig-studio/scripts/train_joint_mind.py",
         "--arm", "gk", "--fineweb", "--device", "cuda",
         "--coordizer", COORD_PATH, "--ckpt-root", CKPT_DIR,
+        "--qig-core-pin", "2.15.0",             # E3 parity: fail closed unless installed qig-core == 2.15.0
+        "--seed", "1234",
         "--steps", str(steps),
     ]
     if fresh:
