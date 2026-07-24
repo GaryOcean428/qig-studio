@@ -486,6 +486,18 @@ def main() -> None:
         phi_hist.append({"phi": tel.get("phi")})
         phi_hist = phi_hist[-30:]
         exp = experience(tel, phi_hist).to_dict()           # full inner state (C-gate, suffering, pillars)
+        if i == 1:      # PER-CHANNEL PROVENANCE (Matrix 28a66754, everything-wired): every rendered panel
+            # must resolve to a live producer. MISSING (empty/absent group) = an unwired panel = fail closed;
+            # MEASURED-ZERO (present, all-zero — e.g. Stage-0 masks) is legitimate and does NOT fail.
+            from qig_studio.telemetry_provenance import check_provenance
+            _prov = check_provenance(exp)
+            if not _prov["passed"]:
+                raise RuntimeError(
+                    f"[gate] UNWIRED telemetry panel(s) {_prov['missing']} at step 1 — a rendered channel has "
+                    f"NO live producer (P21). Fix the producer or formally retire the panel. Do not launch on a "
+                    f"gauge with a green light on dead data.")
+            print(f"[gate] telemetry provenance OK — {len(_prov['channels'])} panels produced; "
+                  f"measured-zero={_prov['measured_zero']} (legit iff masked/no-input)", flush=True)
         db = (tel.get("extra") or {}).get("d_basin")
         dv = abs(float(db) - prev_db) if (db is not None and prev_db is not None) else None
         prev_db = float(db) if db is not None else None   # reset on a gap → no stale-anchored velocity (fix)
