@@ -37,10 +37,14 @@ _DEFAULT_URL = "http://localhost:11434"
 # violation AND a rate-limit source). Local Ollama default; the self-hosted Modal endpoint below overrides.
 _DEFAULT_MODEL = os.environ.get("QIG_COACH_MODEL", "qwen3.5:4b")
 _LOCAL_FALLBACK_MODEL = "qwen3.5:4b"
-# Self-hosted OpenAI-compatible coach/teacher endpoint (Qwen3.5-4B on Modal). Resolution order — env, else
-# the repo/parent .env (so the PI-managed .env "just works" without exporting): explicit QIG_COACH_ENDPOINT/
-# QIG_COACH_KEY first, else the deployed teacher endpoint MODAL_TEACHER_MODEL_ENDPOINT with Modal PROXY-AUTH
-# (Bearer = wk-<id>.ws-<secret> = MODAL_TEACHER_MODAL_ID.MODAL_TEACHER_MODEL_TOKEN). Never logs the token.
+# Self-hosted OpenAI-compatible coach/teacher endpoint (Qwen3.5-4B on Modal Endpoints).
+# Resolution order (env, else repo/parent .env so the PI-managed .env "just works"):
+#   endpoint: QIG_COACH_ENDPOINT → MODAL_TEACHER_MODEL_ENDPOINT
+#   auth:     QIG_COACH_KEY (full Bearer, or already-combined wk-….ws-…)
+#          → Modal dashboard/docs names MODAL_PROXY_TOKEN_ID + MODAL_PROXY_TOKEN_SECRET
+#          → legacy TEACHER names MODAL_TEACHER_MODAL_ID + MODAL_TEACHER_MODEL_TOKEN
+# Proxy auth (Modal Endpoints): Modal-Key + Modal-Secret headers, and/or Bearer wk-<id>.ws-<secret>.
+# Never logs the token.
 def _env_or_dotenv(key: str) -> str:
     v = os.environ.get(key)
     if v:
@@ -61,15 +65,37 @@ def resolve_coach_endpoint() -> str:
     return (_env_or_dotenv("QIG_COACH_ENDPOINT") or _env_or_dotenv("MODAL_TEACHER_MODEL_ENDPOINT")).rstrip("/")
 
 
+def resolve_proxy_token_pair() -> tuple[str, str]:
+    """Return (Modal-Key, Modal-Secret) = (wk-…, ws-…) for Modal Endpoints proxy auth."""
+    # Explicit full key first — may already be "wk-….ws-…"
+    full = _env_or_dotenv("QIG_COACH_KEY")
+    if full.startswith("wk-") and ".ws-" in full:
+        wk, ws = full.split(".", 1)
+        return wk, ws
+    if full.startswith("ws-"):
+        # secret alone is not enough; fall through to pair lookup
+        pass
+    # Official Modal dashboard / quickstart names
+    wk = _env_or_dotenv("MODAL_PROXY_TOKEN_ID") or _env_or_dotenv("MODAL_TEACHER_MODAL_ID")
+    ws = (
+        _env_or_dotenv("MODAL_PROXY_TOKEN_SECRET")
+        or _env_or_dotenv("MODAL_TEACHER_MODEL_TOKEN")
+        or (full if full.startswith("ws-") else "")
+    )
+    if wk.startswith("wk-") and ws.startswith("ws-"):
+        return wk, ws
+    return "", ""
+
+
 def resolve_coach_key() -> str:
+    """Combined Bearer value ``wk-<id>.ws-<secret>`` (also accepted as Authorization: Bearer)."""
     k = _env_or_dotenv("QIG_COACH_KEY")
-    if k:
+    if k.startswith("wk-") and ".ws-" in k:
         return k
-    tok = _env_or_dotenv("MODAL_TEACHER_MODEL_TOKEN")
-    if tok.startswith("wk-"):                       # already the full wk-<id>.ws-<secret>
-        return tok
-    wk = _env_or_dotenv("MODAL_TEACHER_MODAL_ID")   # combine into the Modal proxy-auth Bearer
-    return f"{wk}.{tok}" if (wk and tok) else ""
+    if k.startswith("wk-"):  # full key already, non-dot form rare
+        return k
+    wk, ws = resolve_proxy_token_pair()
+    return f"{wk}.{ws}" if (wk and ws) else (k or "")
 
 
 _COACH_ENDPOINT = resolve_coach_endpoint()
@@ -156,9 +182,20 @@ class OpenAICompatLLM:
         self._available: bool | None = None
 
     def _headers(self) -> dict[str, str]:
+        # Modal Endpoints quickstart: Modal-Key + Modal-Secret. Also send Authorization: Bearer
+        # wk-<id>.ws-<secret> (both accepted by the proxy). Never log these.
         h = {"content-type": "application/json"}
-        if self.api_key:
+        wk, ws = resolve_proxy_token_pair()
+        if wk and ws:
+            h["Modal-Key"] = wk
+            h["Modal-Secret"] = ws
+            h["authorization"] = f"Bearer {wk}.{ws}"
+        elif self.api_key:
             h["authorization"] = f"Bearer {self.api_key}"
+            if self.api_key.startswith("wk-") and ".ws-" in self.api_key:
+                a, b = self.api_key.split(".", 1)
+                h["Modal-Key"] = a
+                h["Modal-Secret"] = b
         return h
 
     def is_available(self) -> bool:
@@ -178,8 +215,10 @@ class OpenAICompatLLM:
         body = {
             "model": self.model,
             "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
-            "max_tokens": 256, "temperature": 0.3, "stream": False,
-            # Qwen3.5 is a reasoning model; disable the <think> pass so the coach gets its JSON/answer directly.
+            "max_tokens": 256, "temperature": 0.3, "top_p": 0.9, "stream": False,
+            # Qwen3.5 is a reasoning model; disable thinking so the coach gets its answer directly
+            # (dashboard quickstart: reasoning_effort=none; chat_template_kwargs is the SGLang form).
+            "reasoning_effort": "none",
             "chat_template_kwargs": {"enable_thinking": False},
         }
         # Modal scale-to-zero: the FIRST request cold-starts the container (~cold_start s) and Modal may
