@@ -30,7 +30,7 @@ QIG OPTIMISATION GATE
       (per CLAUDE.md: PyPI install only, add_local_dir BANNED for published packages).
 
 PINS (verified latest-published 2026-07-23; NOT the local dev builds):
-  qig-core==2.15.0  (the cradle APIs: separation_distress, consciousness.ResonanceBank, check_drift P3 fix
+  qig-core==2.15.1  (the cradle APIs: separation_distress, consciousness.ResonanceBank, check_drift P3 fix
                      — verified live on PyPI; local dev was 2.13.5.dev, published 2.14.0 LACKED them, hence
                      the v2.15.0 release), qig-warp==0.6.9, qig-compute==0.9.7, qigkernels==0.4.4 (has the
   gk imports Kernel + DiagonalNaturalGradient), qig-geocoding==0.1.1, qig-coordizer==0.1.3.
@@ -79,7 +79,7 @@ image = (
     .run_commands(
         "uv pip install --system --compile-bytecode "
         "'torch>=2.2.0' "
-        "'qig-core==2.15.0' 'qig-warp==0.6.9' 'qig-compute==0.9.8' "
+        "'qig-core==2.15.1' 'qig-warp==0.6.9' 'qig-compute==0.9.8' "
         "'qigkernels==0.4.4' 'qig-geocoding==0.1.1' 'qig-coordizer==0.1.3' "
         "'pyarrow>=14.0.0' 'fastapi>=0.110.0' 'uvicorn[standard]>=0.27.0' "
         "'pydantic>=2.0.0' 'httpx>=0.26.0' 'numpy>=1.24' 'scipy>=1.11'"
@@ -136,7 +136,7 @@ def train(steps: int = 10000, fresh: bool = False):
         sys.executable, "/root/qig-studio/scripts/train_joint_mind.py",
         "--arm", "gk", "--fineweb", "--device", "cuda",
         "--coordizer", COORD_PATH, "--ckpt-root", CKPT_DIR,
-        "--qig-core-pin", "2.15.0",             # E3 parity: fail closed unless installed qig-core == 2.15.0
+        "--qig-core-pin", "2.15.1",             # E3 parity: fail closed unless installed qig-core == 2.15.1
         "--seed", "1234",
         "--steps", str(steps),
     ]
