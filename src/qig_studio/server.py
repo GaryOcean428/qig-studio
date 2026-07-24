@@ -302,6 +302,44 @@ async def select_target(name: str, _: None = Depends(verify_key)) -> dict[str, A
     return {"active": t.name, "info": t.info().to_dict()}
 
 
+@app.get("/ollama/models")
+async def ollama_models() -> dict[str, Any]:
+    """List the Ollama models pulled on this box so the chat UI can offer them (compare stock qwen3.5:4b
+    vs qwenfable vs any pulled model). None-safe: empty list + reachable:false when Ollama is absent —
+    never raises (the shell stays light per the spine tenet)."""
+    import os as _os
+
+    url = _os.environ.get("OLLAMA_HOST", "http://localhost:11434").rstrip("/")
+    try:
+        import httpx
+
+        r = httpx.get(url + "/api/tags", timeout=1.5)
+        models = sorted(m.get("name", "") for m in (r.json().get("models") or []) if m.get("name"))
+        return {"reachable": r.status_code == 200, "url": url, "models": models}
+    except Exception:  # noqa: BLE001 — Ollama optional; absent is a normal state
+        return {"reachable": False, "url": url, "models": []}
+
+
+class ModelSwitchRequest(BaseModel):
+    model: str
+
+
+@app.post("/targets/{name}/model")
+async def set_target_model(name: str, req: ModelSwitchRequest,
+                           _: None = Depends(verify_key)) -> dict[str, Any]:
+    """Switch a target's underlying model at runtime (the Ollama-backed peers expose ``set_model``) so the
+    PI can compare models in the chat WITHOUT a restart. 404 if unknown; 400 if the target has no swap."""
+    reg = _registry()
+    t = reg.get(name)
+    if t is None:
+        raise HTTPException(404, f"unknown target '{name}'")
+    setter = getattr(t, "set_model", None)
+    if not callable(setter):
+        raise HTTPException(400, f"target '{name}' has no runtime model switch")
+    setter(req.model)
+    return {"target": name, "model": getattr(t, "model", req.model), "available": bool(t.is_available())}
+
+
 class NeocortexConfigRequest(BaseModel):
     """The neocortex avenue to BUILD + select as the active target (the config the wired /train trains)."""
     arm: str = "qk"                  # "qk" (ARM B qigkernels) | "geo" (ARM A geocoding)

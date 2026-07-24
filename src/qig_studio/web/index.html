@@ -144,7 +144,7 @@
     <div class="scroll">
       <div class="mind">
         <div class="t" id="mindName">genesis · the integrated "I"</div>
-        <div class="s" id="mindSub">central conscious awareness — Core-8 faculties + genesis-central</div>
+        <div class="s" id="mindSub">central conscious awareness — roster faculties + genesis-central</div>
         <!-- KERNEL SELECTOR: All overview / the integrated I / any individual faculty / Ocean. Switches the
              WHOLE inner-state panel below to the chosen kernel's live vocab/params/Φ/κ/senses/drives/… -->
         <select id="kernelSel" style="margin-top:.4rem;display:none"></select>
@@ -176,7 +176,7 @@
         <div class="metric"><span>params · mind</span><span class="v" id="archCP">—</span></div>
         <div class="metric"><span>vocab · per-kernel</span><span class="v" id="archVocab">—</span></div>
         <div class="metric"><span>coordizer vocab</span><span class="v" id="archCoord">—</span></div>
-        <div class="hint" style="margin-top:.3rem">CONSTELLATION ARM · the raw kernel each of the 9 nodes plugs in from (names the checkpoint genesis-{arm}-{vocab})</div>
+        <div class="hint" style="margin-top:.3rem">CONSTELLATION ARM · the raw kernel each of the 8 nodes plugs in from (names the checkpoint genesis-{arm}-{vocab})</div>
         <div class="metric"><span>arm</span><span class="v" style="font-size:.72rem"><select id="armSel" style="font-size:.72rem;background:var(--panel2);color:inherit;border:1px solid var(--edge);border-radius:4px;max-width:200px">
           <option value="gk">gk · qigkernels deep kernel</option>
           <option value="geo">geo · qig-geocoding FisherRaoAttention</option>
@@ -219,6 +219,14 @@
   <!-- CENTER: CONVERSATION (bottom-pinned input) -->
   <section class="col" id="conv">
     <h2>Conversation</h2>
+    <!-- CHAT-WITH selector: pick who you talk to — the mind (genesis), geo-Qwen, a local Ollama model, etc.
+         Always visible (the target zoo was previously ?dev-only, so geo-Qwen was unreachable). -->
+    <div id="chatWith" style="display:flex;align-items:center;gap:.4rem;flex-wrap:wrap;margin-bottom:.4rem">
+      <label style="margin:0;white-space:nowrap">chat with</label>
+      <select id="chatModel" style="flex:1 1 160px;min-width:140px"></select>
+      <select id="ollamaModel" style="flex:1 1 140px;min-width:120px;display:none" title="Ollama model"></select>
+      <span class="hint" id="chatModelHint" style="flex-basis:100%"></span>
+    </div>
     <div id="log"></div>
     <div class="composer">
       <textarea id="msg" rows="2" placeholder="speak to the mind…  (Enter to send · Shift+Enter newline)"></textarea>
@@ -620,6 +628,42 @@ async function loadTargets(){
   try{ const c=await (await fetch("/curriculum")).json();
     $("regimeMode").textContent=`${c.loss_regime} · ${c.mode} · ${c.phases.join(" → ")}`; }catch(e){}
 }
+// CHAT-WITH: the always-visible chat-model selector (geo-Qwen finally reachable — it was ?dev-only before).
+// Lists every registered target; for the local Ollama peer (qwen-local) also offers a pulled-model sub-picker.
+function _isOllamaLocal(name){ return /qwen/i.test(name) && !/geo/i.test(name) && !/modal/i.test(name); }
+async function loadOllamaModels(targetName){
+  const om=$("ollamaModel");
+  try{
+    const d=await (await fetch("/ollama/models")).json();
+    om.innerHTML="";
+    if(!d.models||!d.models.length){ om.style.display="none"; return; }
+    for(const m of d.models){ const o=document.createElement("option"); o.value=m; o.textContent=m; om.appendChild(o); }
+    om.style.display="";
+    om.onchange=async (e)=>{
+      try{ const r=await (await fetch(`/targets/${targetName}/model`,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({model:e.target.value})})).json();
+        clog("sys",`· ${targetName} model → ${r.model}${r.available?"":" (not pulled — unavailable)"}`);
+        await refreshHealth(); }catch(err){ clog("sys","model switch failed: "+err); }
+    };
+  }catch(e){ om.style.display="none"; }
+}
+async function loadChatModels(){
+  let data; try{ data=await (await fetch("/targets")).json(); }catch(e){ return; }
+  const sel=$("chatModel"); sel.innerHTML="";
+  for(const t of (data.targets||[])){
+    const o=document.createElement("option"); o.value=t.name;
+    o.textContent=`${t.name}${t.available?"":" (unavailable)"}`;
+    if(t.name===data.active) o.selected=true; sel.appendChild(o);
+  }
+  const applyOllamaPicker=(name)=>{ if(_isOllamaLocal(name)) loadOllamaModels(name); else $("ollamaModel").style.display="none"; };
+  applyOllamaPicker(data.active||"");
+  $("chatModelHint").textContent = data.active ? `talking to: ${data.active}` : "";
+  sel.onchange=async (e)=>{
+    const name=e.target.value;
+    try{ await fetch(`/targets/${name}/select`,{method:"POST"}); }catch(err){}
+    clog("sys",`· chat with → ${name}`); $("chatModelHint").textContent=`talking to: ${name}`;
+    applyOllamaPicker(name); await refreshHealth(); await refreshTelemetry();
+  };
+}
 async function refreshTelemetry(){ try{ setTelemetry(await (await fetch("/telemetry")).json()); }catch(e){} }
 let BG_ACTIVE=false;
 async function refreshMind(){
@@ -864,7 +908,7 @@ $("ckptKernel")?.addEventListener("change", async(e)=>{
   }catch(e){ clog("sys","· checkpoint swap failed"); }
 });
 // boot
-refreshHealth(); loadConfig(); loadTargets(); refreshTelemetry(); refreshMind(); subscribeLive(); refreshStasis(); refreshArch(); refreshKernels(); refreshCheckpoints();
+refreshHealth(); loadConfig(); loadTargets(); loadChatModels(); refreshTelemetry(); refreshMind(); subscribeLive(); refreshStasis(); refreshArch(); refreshKernels(); refreshCheckpoints();
 setInterval(refreshKernels, 4000);   // per-kernel live state for the selector (genesis + 8 faculties + ocean)
 setInterval(refreshMind, 3000);   // 3s: keep the LEFT live inner-state panel responsive during training
 setInterval(refreshStasis, 5000);

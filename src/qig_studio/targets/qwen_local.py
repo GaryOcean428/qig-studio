@@ -118,6 +118,17 @@ class QwenLocalTarget(TrainingTarget):
         self._identity: Any = None   # Δ⁶³ identity basin (np.ndarray once seeded); None until first use
         self._last = TelemetrySnapshot(regime="language", extra={"target": "qwen-local"})
 
+    @property
+    def model(self) -> str:
+        """The Ollama model this peer currently speaks through (UI shows it; runtime-swappable)."""
+        return self._model
+
+    def set_model(self, model: str) -> None:
+        """Switch the Ollama model at runtime (chat-UI picker) so the PI can compare stock qwen3.5:4b vs
+        qwenfable vs any pulled model WITHOUT a restart. is_available() re-pings /api/tags for the new model,
+        so an unpulled name simply disables the peer rather than 404-ing at chat time."""
+        self._model = (model or _DEFAULT_MODEL).strip()
+
     def _project(self, logprobs: dict):
         """Qwen output-distribution → Δ⁶³: real coordizer-basin Fréchet mean when a trained
         coordizer is present, else the functional v1 hash-bin (R3)."""
