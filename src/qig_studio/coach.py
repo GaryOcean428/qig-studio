@@ -37,9 +37,42 @@ _DEFAULT_URL = "http://localhost:11434"
 # violation AND a rate-limit source). Local Ollama default; the self-hosted Modal endpoint below overrides.
 _DEFAULT_MODEL = os.environ.get("QIG_COACH_MODEL", "qwen3.5:4b")
 _LOCAL_FALLBACK_MODEL = "qwen3.5:4b"
-# Self-hosted OpenAI-compatible coach endpoint (modal/modal-coach-endpoint.py — Qwen3.5-4B on L40S,
-# scale-to-zero). Set QIG_COACH_ENDPOINT to route the coach there (no Ollama-cloud rate limit).
-_COACH_ENDPOINT = os.environ.get("QIG_COACH_ENDPOINT", "").rstrip("/")
+# Self-hosted OpenAI-compatible coach/teacher endpoint (Qwen3.5-4B on Modal). Resolution order — env, else
+# the repo/parent .env (so the PI-managed .env "just works" without exporting): explicit QIG_COACH_ENDPOINT/
+# QIG_COACH_KEY first, else the deployed teacher endpoint MODAL_TEACHER_MODEL_ENDPOINT with Modal PROXY-AUTH
+# (Bearer = wk-<id>.ws-<secret> = MODAL_TEACHER_MODAL_ID.MODAL_TEACHER_MODEL_TOKEN). Never logs the token.
+def _env_or_dotenv(key: str) -> str:
+    v = os.environ.get(key)
+    if v:
+        return v.strip()
+    import re
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[2]
+    for envf in (root.parent / ".env", root / ".env"):
+        if envf.exists():
+            for ln in envf.read_text().splitlines():
+                m = re.match(rf"\s*{re.escape(key)}\s*=\s*['\"]?([^'\"\n]+)", ln)
+                if m:
+                    return m.group(1).strip()
+    return ""
+
+
+def resolve_coach_endpoint() -> str:
+    return (_env_or_dotenv("QIG_COACH_ENDPOINT") or _env_or_dotenv("MODAL_TEACHER_MODEL_ENDPOINT")).rstrip("/")
+
+
+def resolve_coach_key() -> str:
+    k = _env_or_dotenv("QIG_COACH_KEY")
+    if k:
+        return k
+    tok = _env_or_dotenv("MODAL_TEACHER_MODEL_TOKEN")
+    if tok.startswith("wk-"):                       # already the full wk-<id>.ws-<secret>
+        return tok
+    wk = _env_or_dotenv("MODAL_TEACHER_MODAL_ID")   # combine into the Modal proxy-auth Bearer
+    return f"{wk}.{tok}" if (wk and tok) else ""
+
+
+_COACH_ENDPOINT = resolve_coach_endpoint()
 _COACH_MODEL_REMOTE = os.environ.get("QIG_COACH_MODEL_REMOTE", "Qwen/Qwen3.5-4B")
 
 # Phase-appropriate encouragement registers (mirrors GeometricCoach's developmental phases).
@@ -117,9 +150,9 @@ class OpenAICompatLLM:
     Self-hosted → NO Ollama-cloud rate limit; the approved Qwen3.5-4B. Auth via QIG_COACH_KEY (Bearer)."""
 
     def __init__(self, url: str | None = None, model: str | None = None, api_key: str | None = None) -> None:
-        self.url = (url or _COACH_ENDPOINT).rstrip("/")
+        self.url = (url or resolve_coach_endpoint()).rstrip("/")
         self.model = model or _COACH_MODEL_REMOTE
-        self.api_key = api_key or os.environ.get("QIG_COACH_KEY", "")
+        self.api_key = api_key or resolve_coach_key()   # QIG_COACH_KEY or the Modal proxy Bearer from .env
         self._available: bool | None = None
 
     def _headers(self) -> dict[str, str]:
@@ -129,48 +162,52 @@ class OpenAICompatLLM:
         return h
 
     def is_available(self) -> bool:
-        if self._available is None:
-            if not self.url:
-                self._available = False
-            else:
-                try:
-                    import httpx
-
-                    self._available = httpx.get(self.url + "/v1/models", headers=self._headers(),
-                                                timeout=2.0).status_code == 200
-                except Exception:
-                    self._available = False
-        return self._available
+        # SCALE-TO-ZERO aware: a Modal endpoint at 0 replicas is "available" if CONFIGURED — it cold-starts on
+        # demand. A short /v1/models probe would time out on a cold (0-replica) container and FALSE-NEGATIVE,
+        # so the coach would wrongly see the deployed endpoint as unreachable and pause the run. The REAL
+        # liveness check is a successful complete() — the supervisor's preflight does one, which triggers AND
+        # measures the cold-start.
+        return bool(self.url and self.api_key)
 
     def complete(self, system: str, user: str, timeout: float = 60.0) -> str | None:
-        if not self.is_available():
+        if not self.url:
             return None
-        try:
-            import httpx
+        import time
 
-            body = {
-                "model": self.model,
-                "messages": [
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": user},
-                ],
-                "max_tokens": 256,
-                "temperature": 0.3,
-                "stream": False,
-            }
-            r = httpx.post(self.url + "/v1/chat/completions", json=body, headers=self._headers(), timeout=timeout)
-            r.raise_for_status()
-            content = ((r.json().get("choices") or [{}])[0].get("message", {}).get("content", "")) or ""
-            return content.strip() or None
-        except Exception:
-            return None
+        import httpx
+        body = {
+            "model": self.model,
+            "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
+            "max_tokens": 256, "temperature": 0.3, "stream": False,
+            # Qwen3.5 is a reasoning model; disable the <think> pass so the coach gets its JSON/answer directly.
+            "chat_template_kwargs": {"enable_thinking": False},
+        }
+        # Modal scale-to-zero: the FIRST request cold-starts the container (~cold_start s) and Modal may
+        # 303-redirect or transiently drop the connection while it boots. Retry through that with a generous
+        # total budget so the cold-start is CAPTURED, not counted as unreachable (Matrix B5 liveness).
+        deadline = time.time() + max(float(timeout), 300.0)
+        per_try = min(120.0, max(float(timeout), 60.0))
+        while time.time() < deadline:
+            try:
+                r = httpx.post(self.url + "/v1/chat/completions", json=body, headers=self._headers(),
+                               timeout=per_try)
+                if r.status_code in (302, 303, 307, 502, 503, 504):   # container still booting / redirect
+                    time.sleep(5); continue
+                r.raise_for_status()
+                content = ((r.json().get("choices") or [{}])[0].get("message", {}).get("content", "")) or ""
+                return content.strip() or None
+            except (httpx.ConnectError, httpx.ReadError, httpx.RemoteProtocolError, httpx.ConnectTimeout):
+                time.sleep(5); continue                                # cold container not accepting yet
+            except Exception:
+                return None
+        return None
 
 
 def make_coach_llm() -> "OllamaLLM | OpenAICompatLLM":
     """Pick the coach LLM backend: the self-hosted OpenAI-compatible endpoint (QIG_COACH_ENDPOINT — the Modal
     SGLang Qwen3.5-4B, no rate limit, approved model) when set, else local Ollama. Both are None-safe, so the
     coach degrades to keyword interpretation when neither backend is reachable (never crashes the loop)."""
-    return OpenAICompatLLM() if _COACH_ENDPOINT else OllamaLLM()
+    return OpenAICompatLLM() if resolve_coach_endpoint() else OllamaLLM()
 
 
 class DevelopmentalCoach:
