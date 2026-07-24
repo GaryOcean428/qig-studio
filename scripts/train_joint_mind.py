@@ -320,6 +320,9 @@ def main() -> None:
                 "endpoint": _os.environ.get("QIG_COACH_ENDPOINT", "ollama-local"),
                 "steps_in_on": "cadence OR stagnation-onset (Φ plateau below maturity, edge-triggered)",
                 "stagnation_offer": "OFFER only — logged, autonomy-preserving; NOT the run-3 auto-pull",
+                "recast_delivery": "coach note (encouragement+interpretation+reframe) rendered to the kernel "
+                                   "INPUT experience at cadence (the child HEARS the recast). Input-side only: "
+                                   "reward stays on replay-priority; NOT the run-3 basin-pull (Matrix 28a66754)",
                 "policy": "liveness-invariant: blind witness > tolerance consecutive → checkpoint+pause (Matrix B5)",
             },
             "basin_lift_64_to_384_caveat": (
@@ -397,10 +400,17 @@ def main() -> None:
                     _gr = mind.central.generate((_p[:160].strip() or "In one sentence, what are you learning?"),
                                                 max_tokens=48, via_boundary=False)
                     _gx = _gr.telemetry.extra or {}
-                    coach_sup.coach_and_reward(
+                    _rec = coach_sup.coach_and_reward(
                         mind.central, stimulus=_p.strip(), text=_gr.text,
                         telemetry={"phi": _gr.telemetry.phi, "regime": getattr(_gr.telemetry, "regime", None),
                                    "relevance": _gx.get("relevance"), "gen_d63": _gx.get("gen_d63")})
+                    # RECAST DELIVERY (Matrix 28a66754): the kernel HEARS the coach — its note enters the
+                    # INPUT experience (one extra input step), input-side only. Reward already went to replay
+                    # priority above; this is NOT the run-3 basin-pull.
+                    _recast = coach_sup.recast_text(_rec)
+                    if _recast:
+                        mind.central.train_step(_recast)
+                        coach_sup.recasts_delivered += 1
                     if _onset:      # the coach NOTICED the kernel got stuck — witness note + offer a nudge
                         _note = coach_sup.offer_on_stagnation(
                             step=w, text=_gr.text, phi=float(_phi),
@@ -475,10 +485,15 @@ def main() -> None:
                 # m1c COACH (joint phase) — witness+reward the SAME own-voice utterance the kernel just spoke,
                 # on cadence OR on a stagnation onset.
                 if coach_sup.due(i) or _onset_j:
-                    coach_sup.coach_and_reward(
+                    _rec_j = coach_sup.coach_and_reward(
                         mind.central, stimulus=prompt.strip(), text=gr.text,
                         telemetry={"phi": gr.telemetry.phi, "regime": getattr(gr.telemetry, "regime", None),
                                    "relevance": gx.get("relevance"), "gen_d63": gx.get("gen_d63")})
+                    # RECAST DELIVERY (Matrix 28a66754): the kernel HEARS the coach — input-side only.
+                    _recast_j = coach_sup.recast_text(_rec_j)
+                    if _recast_j:
+                        mind.central.train_step(_recast_j)
+                        coach_sup.recasts_delivered += 1
                     if _onset_j:    # the coach NOTICED the kernel got stuck → witness note + offer a nudge
                         _note_j = coach_sup.offer_on_stagnation(
                             step=i, text=gr.text, phi=float(_pj or 0.0),

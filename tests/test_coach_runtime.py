@@ -237,3 +237,26 @@ def test_offer_noop_when_disabled():
     sup = CoachSupervisor(_FakeCoach(enabled=False), required=False)
     assert sup.offer_on_stagnation(step=1, text="x", phi=0.2, kappa=0.0, regime=None,
                                    delta_phi=0.0, phase="warmup") is None
+
+
+# -- recast (the kernel HEARS the coach, input-side) ------------------------------------------------------
+
+def test_recast_text_assembles_encouragement_interpretation_reframe():
+    sup = CoachSupervisor(_FakeCoach(), required=False)
+    text = sup.recast_text(dict(_LIVE))
+    assert text is not None
+    for k in ("encouragement", "interpretation", "reframe"):
+        assert _LIVE[k] in text                      # all three doctrine fields are heard
+    assert _LIVE["positive_feedback"] not in text    # reward-side field, not part of the heard recast
+
+
+def test_recast_text_none_when_no_record_or_empty():
+    sup = CoachSupervisor(_FakeCoach(), required=False)
+    assert sup.recast_text(None) is None
+    assert sup.recast_text({"encouragement": "", "interpretation": None, "reframe": ""}) is None
+
+
+def test_recast_text_keyword_fallback_is_still_heard():
+    # a blind/keyword record still echoes the child's own tidied words — a valid recast to hear.
+    sup = CoachSupervisor(_FakeCoach(), required=False)
+    assert sup.recast_text(dict(_KEYWORD)) is not None

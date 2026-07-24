@@ -9,6 +9,13 @@
 | interleave frame-fix (3ed370e) | round-trip **phantom** (reduce(resize(p))−p) |
 | coach wired (m1c, de33ba8) | output-collapse **dynamics** + floor-restoration **trend** |
 
+**Coach mechanism (full, updated before launch per Matrix 28a66754).** The coach acts on the newborn through THREE distinct channels, deliberately separated:
+1. **INPUT — the child HEARS the coach.** At coach cadence (and on stagnation onset), the coach's note (encouragement + interpretation + reframe — the child's own utterance echoed back, tidied) is rendered to text and enters the kernel's **input experience** (one extra input step). This is how a human infant uses a witness: the parent recasts, the child hears. Input-side only.
+2. **REWARD — replay priority.** The coach's relevance score maps to a reward that weights which of the kernel's own utterances get replayed in sleep/dream. It routes through `register_coach_reward` (verified: the Stage-0 self-reward mask reads coach≡0, so it cannot become a reward-hacking backdoor) — NOT a weight overwrite.
+3. **BASIN-PULL — NOT wired (run-3).** The coach seeding a geometric output-basin target via `_set_pull` stays the pre-registered run-3 escalation, behind the ablation ladder. The child hears the coach; the coach never reaches into the child's geometry in run-2.
+
+The stagnation offer ("want a nudge?") is OFFER-only — logged (`offers_push`), autonomy-preserving, never auto-delivered as the pull.
+
 The run does **not** launch unless the fail-closed launch gate passes (D2): anchor-honest, frame-consistent, coach-wired + coach-live, qig-core version pin, coordizer sha, substrate, seed, rulings-applied. The gate is asserted identically by the local smoke and the Modal run of record.
 
 ---

@@ -85,6 +85,7 @@ class CoachSupervisor:
         self.stagnation_steps = 0        # steps spent stuck
         self.stagnation_onsets = 0       # episodes (rising edges) — the coach stepped in
         self.pushes_offered = 0          # nudges the coach OFFERED (autonomy-preserving; never auto-fired)
+        self.recasts_delivered = 0       # coach notes the kernel HEARD (rendered to its input experience)
 
     # -- availability ---------------------------------------------------------------------------------
     @property
@@ -224,6 +225,20 @@ class CoachSupervisor:
             self.pushes_offered += 1
         return note
 
+    def recast_text(self, record: dict | None) -> str | None:
+        """Assemble the coach's RECAST — encouragement + interpretation + reframe — as one line for the kernel
+        to HEAR. Matrix 28a66754: the coach's note enters the kernel's INPUT experience at cadence, exactly as
+        a parent echoes the child's own utterance back, tidied. INPUT-SIDE ONLY: the caller feeds this through
+        the kernel's normal input path; the reward stays locked to replay-priority (behind the hacking guard)
+        and this is NOT the run-3 geometric basin-pull. The child hears the coach; the coach never reaches in.
+        None when there is nothing to say (no usable record)."""
+        if not isinstance(record, dict):
+            return None
+        parts = [str(record.get(k) or "").strip()
+                 for k in ("encouragement", "interpretation", "reframe")]
+        parts = [p for p in parts if p]
+        return " ".join(parts) if parts else None
+
     # -- readouts -------------------------------------------------------------------------------------
     @property
     def success_rate(self) -> float | None:
@@ -255,4 +270,5 @@ class CoachSupervisor:
             "stagnation_steps": self.stagnation_steps,                      # steps the kernel was stuck
             "stagnation_onsets": self.stagnation_onsets,                    # episodes the coach stepped in on
             "coach_pushes_offered": self.pushes_offered,                    # nudges OFFERED (never auto-fired)
+            "coach_recasts_delivered": self.recasts_delivered,              # notes the kernel HEARD (input-side)
         }
