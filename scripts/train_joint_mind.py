@@ -435,6 +435,10 @@ def main() -> None:
                     _gr = mind.central.generate((_p[:160].strip() or "In one sentence, what are you learning?"),
                                                 max_tokens=48, via_boundary=False)
                     _gx = _gr.telemetry.extra or {}
+                    # Modal-visible pair (coach cadence / stagnation only): stimulus + own-voice.
+                    # LiveLog already carries these for the UI path; stdout was silent → PI could not audit.
+                    print(f"[voice] warmup@{w} stim={_p.strip()[:200]!r}", flush=True)
+                    print(f"[voice] warmup@{w} gen={(_gr.text or '')[:300]!r}", flush=True)
                     _rec = coach_sup.coach_and_reward(
                         mind.central, stimulus=_p.strip(), text=_gr.text,
                         telemetry={"phi": _gr.telemetry.phi, "regime": getattr(_gr.telemetry, "regime", None),
@@ -444,6 +448,7 @@ def main() -> None:
                     # priority above; this is NOT the run-3 basin-pull.
                     _recast = coach_sup.recast_text(_rec)
                     if _recast:
+                        print(f"[voice] warmup@{w} recast={_recast[:300]!r}", flush=True)
                         mind.central.train_step(_recast)
                         coach_sup.recasts_delivered += 1
                     if _onset:      # the coach NOTICED the kernel got stuck — witness note + offer a nudge
@@ -526,6 +531,9 @@ def main() -> None:
                 last_seed = seed
                 last_voice_stimulus = prompt.strip()    # the source THIS own-voice actually responded to (paired w/ last_own)
                 gx = gr.telemetry.extra or {}
+                # Modal-visible pair (sample cadence / stagnation): stimulus seed + own-voice generation.
+                print(f"[voice] joint@{i} stim={prompt.strip()[:200]!r}", flush=True)
+                print(f"[voice] joint@{i} gen={(gr.text or '')[:300]!r}", flush=True)
                 if gx.get("gen_health") is not None:
                     last_gen_health = gx.get("gen_health")
                     last_gen_ricci = gx.get("gen_ricci")
@@ -539,6 +547,7 @@ def main() -> None:
                     # RECAST DELIVERY (Matrix 28a66754): the kernel HEARS the coach — input-side only.
                     _recast_j = coach_sup.recast_text(_rec_j)
                     if _recast_j:
+                        print(f"[voice] joint@{i} recast={_recast_j[:300]!r}", flush=True)
                         mind.central.train_step(_recast_j)
                         coach_sup.recasts_delivered += 1
                     if _onset_j:    # the coach NOTICED the kernel got stuck → witness note + offer a nudge
