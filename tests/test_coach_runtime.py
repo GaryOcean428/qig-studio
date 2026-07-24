@@ -35,9 +35,17 @@ class _FakeLLM:
         return self._reply if self._available else None
 
 
+class _FakeNote:
+    def __init__(self, offers_push, message="you've been circling — want a nudge? your call"):
+        self.offers_push = offers_push
+        self.message = message
+
+
 class _FakeCoach:
     """Mirrors the DevelopmentalCoach surface CoachSupervisor touches: enabled, provider, llm,
-    _should_speak, coach_own_voice. ``records`` is a list popped per call (a dict, None, or an Exception)."""
+    _should_speak, coach_own_voice, observe, phi_threshold. ``records`` is popped per call."""
+
+    phi_threshold = 0.70
 
     def __init__(self, enabled=True, records=None, llm=None, cadence=1):
         self.enabled = enabled
@@ -45,6 +53,7 @@ class _FakeCoach:
         self.cadence = cadence
         self._records = records
         self.calls = 0
+        self.observe_calls = 0
 
     @property
     def provider(self):
@@ -61,6 +70,10 @@ class _FakeCoach:
         if isinstance(r, Exception):
             raise r
         return r
+
+    def observe(self, *, step, text, phi, kappa, regime, delta_phi, phase, stagnating):
+        self.observe_calls += 1
+        return _FakeNote(offers_push=bool(stagnating and phi < self.phi_threshold))
 
 
 class _FakeKernel:
@@ -181,3 +194,46 @@ def test_telemetry_token_estimate_only_counts_live_records():
     tel = sup.telemetry()
     assert tel["coach_calls"] == 2 and tel["coach_blind_calls"] == 1
     assert tel["coach_est_output_tokens"] > 0
+
+
+# -- stagnation (coach steps in when stuck) ---------------------------------------------------------------
+
+def test_stagnation_detects_plateau_below_maturity_and_edge_triggers():
+    sup = CoachSupervisor(_FakeCoach(), required=False, stagnation_window=4, stagnation_range=0.01)
+    seq = [0.30, 0.30, 0.30, 0.30, 0.30, 0.30]      # flat plateau, below gate 0.68
+    flags = [sup.update_stagnation(p, maturity_gate=0.68) for p in seq]
+    stagnating = [f[0] for f in flags]
+    onsets = [f[1] for f in flags]
+    assert stagnating[:3] == [False, False, False]  # window not full yet
+    assert stagnating[3] is True                    # window full + plateau + below gate
+    assert onsets[3] is True and sum(onsets) == 1   # edge-triggered: exactly ONE onset for the episode
+    assert sup.stagnation_onsets == 1 and sup.stagnation_steps >= 1
+
+
+def test_stagnation_not_flagged_when_phi_rising():
+    sup = CoachSupervisor(_FakeCoach(), required=False, stagnation_window=4, stagnation_range=0.01)
+    flags = [sup.update_stagnation(p, maturity_gate=0.68) for p in (0.1, 0.2, 0.3, 0.4, 0.5)]
+    assert not any(f[0] for f in flags)             # a rising Φ is progress, never stagnation
+
+
+def test_stagnation_not_flagged_above_maturity():
+    sup = CoachSupervisor(_FakeCoach(), required=False, stagnation_window=4, stagnation_range=0.01)
+    flags = [sup.update_stagnation(p, maturity_gate=0.68) for p in (0.90, 0.90, 0.90, 0.90, 0.90)]
+    assert not any(f[0] for f in flags)             # a mature plateau is health, not being stuck
+
+
+def test_offer_on_stagnation_counts_pushes():
+    c = _FakeCoach()
+    sup = CoachSupervisor(c, required=False)
+    note = sup.offer_on_stagnation(step=12, text="uh", phi=0.3, kappa=0.0, regime="linear",
+                                   delta_phi=0.0, phase="warmup")
+    assert note is not None and note.offers_push is True
+    assert sup.pushes_offered == 1 and c.observe_calls == 1
+    tel = sup.telemetry()
+    assert tel["coach_pushes_offered"] == 1 and tel["stagnation_onsets"] == 0  # onsets tracked separately
+
+
+def test_offer_noop_when_disabled():
+    sup = CoachSupervisor(_FakeCoach(enabled=False), required=False)
+    assert sup.offer_on_stagnation(step=1, text="x", phi=0.2, kappa=0.0, regime=None,
+                                   delta_phi=0.0, phase="warmup") is None

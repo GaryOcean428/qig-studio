@@ -61,7 +61,8 @@ class CoachSupervisor:
         Rolling window (in floor-observed steps) for the windowed floor-restoration rate.
     """
 
-    def __init__(self, coach: Any, *, required: bool, tolerance: int = 3, window: int = 200) -> None:
+    def __init__(self, coach: Any, *, required: bool, tolerance: int = 3, window: int = 200,
+                 stagnation_window: int = 30, stagnation_range: float = 0.01) -> None:
         self.coach = coach
         self.required = bool(required)
         self.tolerance = max(1, int(tolerance))
@@ -76,6 +77,14 @@ class CoachSupervisor:
         self._floor_events = 0
         self._steps_seen = 0
         self._floor_window: deque[int] = deque(maxlen=max(1, int(window)))
+        # stagnation — the coach steps in when the kernel is stuck (Φ plateau below maturity), edge-triggered
+        self._phi_window: deque[float] = deque(maxlen=max(2, int(stagnation_window)))
+        self.stagnation_range = float(stagnation_range)   # Φ range over the window below this = a plateau
+        self._prev_phi: float | None = None
+        self._was_stagnating = False
+        self.stagnation_steps = 0        # steps spent stuck
+        self.stagnation_onsets = 0       # episodes (rising edges) — the coach stepped in
+        self.pushes_offered = 0          # nudges the coach OFFERED (autonomy-preserving; never auto-fired)
 
     # -- availability ---------------------------------------------------------------------------------
     @property
@@ -180,6 +189,41 @@ class CoachSupervisor:
         self._floor_events += ev
         self._floor_window.append(ev)
 
+    # -- stagnation (the coach steps in when the kernel is stuck) --------------------------------------
+    def update_stagnation(self, phi: float, maturity_gate: float) -> tuple[bool, bool, float]:
+        """Feed this step's Φ; returns (stagnating, onset, delta_phi). Stagnation = the Φ window is a PLATEAU
+        (range < stagnation_range) while STILL below maturity — a rising/mature Φ is progress, not being stuck.
+        onset = the RISING edge (first stuck step of an episode), so the coach steps in ONCE per episode rather
+        than every stuck step (edge-triggered — the coach speaks up when it NOTICES you got stuck)."""
+        phi = float(phi)
+        delta_phi = 0.0 if self._prev_phi is None else (phi - self._prev_phi)
+        self._prev_phi = phi
+        self._phi_window.append(phi)
+        stagnating = False
+        if len(self._phi_window) >= self._phi_window.maxlen and phi < maturity_gate:
+            stagnating = (max(self._phi_window) - min(self._phi_window)) < self.stagnation_range
+        onset = stagnating and not self._was_stagnating
+        if stagnating:
+            self.stagnation_steps += 1
+        if onset:
+            self.stagnation_onsets += 1
+        self._was_stagnating = stagnating
+        return stagnating, onset, delta_phi
+
+    def offer_on_stagnation(self, *, step: int, text: str | None, phi: float, kappa: float,
+                            regime: str | None, delta_phi: float, phase: str) -> Any | None:
+        """The coach steps in on stagnation with a witness note that OFFERS a nudge (the observe path). Run-2
+        is coach-ONLY: the offer is WITNESSED + LOGGED (the offers_push flag), it is NEVER auto-delivered as a
+        basin-pull — that is the run-3 coach-seeded anchor-pull, pre-registered behind the ablation ladder
+        (Matrix e2c738e1 Q3). Returns the CoachNote (or None if the coach is disabled / chose not to speak)."""
+        if not self.enabled:
+            return None
+        note = self.coach.observe(step=step, text=text or "", phi=float(phi), kappa=float(kappa),
+                                  regime=regime, delta_phi=float(delta_phi), phase=phase, stagnating=True)
+        if note is not None and getattr(note, "offers_push", False):
+            self.pushes_offered += 1
+        return note
+
     # -- readouts -------------------------------------------------------------------------------------
     @property
     def success_rate(self) -> float | None:
@@ -208,4 +252,7 @@ class CoachSupervisor:
             "floor_restoration_rate_window": self.floor_restoration_rate_window,
             "violations_per_step": self.floor_restoration_rate,             # same signal (each collapse → floor fires)
             "floor_steps_seen": self._steps_seen,
+            "stagnation_steps": self.stagnation_steps,                      # steps the kernel was stuck
+            "stagnation_onsets": self.stagnation_onsets,                    # episodes the coach stepped in on
+            "coach_pushes_offered": self.pushes_offered,                    # nudges OFFERED (never auto-fired)
         }

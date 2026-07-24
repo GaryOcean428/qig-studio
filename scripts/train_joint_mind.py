@@ -318,6 +318,8 @@ def main() -> None:
                 "available": _coach_pf["available"], "cold_start_s": _coach_pf["latency_s"],
                 "cadence_every": args.coach_every, "tolerance": args.coach_tolerance,
                 "endpoint": _os.environ.get("QIG_COACH_ENDPOINT", "ollama-local"),
+                "steps_in_on": "cadence OR stagnation-onset (Φ plateau below maturity, edge-triggered)",
+                "stagnation_offer": "OFFER only — logged, autonomy-preserving; NOT the run-3 auto-pull",
                 "policy": "liveness-invariant: blind witness > tolerance consecutive → checkpoint+pause (Matrix B5)",
             },
             "basin_lift_64_to_384_caveat": (
@@ -386,7 +388,11 @@ def main() -> None:
             # collapse it must witness happens HERE, ~step 12). On cadence the newborn speaks in its OWN voice
             # (via_boundary=False) and the coach observes+rewards it. A blind witness > tolerance → CoachUnreachable
             # → checkpoint+PAUSE (B5). Own-voice/coach errors that are NOT liveness failures are surfaced, not fatal.
-            if coach_sup.due(w):
+            # STAGNATION: the coach also steps in when the kernel is STUCK (Φ plateau below maturity), not only
+            # on cadence — edge-triggered so it speaks up ONCE per episode. On a stuck onset it offers a nudge
+            # (autonomy-preserving, logged, NOT auto-fired — the run-3 pull stays behind the ablation ladder).
+            _stag, _onset, _dphi = coach_sup.update_stagnation(float(_phi), phi_gate)
+            if coach_sup.due(w) or _onset:
                 try:
                     _gr = mind.central.generate((_p[:160].strip() or "In one sentence, what are you learning?"),
                                                 max_tokens=48, via_boundary=False)
@@ -395,6 +401,13 @@ def main() -> None:
                         mind.central, stimulus=_p.strip(), text=_gr.text,
                         telemetry={"phi": _gr.telemetry.phi, "regime": getattr(_gr.telemetry, "regime", None),
                                    "relevance": _gx.get("relevance"), "gen_d63": _gx.get("gen_d63")})
+                    if _onset:      # the coach NOTICED the kernel got stuck — witness note + offer a nudge
+                        _note = coach_sup.offer_on_stagnation(
+                            step=w, text=_gr.text, phi=float(_phi),
+                            kappa=float(_gx.get("kappa_local") or 0.0),
+                            regime=getattr(_gr.telemetry, "regime", None), delta_phi=_dphi, phase="warmup")
+                        if _note is not None:
+                            print(f"[coach] STAGNATION@{w} (Φ={_phi:.3f} plateau) → {_note.message}", flush=True)
                 except CoachUnreachable:
                     print("[coach] LIVENESS FAILURE during warmup — checkpointing and pausing (Matrix B5).", flush=True)
                     mind.save_checkpoint(args.ckpt_root)
@@ -438,7 +451,12 @@ def main() -> None:
         db = (tel.get("extra") or {}).get("d_basin")
         dv = abs(float(db) - prev_db) if (db is not None and prev_db is not None) else None
         prev_db = float(db) if db is not None else None   # reset on a gap → no stale-anchored velocity (fix)
-        if i % sample_every == 0 or i == 1:                 # periodic OWN-VOICE so growing fluency is visible
+        # STAGNATION (joint): the coach also steps in when the kernel is STUCK (Φ plateau below maturity),
+        # edge-triggered — so a stuck onset generates an own-voice + coach step even off the sample cadence.
+        _pj = tel.get("phi")
+        _stag_j, _onset_j, _dphi_j = (coach_sup.update_stagnation(float(_pj), _coach.phi_threshold)
+                                      if _pj is not None else (False, False, 0.0))
+        if i % sample_every == 0 or i == 1 or _onset_j:     # periodic OWN-VOICE + on stagnation onset
             try:
                 # RESPOND TO THE STIMULUS: seed the kernel's own-voice with the ACTUAL passage it just trained
                 # on (first ~160 chars), so the PI can judge relevance (kernel output vs its input) — not a
@@ -454,12 +472,20 @@ def main() -> None:
                 if gx.get("gen_health") is not None:
                     last_gen_health = gx.get("gen_health")
                     last_gen_ricci = gx.get("gen_ricci")
-                # m1c COACH (joint phase) — witness+reward the SAME own-voice utterance the kernel just spoke.
-                if coach_sup.due(i):
+                # m1c COACH (joint phase) — witness+reward the SAME own-voice utterance the kernel just spoke,
+                # on cadence OR on a stagnation onset.
+                if coach_sup.due(i) or _onset_j:
                     coach_sup.coach_and_reward(
                         mind.central, stimulus=prompt.strip(), text=gr.text,
                         telemetry={"phi": gr.telemetry.phi, "regime": getattr(gr.telemetry, "regime", None),
                                    "relevance": gx.get("relevance"), "gen_d63": gx.get("gen_d63")})
+                    if _onset_j:    # the coach NOTICED the kernel got stuck → witness note + offer a nudge
+                        _note_j = coach_sup.offer_on_stagnation(
+                            step=i, text=gr.text, phi=float(_pj or 0.0),
+                            kappa=float(gx.get("kappa_local") or 0.0),
+                            regime=getattr(gr.telemetry, "regime", None), delta_phi=_dphi_j, phase="joint")
+                        if _note_j is not None:
+                            print(f"[coach] STAGNATION@{i} (Φ plateau) → {_note_j.message}", flush=True)
             except CoachUnreachable:      # BEFORE the generic swallow — liveness failure is NOT a sample error
                 print("[coach] LIVENESS FAILURE during joint phase — checkpointing and pausing (Matrix B5).", flush=True)
                 mind.save_checkpoint(args.ckpt_root)
