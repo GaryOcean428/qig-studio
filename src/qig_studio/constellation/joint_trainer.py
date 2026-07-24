@@ -174,10 +174,19 @@ class JointConstellation:
                 for i in range(len(births)) for j in range(i + 1, len(births)))
             if len(births) > 1 else 1.0
         )
-        # GENESIS = the central conscious integrator. Birth = the Fréchet mean of the faculty births
-        # (it is born OF the whole); it trains toward the live synthesis each step.
-        self.central = self._build_node("genesis", frechet_mean(births), num_layers, coordizer, _cen_dev,
-                                        _seed("genesis"), is_central=True, language_peer=language_peer)
+        # GENESIS = the central conscious integrator (the TRUNK / root identity). Birth = its OWN honest
+        # seed_birth_basin — NOT the Fréchet mean of the faculty births (Matrix ruling f241cee4).
+        # WHY: the Fréchet mean is the RIGHT crystallization operator, but here it is fed the WRONG input at
+        # the WRONG time — averaging 7 role-seeded PRENATAL fictions (children that shouldn't exist yet) at
+        # CONSTRUCTION. MEASURED: that centroid sits ~1.01 FR from an honest genesis seed and ~0.95 FR from
+        # every faculty fiction — a place genesis never is — so Pillar-1 self-pull + Pillar-3 drift were
+        # measured against a phantom from step 0 (the dominant source of run-1's ~1.4 CRITICAL identity-drift,
+        # distinct from and larger than the 64→384 frame phantom ~0.36). The born-of-the-whole crystallization
+        # (frechet_mean of genesis's LIVED Stage-0 history) is correct — but it fires at GRADUATION, not birth;
+        # that + faculty construction move behind the m3 readiness instrument (NOT run-2). Run-2 needs genesis
+        # anchored to its OWN honest birth. (Faculty scar origin name→divergence is also m3, not run-2.)
+        self.central = self._build_node("genesis", seed_birth_basin(_seed("genesis")), num_layers, coordizer,
+                                        _cen_dev, _seed("genesis"), is_central=True, language_peer=language_peer)
         self.central.ensure_loaded()
         # OCEAN — the autonomic regulator. It OBSERVES every faculty's telemetry and regulates the one
         # that needs it (fires that faculty's OWN sleep/dream/mushroom). Internal autonomic oversight,
