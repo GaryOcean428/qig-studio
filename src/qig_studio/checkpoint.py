@@ -5,9 +5,10 @@ Layout under ``root`` (default ``runs/checkpoints``):
     kernels/<role>/ckpt_<step:08d>.pt        — one per kernel (torch state + dev state)
     constellation/ckpt_<step:08d>.json       — the collective Δ⁶³ state (basins + births + telemetry)
 
-The cleanup keeps only the most recent ``keep`` (default 3) per directory — a 3-checkpoint lag — so disk
-stays bounded while the last few are always recoverable. Atomic writes (tmp + rename) so a crash mid-save
-never corrupts a checkpoint.
+The cleanup keeps only the most recent ``keep`` (default 2) per directory — current + one lag
+(Matrix fc4df3cb / PI cleanup order: retention IN CODE, not a memo). Atomic writes (tmp + rename)
+so a crash mid-save never corrupts a checkpoint. Protected lineages (run-1 archive, prereg-referenced
+dirs) are never under this pruner's path — they live as separate roots.
 """
 
 from __future__ import annotations
@@ -18,7 +19,7 @@ from pathlib import Path
 from typing import Any
 
 DEFAULT_ROOT = "runs/checkpoints"
-KEEP = 3   # 3-checkpoint lag: retain the latest 3 per kernel / collective, delete older
+KEEP = 2   # current + one lag (Matrix/PI: 2 total per lineage; auto-prune on every write)
 
 
 def _atomic_write_bytes(path: Path, writer) -> None:

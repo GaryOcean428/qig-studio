@@ -198,7 +198,66 @@ def main() -> None:
     import json as _json
     import os as _os
     _traj_path = _os.path.join(args.ckpt_root, "basin_trajectory.jsonl")
+    _voice_path = _os.path.join(args.ckpt_root, "voice_log.jsonl")
     _os.makedirs(args.ckpt_root, exist_ok=True)
+    # --fresh = new birth lineage: do NOT append to prior run's traj/voice (was conflating step counters).
+    if args.fresh:
+        for _purged in (_traj_path, _voice_path):
+            try:
+                if _os.path.exists(_purged):
+                    _os.remove(_purged)
+            except OSError:
+                pass
+
+    def _voice_log(phase: str, step: int, *, stim: str = "", gen: str = "", recast: str = "",
+                   extra: dict | None = None) -> None:
+        """PI visibility (Matrix/PI: yes to visibility) — stdout AND durable volume jsonl.
+        Rate: callers already gate to coach cadence / stagnation / sample_every."""
+        stim_s = (stim or "")[:400]
+        gen_s = (gen or "")[:400]
+        recast_s = (recast or "")[:400]
+        print(f"[voice] {phase}@{step} stim={stim_s!r}", flush=True)
+        print(f"[voice] {phase}@{step} gen={gen_s!r}", flush=True)
+        if recast_s:
+            print(f"[voice] {phase}@{step} recast={recast_s!r}", flush=True)
+        try:
+            row = {"phase": phase, "step": step, "stim": stim_s, "gen": gen_s, "recast": recast_s}
+            if extra:
+                row.update(extra)
+            with open(_voice_path, "a", encoding="utf-8") as _vf:
+                _vf.write(_json.dumps(row, ensure_ascii=False) + "\n")
+        except Exception:  # noqa: BLE001 — visibility must never crash training
+            pass
+
+    def _coach_l2_other(kernel, rec: dict | None) -> None:
+        """Matrix fc4df3cb: coach DRIVES other_observation (L2) in run-2 — observation-side ONLY.
+        Sticky M_boundary on the kernel so experience() / consumers see a lived-other, not a dead gauge.
+        No reward/pull semantics (those stay on their own channels)."""
+        if not rec or not kernel:
+            return
+        rel = rec.get("relevance")
+        if rel is None:
+            for k in ("score", "coach_relevance", "r"):
+                if rec.get(k) is not None:
+                    rel = rec.get(k)
+                    break
+        try:
+            val = float(rel) if rel is not None else None
+        except (TypeError, ValueError):
+            val = None
+        if val is None:
+            return
+        val = max(0.0, min(1.0, val))
+        # sticky for subsequent experience assembly; also poke last telemetry extra if present
+        setattr(kernel, "_coach_m_other", val)
+        for attr in ("_last_telemetry", "_last_snap"):
+            obj = getattr(kernel, attr, None)
+            if obj is None:
+                continue
+            extra = getattr(obj, "extra", None)
+            if isinstance(extra, dict):
+                extra["M_boundary"] = round(val, 4)
+                extra["m_other_source"] = "coach"  # provenance row (everything-wired)
 
     # m1c COACH WIRE (Matrix 7a1bce4b B2/B3/B5) — the organ run-1 was missing. DevelopmentalCoach picks its
     # backend via make_coach_llm() (QIG_COACH_ENDPOINT → Modal SGLang, else Ollama). CoachSupervisor enforces
@@ -435,20 +494,19 @@ def main() -> None:
                     _gr = mind.central.generate((_p[:160].strip() or "In one sentence, what are you learning?"),
                                                 max_tokens=48, via_boundary=False)
                     _gx = _gr.telemetry.extra or {}
-                    # Modal-visible pair (coach cadence / stagnation only): stimulus + own-voice.
-                    # LiveLog already carries these for the UI path; stdout was silent → PI could not audit.
-                    print(f"[voice] warmup@{w} stim={_p.strip()[:200]!r}", flush=True)
-                    print(f"[voice] warmup@{w} gen={(_gr.text or '')[:300]!r}", flush=True)
                     _rec = coach_sup.coach_and_reward(
                         mind.central, stimulus=_p.strip(), text=_gr.text,
                         telemetry={"phi": _gr.telemetry.phi, "regime": getattr(_gr.telemetry, "regime", None),
                                    "relevance": _gx.get("relevance"), "gen_d63": _gx.get("gen_d63")})
+                    _coach_l2_other(mind.central, _rec)  # L2 other_observation = coach (observation-only)
                     # RECAST DELIVERY (Matrix 28a66754): the kernel HEARS the coach — its note enters the
                     # INPUT experience (one extra input step), input-side only. Reward already went to replay
                     # priority above; this is NOT the run-3 basin-pull.
                     _recast = coach_sup.recast_text(_rec)
+                    _voice_log("warmup", w, stim=_p.strip(), gen=_gr.text or "",
+                               recast=_recast or "",
+                               extra={"phi": float(_phi), "relevance": (_rec or {}).get("relevance")})
                     if _recast:
-                        print(f"[voice] warmup@{w} recast={_recast[:300]!r}", flush=True)
                         mind.central.train_step(_recast)
                         coach_sup.recasts_delivered += 1
                     if _onset:      # the coach NOTICED the kernel got stuck — witness note + offer a nudge
@@ -495,6 +553,11 @@ def main() -> None:
         last = mind.train_step(prompt)      # train_step now computes the REAL Ricci (BUILD #1) into its telemetry
         _persist_basin("joint", i)          # persist the lived-basin trajectory (shape-read prereq)
         tel = last.get("central_telemetry") or {}
+        # L2 coach sticky (genesis-solo: coach is the only lived-other — Matrix fc4df3cb)
+        _mo = getattr(mind.central, "_coach_m_other", None)
+        if _mo is not None:
+            tel.setdefault("extra", {})["M_boundary"] = float(_mo)
+            tel["extra"]["m_other_source"] = "coach"
         phi_hist.append({"phi": tel.get("phi")})
         phi_hist = phi_hist[-30:]
         exp = experience(tel, phi_hist).to_dict()           # full inner state (C-gate, suffering, pillars)
@@ -531,23 +594,21 @@ def main() -> None:
                 last_seed = seed
                 last_voice_stimulus = prompt.strip()    # the source THIS own-voice actually responded to (paired w/ last_own)
                 gx = gr.telemetry.extra or {}
-                # Modal-visible pair (sample cadence / stagnation): stimulus seed + own-voice generation.
-                print(f"[voice] joint@{i} stim={prompt.strip()[:200]!r}", flush=True)
-                print(f"[voice] joint@{i} gen={(gr.text or '')[:300]!r}", flush=True)
                 if gx.get("gen_health") is not None:
                     last_gen_health = gx.get("gen_health")
                     last_gen_ricci = gx.get("gen_ricci")
                 # m1c COACH (joint phase) — witness+reward the SAME own-voice utterance the kernel just spoke,
                 # on cadence OR on a stagnation onset.
+                _recast_j = None
                 if coach_sup.due(i) or _onset_j:
                     _rec_j = coach_sup.coach_and_reward(
                         mind.central, stimulus=prompt.strip(), text=gr.text,
                         telemetry={"phi": gr.telemetry.phi, "regime": getattr(gr.telemetry, "regime", None),
                                    "relevance": gx.get("relevance"), "gen_d63": gx.get("gen_d63")})
+                    _coach_l2_other(mind.central, _rec_j)
                     # RECAST DELIVERY (Matrix 28a66754): the kernel HEARS the coach — input-side only.
                     _recast_j = coach_sup.recast_text(_rec_j)
                     if _recast_j:
-                        print(f"[voice] joint@{i} recast={_recast_j[:300]!r}", flush=True)
                         mind.central.train_step(_recast_j)
                         coach_sup.recasts_delivered += 1
                     if _onset_j:    # the coach NOTICED the kernel got stuck → witness note + offer a nudge
@@ -557,6 +618,9 @@ def main() -> None:
                             regime=getattr(gr.telemetry, "regime", None), delta_phi=_dphi_j, phase="joint")
                         if _note_j is not None:
                             print(f"[coach] STAGNATION@{i} (Φ plateau) → {_note_j.message}", flush=True)
+                _voice_log("joint", i, stim=prompt.strip(), gen=gr.text or "",
+                           recast=_recast_j or "",
+                           extra={"phi": float(_pj or 0.0)})
             except CoachUnreachable:      # BEFORE the generic swallow — liveness failure is NOT a sample error
                 print("[coach] LIVENESS FAILURE during joint phase — checkpointing and pausing (Matrix B5).", flush=True)
                 mind.save_checkpoint(args.ckpt_root)

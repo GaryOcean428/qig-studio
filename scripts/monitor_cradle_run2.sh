@@ -3,7 +3,7 @@
 # Exit 0 = healthy or progressive; exit 2 = RED (needs immediate action); exit 1 = yellow/unknown.
 set -euo pipefail
 
-APP_ID="${CRADLE_APP_ID:-ap-1KcshQ00uYfU23RXbCQMCO}"
+APP_ID="${CRADLE_APP_ID:-ap-ycc1PVw9GOAnfv2QVQTUW5}"
 VOL="${CRADLE_VOL:-qig-cradle-vol}"
 CKPT_DIR="${CRADLE_CKPT:-checkpoints/cradle_run2_20260724}"
 STATE_DIR="${CRADLE_STATE_DIR:-/tmp/cradle-run2-monitor}"

@@ -683,13 +683,14 @@ class JointConstellation:
         return {"roles": self.roles, "min_pairwise_fr": min_pairwise_fr(self.faculties),
                 "central_phi": round(float(self.central.telemetry().phi or 0), 4)}
 
-    def save_checkpoint(self, root: str, keep: int = 3) -> None:
+    def save_checkpoint(self, root: str, keep: int = 2) -> None:
         """Persist the WHOLE mind: each faculty kernel + the central kernel + the coupled faculty
         basins (the shared constellation state). Resumable — the integrated mind, not 9 loose parts.
 
-        3-CHECKPOINT BUFFER: before writing fresh, rotate the existing checkpoint into a backup generation
-        (cheap rename) keeping ``keep`` most-recent generations (``root.bak1..bak{keep}``) for rollback,
-        and delete older — bounded disk, no infinite accumulation."""
+        CHECKPOINT BUFFER (Matrix/PI: current + one lag = 2 total, retention IN CODE): before writing
+        fresh, rotate the existing checkpoint into a backup generation (cheap rename) keeping ``keep``
+        most-recent generations (``root.bak1..bak{keep}``) for rollback, and delete older. Protected
+        lineages (run-1 archive, prereg-referenced roots) use separate paths — never this pruner."""
         import hashlib as _hl
         import json
         import shutil
