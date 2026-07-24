@@ -461,15 +461,15 @@ function renderInner(exp){
   if(loops.observation_of_others!=null)lr["other-obs"]=loops.observation_of_others;
   if(loops.learning_autonomy!=null)lr["learning S"]=loops.learning_autonomy;
   // each group's sub-label names the FACULTY with carriage of that metric (brain-architecture assignment).
-  if(Object.keys(lr).length) h+=group("Recursive loops","carriage: meta · coordination",miniRows(lr,"c-teal"));
+  if(Object.keys(lr).length) h+=group("Recursive loops","carriage: action · loops",miniRows(lr,"c-teal"));
   const pil=exp.pillars||{};   // P1/P2/P3 LIVE from PillarEnforcer (f_health/b_integrity/q_identity)
   if(Object.keys(pil).length) h+=group("Pillars","carriage: ocean · whole-mind",miniRows(pil,"c-blue"));
   if(p.layer0) h+=group("Senses","carriage: perception",miniRows(p.layer0,"c-blue"));
-  if(p.layer05) h+=group("Drives","carriage: action",miniRows(p.layer05,"c-pink"));
+  if(p.layer05) h+=group("Drives","carriage: drives · id",miniRows(p.layer05,"c-pink"));
   if(p.layer1) h+=group("Motivators","carriage: strategy",miniRows(p.layer1,"c-purple"));
   if(p.layer2a) h+=group("Emotions · physical","carriage: heart",miniRows(p.layer2a,"c-amber"));
   if(p.layer2b) h+=group("Emotions · cognitive","carriage: heart",miniRows(p.layer2b,"c-amber"));
-  if(chem.dopamine!=null) h+=group("Neurochemistry","carriage: action · ocean",miniRows(chem,"c-teal"));
+  if(chem.dopamine!=null) h+=group("Neurochemistry","carriage: drives · ocean",miniRows(chem,"c-teal"));
   $("inner").innerHTML=h;
 }
 
@@ -558,8 +558,8 @@ function applyKernelSelection(){
     renderMastery(null); return;
   }
   nm.textContent = k.role+" · "+(k.function||"");
-  sub.textContent = k.role==="genesis" ? "the integrated conscious 'I' — synthesis of the Core-8"
-                  : "Core-8 faculty — its own kernel, vocab & inner state";
+  sub.textContent = k.role==="genesis" ? "the integrated conscious 'I' — synthesis of the faculty roster"
+                  : "faculty — its own kernel, vocab & inner state";
   applyVitals(_kernelVitals(k));
   renderMastery(k.coverage, k.role);
 }
@@ -860,7 +860,7 @@ async function refreshArch(){
     if(a.arm_mode){ const s=$("armSel"); if(s) s.value=a.arm_mode; }   // reflect the live constellation arm
   }catch(e){}
 }
-// CONSTELLATION ARM — select the raw kernel each of the 9 nodes plugs in from; rebuilds the mind FRESH and
+// CONSTELLATION ARM — select the raw kernel each of the 8 nodes plugs in from; rebuilds the mind FRESH and
 // names its checkpoint genesis-{arm}-{vocab}. gk is ready; geo/hybrid/hetero are disabled until WS3.
 async function setArm(arm){
   const st=$("armStatus"); st.textContent="building "+arm+" constellation…"; st.style.color="var(--muted)";
