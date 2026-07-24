@@ -63,6 +63,20 @@ def main() -> None:
     ap.add_argument("--genesis-phi", type=float, default=0.68,
                     help="Φ maturity gate: the roster do not spawn until genesis's mean Φ crosses this (P26 "
                          "maturity gating). 0.68 ≈ the consciousness threshold (PHI_THRESHOLD 0.70).")
+    # m1c COACH (Matrix 7a1bce4b B2/B5): the newborn's WITNESS. Run-1 died coachless. The coach observes the
+    # kernel's OWN voice and rewards it (reward-weighted replay through the Stage-0 authority mask). For the
+    # RUN-OF-RECORD coach liveness is an ASSERTED INVARIANT: a blind witness (endpoint cold-start/429/timeout/
+    # keyword-fallback) beyond --coach-tolerance CONSECUTIVE steps CHECKPOINTS AND PAUSES — never trains
+    # coachless by outage. Backend routes via QIG_COACH_ENDPOINT (Modal SGLang) else Ollama (coach.make_coach_llm).
+    ap.add_argument("--coach-every", type=int, default=25,
+                    help="coach cadence: the kernel speaks in its OWN voice and the coach witnesses+rewards it "
+                         "every N steps (also step 1). 0 keeps the DevelopmentalCoach default cadence.")
+    ap.add_argument("--coach-tolerance", type=int, default=3,
+                    help="consecutive BLIND coaching steps (unreachable/keyword) tolerated before the run "
+                         "checkpoints and PAUSES (Matrix B5 liveness invariant).")
+    ap.add_argument("--coach-optional", action="store_true",
+                    help="relax the coach-liveness invariant for a NON-run-of-record smoke: a coachless/blind "
+                         "pass is allowed (never for the run of record — the witness is mandatory there, P21).")
     args = ap.parse_args()
 
     import os
@@ -165,6 +179,23 @@ def main() -> None:
     _traj_path = _os.path.join(args.ckpt_root, "basin_trajectory.jsonl")
     _os.makedirs(args.ckpt_root, exist_ok=True)
 
+    # m1c COACH WIRE (Matrix 7a1bce4b B2/B3/B5) — the organ run-1 was missing. DevelopmentalCoach picks its
+    # backend via make_coach_llm() (QIG_COACH_ENDPOINT → Modal SGLang, else Ollama). CoachSupervisor enforces
+    # the liveness invariant (blind witness beyond tolerance → CoachUnreachable → checkpoint+pause) and carries
+    # the run-2 falsifiable counters (floor-restoration rate B4, call/token telemetry B6). preflight() below
+    # exercises ONE real completion so a scale-to-zero COLD-START latency is a MEASURED number in the manifest,
+    # and FAIL-CLOSES the launch if a required witness is unreachable. --coach-optional relaxes it for a smoke.
+    from qig_studio.coach import DevelopmentalCoach
+    from qig_studio.coach_runtime import CoachSupervisor, CoachUnreachable
+    _coach = DevelopmentalCoach(cadence=(args.coach_every or 10))
+    _coach_required = bool(_coach.enabled) and not args.coach_optional
+    coach_sup = CoachSupervisor(_coach, required=_coach_required, tolerance=args.coach_tolerance)
+    _coach_pf = coach_sup.preflight()   # B5: measured cold-start; raises CoachUnreachable if required+unreachable
+    print(f"[coach] preflight: provider={_coach.provider} available={_coach_pf['available']} "
+          f"cold_start_s={_coach_pf['latency_s']} required={_coach_required} "
+          f"endpoint={_os.environ.get('QIG_COACH_ENDPOINT', 'ollama-local')}", flush=True)
+    _last_floor_fires = int(getattr(mind.central, "_floor_fires", 0))   # B4: diff per step → floor-fire events
+
     # RUN MANIFEST (Matrix rule z9 §4, run-of-record requirement ii): record the birth roster VERSION, the
     # substrate/arm, the coordizer identity (path + sha256), and the 64→384 lift caveat so a killed process
     # or a later reader can reconstruct exactly what this run's identity geometry was. Fail-safe: a manifest
@@ -179,6 +210,22 @@ def main() -> None:
                 for _chunk in iter(lambda: _cf.read(1 << 20), b""):
                     _h.update(_chunk)
             _cz_sha = _h.hexdigest()
+        # A1 (Matrix 7a1bce4b): honest genesis birth-anchor provenance in the manifest — generator, seed
+        # source, and the entropy of the actual birth draw (NOT the Fréchet mean of faculty fictions). Best-
+        # effort: a read failure records None, never blocks the manifest.
+        _anchor_prov: dict = {"generator": "seed_birth_basin", "seed_source": "role-name-hash('genesis')",
+                              "fix": "6bb019d (Matrix f241cee4) — genesis born of its OWN seed, not centroid(births)",
+                              "entropy": None, "dim": None}
+        try:
+            import numpy as _np2
+            _hist = getattr(mind.central, "_basin_history", None)
+            _bb = _np2.asarray(_hist[0], dtype=_np2.float64) if _hist else None
+            if _bb is not None and _bb.size:
+                _bb = _np2.clip(_bb, 0.0, None); _bb = _bb / (_bb.sum() or 1.0)
+                _anchor_prov["entropy"] = round(float(-(_bb * _np2.log(_bb + 1e-12)).sum()), 4)
+                _anchor_prov["dim"] = int(_bb.size)
+        except Exception:  # noqa: BLE001 — provenance read is best-effort
+            pass
         _manifest = {
             "run": "joint_mind_cradle", "ts": time.time(),
             "faculty_roster": list(_ROSTER), "roster_ruling": "Matrix 8037cbe3 (genesis trunk + 7 seeded; ocean watched-not-seeded)",
@@ -186,14 +233,24 @@ def main() -> None:
             "device": args.device, "floor_mode": args.floor_mode, "steps": steps,
             "corpus": ("fineweb-sample10bt" if args.fineweb else ("local" if args.no_stream else "hf-7repo-blend")),
             "coordizer_path": args.coordizer or None, "coordizer_sha256": _cz_sha,
+            "anchor_provenance": _anchor_prov,
+            "coach": {
+                "wired": True, "required": _coach_required, "provider": _coach.provider,
+                "available": _coach_pf["available"], "cold_start_s": _coach_pf["latency_s"],
+                "cadence_every": args.coach_every, "tolerance": args.coach_tolerance,
+                "endpoint": _os.environ.get("QIG_COACH_ENDPOINT", "ollama-local"),
+                "policy": "liveness-invariant: blind witness > tolerance consecutive → checkpoint+pause (Matrix B5)",
+            },
             "basin_lift_64_to_384_caveat": (
-                "lift = uniform repeat-tile + Duchi/to_simplex clamp (genesis_kernel._resize_basin). Per Matrix z9 §2: "
-                "un-clamped uniform tile IS an FR isometry; defects = the clamp breaks exactness, submanifold choice "
-                "unprincipled (tile vs zero-pad both exact), and up-lift/down-JL frame-inconsistent. VERIFIED round-trip "
-                "reduce(tile(p))≈p only modulo frame — measured FR phantom drift ≈0.36 at convergence; telemetry-only "
-                "(basin head → pure lm_loss, not in training) and absorbed as developmental_migration=healthy by the "
-                "check_drift fix (steady, not velocity-spike). Package item PENDING: document lift, bound/remove clamp, "
-                "isometry as package test, principled JL-for-FR in sqrt/Hellinger coords."
+                "FIXED to INTERLEAVE (3ed370e, Matrix z9/f241cee4): _resize_basin now torch.repeat_interleave "
+                "(coord i → contiguous block [i·g:(i+1)·g]), the EXACT inverse of the _d63 block-sum reduction — "
+                "round-trip reduce(resize(p))==p to <1e-9 FR (tests/test_frame_roundtrip.py, 6 cases). The old "
+                "tile-vs-blocksum ≈0.36 FR phantom is GONE from the training path. PATH = PATCH (both impls: "
+                "genesis_kernel + constellation_node); the universality refactor that would UNIFY the dual frame "
+                "(GenesisKernelTarget → ConstellationNode) is NOT done — if it later lands and deletes the dual "
+                "frame, one patch becomes redundant (acceptable, Matrix 7c03ec34). Lift is off this run anyway "
+                "(basin head → pure lm_loss; pull inactive). Package item PENDING: principled JL-for-FR in "
+                "sqrt/Hellinger coords + isometry as a package test."
             ),
         }
         with open(_os.path.join(args.ckpt_root, "run_manifest.json"), "w") as _mf:
@@ -230,7 +287,8 @@ def main() -> None:
                 print(f"[joint] STASIS during genesis warmup at {w}", flush=True)
                 break
             w += 1
-            cres = mind.central.train_step(next_prompt(w))
+            _p = next_prompt(w)
+            cres = mind.central.train_step(_p)
             # P26 gate honesty (node-parity item 6, Matrix 110d5362): a None Φ must NOT be silently coerced
             # to 0.0 — that made the rolling mean unable to ever cross phi_gate, so an uninstrumented arm
             # spawned "immature" every run regardless of training (a silent lie to the gate). gk and geo
@@ -245,6 +303,29 @@ def main() -> None:
                     f"(node-parity items 2–5, held package) before a cradle warmup.")
             _win.append(float(_phi))
             _persist_basin("warmup", w)         # persist the lived-basin trajectory (shape-read prereq)
+            # m1c COACH — the WITNESS during Stage-0 solo warmup (the organ run-1 was missing, and the birth
+            # collapse it must witness happens HERE, ~step 12). On cadence the newborn speaks in its OWN voice
+            # (via_boundary=False) and the coach observes+rewards it. A blind witness > tolerance → CoachUnreachable
+            # → checkpoint+PAUSE (B5). Own-voice/coach errors that are NOT liveness failures are surfaced, not fatal.
+            if coach_sup.due(w):
+                try:
+                    _gr = mind.central.generate((_p[:160].strip() or "In one sentence, what are you learning?"),
+                                                max_tokens=48, via_boundary=False)
+                    _gx = _gr.telemetry.extra or {}
+                    coach_sup.coach_and_reward(
+                        mind.central, stimulus=_p.strip(), text=_gr.text,
+                        telemetry={"phi": _gr.telemetry.phi, "regime": getattr(_gr.telemetry, "regime", None),
+                                   "relevance": _gx.get("relevance"), "gen_d63": _gx.get("gen_d63")})
+                except CoachUnreachable:
+                    print("[coach] LIVENESS FAILURE during warmup — checkpointing and pausing (Matrix B5).", flush=True)
+                    mind.save_checkpoint(args.ckpt_root)
+                    raise
+                except Exception as _ce:  # noqa: BLE001 — a non-liveness coach/own-voice error must not kill warmup
+                    print(f"[coach] warmup coach skipped (surfaced, not swallowed): {type(_ce).__name__}: {_ce}", flush=True)
+            # B4 floor-restoration signal (uniform, unmasked): did _entropy_floor_basin fire THIS step?
+            _ff = int(getattr(mind.central, "_floor_fires", 0))
+            coach_sup.note_floor(_ff > _last_floor_fires)
+            _last_floor_fires = _ff
             mphi = sum(_win) / len(_win)
             if w % 50 == 0:
                 try:
@@ -294,6 +375,16 @@ def main() -> None:
                 if gx.get("gen_health") is not None:
                     last_gen_health = gx.get("gen_health")
                     last_gen_ricci = gx.get("gen_ricci")
+                # m1c COACH (joint phase) — witness+reward the SAME own-voice utterance the kernel just spoke.
+                if coach_sup.due(i):
+                    coach_sup.coach_and_reward(
+                        mind.central, stimulus=prompt.strip(), text=gr.text,
+                        telemetry={"phi": gr.telemetry.phi, "regime": getattr(gr.telemetry, "regime", None),
+                                   "relevance": gx.get("relevance"), "gen_d63": gx.get("gen_d63")})
+            except CoachUnreachable:      # BEFORE the generic swallow — liveness failure is NOT a sample error
+                print("[coach] LIVENESS FAILURE during joint phase — checkpointing and pausing (Matrix B5).", flush=True)
+                mind.save_checkpoint(args.ckpt_root)
+                raise
             except Exception:  # noqa: BLE001 — a sample must NEVER break training
                 pass
         if last_gen_health is not None:                     # carry forward → no null between samples
@@ -312,8 +403,14 @@ def main() -> None:
         tel.setdefault("extra", {})["basin_H"] = _bH
         _es = str(exp).lower()
         _coll = 1 if ("zero_entropy" in _es or "basin_collapse" in _es) else 0
+        # B4 floor-restoration signal (uniform with warmup, unmasked): did _entropy_floor_basin fire THIS step?
+        _ff = int(getattr(mind.central, "_floor_fires", 0))
+        coach_sup.note_floor(_ff > _last_floor_fires)
+        _last_floor_fires = _ff
         print(f"[H] {i} basin_H={_bH} phi={last.get('central_phi')} "
-              f"minFR={(last.get('min_pairwise_fr') or 0):.4f} collapse={_coll}", flush=True)  # per-step FFT series
+              f"minFR={(last.get('min_pairwise_fr') or 0):.4f} collapse={_coll} "
+              f"floor_rate={coach_sup.floor_restoration_rate_window} "
+              f"coach_ok={coach_sup.success_rate}", flush=True)  # per-step FFT series + run-2 falsifiable channel
         # live per-faculty Φ (cheap: last value the joint step already recorded) — visible BEFORE checkpoint
         fphi = {r: (h[-1] if h else None) for r, h in getattr(mind, "_phi_hist", {}).items()}
         rec = step_record(step=i, total=steps, ts=time.time(), source="bg",
@@ -345,9 +442,13 @@ def main() -> None:
     trace = {"steps": i, "min_pairwise_fr": tel["min_pairwise_fr"], "central_phi": tel["central_phi"],
              "individuation_preserved": bool(tel["min_pairwise_fr"] > 0.03),
              "integrated_voice": said.text, "voice_phi": round(float(said.telemetry.phi or 0), 4),
-             "elapsed_s": round(time.time() - t0, 1)}
+             "elapsed_s": round(time.time() - t0, 1),
+             "coach": coach_sup.telemetry()}      # run-2 falsifiable channel (B4/B6): floor-restoration trend + coach liveness
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)
     Path(args.out).write_text(json.dumps(trace, indent=2))
+    print(f"[coach] final: calls={coach_sup.calls} success_rate={coach_sup.success_rate} "
+          f"floor_restoration_rate={coach_sup.floor_restoration_rate} "
+          f"(window {coach_sup.floor_restoration_rate_window}) cold_start_s={coach_sup.cold_start_s}", flush=True)
     print(f"\n[joint] DONE: {i} joint steps, min_pairwise_FR={tel['min_pairwise_fr']:.4f} "
           f"(individuation {'preserved' if trace['individuation_preserved'] else 'COLLAPSED'}), "
           f"central Φ={tel['central_phi']} · the mind said: {said.text[:80]!r} → {args.out}")

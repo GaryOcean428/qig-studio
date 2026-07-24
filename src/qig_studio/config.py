@@ -101,6 +101,8 @@ class Settings:
             genesis_kernel_checkpoint=_d("QIG_STUDIO_GENESIS_CKPT", _genesis_ckpt),
             genesis_num_layers=int(os.environ.get("QIG_STUDIO_GENESIS_LAYERS", "8")),
             coach_enabled=os.environ.get("QIG_STUDIO_COACH", "on").lower() not in ("0", "off", "false", "no"),
-            coach_model=os.environ.get("QIG_STUDIO_COACH_MODEL", "nemotron-3-ultra:cloud"),
+            # APPROVED model only (Matrix B1b, model-approval: qwen3.5 family). Was nemotron-3-ultra:cloud —
+            # both non-approved AND a :cloud rate-limit source (the exact thing the Modal endpoint removes).
+            coach_model=os.environ.get("QIG_STUDIO_COACH_MODEL", "qwen3.5:4b"),
             coach_cadence=int(os.environ.get("QIG_STUDIO_COACH_CADENCE", "25")),
         )
