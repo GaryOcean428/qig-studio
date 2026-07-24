@@ -276,12 +276,19 @@ def main() -> None:
         from qig_studio.constellation.joint_trainer import _seed as _seedfn
         from qig_core.geometry.fisher_rao import fisher_rao_distance as _frd
         _honest = _np3.asarray(_sbb(_seedfn("genesis")), dtype=_np3.float64)
-        _hist0 = getattr(mind.central, "_basin_history", None)
-        _birth_raw = _hist0[0] if _hist0 else None            # no `or` on a tensor (ambiguous truth value)
-        if _birth_raw is None:
-            _birth_raw = getattr(mind.central, "_basin_ref", None)
-        _birth = mind.central._d63(_birth_raw) if _birth_raw is not None else None   # → Δ⁶³ numpy (device-safe)
-        _afr = float(_frd(_honest, _np3.asarray(_birth, dtype=_np3.float64))) if _birth is not None else None
+        # Compare against the raw BIRTH TEMPLATE (_basin_template_np, Δ⁶³) — the honest-birth object that
+        # seeds BOTH the P3 identity (seed_identity) and _basin_ref. NOT _basin_ref/_basin_history[0]: those
+        # apply a dense simplex_floor=1e-3 (Duchi lifeguard, genesis_kernel:473) that legitimately flattens
+        # the pull-ref ~0.96 FR from the sharp seed — a floor artifact, NOT contamination (the E1 code-path
+        # smoke caught this false-positive that would have blocked every launch). A contaminated FRESH birth,
+        # or a resume whose template loaded contaminated, shows here.
+        _tmpl = getattr(mind.central, "_basin_template_np", None)
+        _birth = _np3.asarray(_tmpl, dtype=_np3.float64).ravel() if _tmpl is not None else None
+        if _birth is not None and _birth.size != _honest.size:
+            _birth = _np3.asarray(mind.central._d63(_birth), dtype=_np3.float64)
+        if _birth is not None:                                # normalize both to the simplex before FR
+            _birth = _np3.clip(_birth, 0.0, None); _birth = _birth / (_birth.sum() or 1.0)
+        _afr = float(_frd(_honest, _birth)) if _birth is not None else None
         _checklist["anchor_fr"] = None if _afr is None else round(_afr, 4)
         _checklist["anchor_honest"] = (_afr is not None and _afr < 0.05)
     except Exception as _ae:  # noqa: BLE001 — a measurement that cannot run FAILS CLOSED (records False)
