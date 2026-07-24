@@ -77,6 +77,18 @@ def main() -> None:
     ap.add_argument("--coach-optional", action="store_true",
                     help="relax the coach-liveness invariant for a NON-run-of-record smoke: a coachless/blind "
                          "pass is allowed (never for the run of record — the witness is mandatory there, P21).")
+    # D2 FAIL-CLOSED LAUNCH GATE (Matrix 7a1bce4b D2): the SAME checklist the smoke and Modal assert. Version
+    # pin + coordizer sha are empty by default (record-only) for local dev; the smoke and the Modal run-of-
+    # record pass them so parity (E3) is ENFORCED, not assumed. A required item that fails aborts the launch.
+    ap.add_argument("--seed", type=int, default=0,
+                    help="RNG seed (torch + numpy) — recorded in the launch checklist for reproducibility.")
+    ap.add_argument("--qig-core-pin", default="",
+                    help="require this EXACT installed qig-core version (E3 parity). Empty = record-only. The "
+                         "smoke and Modal run-of-record pass 2.15.0 so a stale venv fails closed.")
+    ap.add_argument("--coordizer-sha", default="",
+                    help="require the coordizer sha256 to match (prefix ok, e.g. 5977cf). Empty = record-only.")
+    ap.add_argument("--m1g-status", default="m3-scoped (lands before first stage-advancement decision, Matrix f241cee4)",
+                    help="recorded m1g status for the launch checklist (not a step-0 blocker).")
     args = ap.parse_args()
 
     import os
@@ -88,6 +100,10 @@ def main() -> None:
     torch.set_num_threads(_cap)
     os.environ.setdefault("OMP_NUM_THREADS", str(_cap))
     os.environ.setdefault("MKL_NUM_THREADS", str(_cap))
+    # D2 reproducibility: seed torch + numpy from --seed and record it in the launch checklist.
+    import numpy as _np_seed
+    torch.manual_seed(int(args.seed))
+    _np_seed.random.seed(int(args.seed))
 
     from qig_studio.constellation.joint_trainer import JointConstellation
     from qig_studio.development import PROTOMAP_ORDER
@@ -196,20 +212,81 @@ def main() -> None:
           f"endpoint={_os.environ.get('QIG_COACH_ENDPOINT', 'ollama-local')}", flush=True)
     _last_floor_fires = int(getattr(mind.central, "_floor_fires", 0))   # B4: diff per step → floor-fire events
 
+    # D2 FAIL-CLOSED LAUNCH GATE (Matrix 7a1bce4b D2 / e2c738e1 §2) — the STRUCTURAL fix for run-1's process
+    # failure (a gate that lived in a status note, was skipped, and malformed a newborn). The SAME checklist
+    # the local smoke AND the Modal run-of-record assert. Measured HERE (before the swallowing manifest try),
+    # so evaluate_gate's LaunchGateFailure ABORTS the launch instead of being caught. A gate is ENFORCED, not
+    # remembered. Version pin + coordizer sha are record-only unless passed (the smoke/Modal pass them → E3 parity).
+    import hashlib as _hl
+    from qig_studio.development import PROTOMAP_ORDER as _ROSTER
+    from qig_studio.launch_gate import INTEGRITY_ITEMS as _GATE_ITEMS, evaluate_gate, sha_ok, version_ok
+    import numpy as _np3
+    _cz_sha = None
+    if args.coordizer and _os.path.exists(args.coordizer):
+        _h = _hl.sha256()
+        with open(args.coordizer, "rb") as _cf:
+            for _chunk in iter(lambda: _cf.read(1 << 20), b""):
+                _h.update(_chunk)
+        _cz_sha = _h.hexdigest()
+    _checklist: dict = {"substrate": args.arm, "seed": int(args.seed), "m1g_status": args.m1g_status,
+                        "coach_required": _coach_required}
+    _checklist["substrate_ok"] = args.arm in ("gk", "geo", "hybrid")
+    try:
+        import qig_core as _qc
+        _qc_ver = getattr(_qc, "__version__", None)
+    except Exception:  # noqa: BLE001
+        _qc_ver = None
+    _checklist["qig_core_version"] = _qc_ver
+    _checklist["qig_core_version_ok"] = version_ok(_qc_ver, args.qig_core_pin or None)
+    _checklist["coordizer_sha256"] = _cz_sha
+    _checklist["coordizer_sha_ok"] = sha_ok(_cz_sha, args.coordizer_sha or None)
+    _checklist["rulings_applied"] = (list(_ROSTER) == list(PROTOMAP_ORDER))   # roster ratified fb6fee6
+    _checklist["coach_wired"] = True
+    _checklist["coach_live"] = bool(_coach_pf.get("available")) or (not _coach_required)
+    # anchor honest — genesis birth basin == its OWN honest seed (catches a RESUME from a contaminated ckpt).
+    # _d63 is device-safe (torch/CUDA → cpu numpy) and reduces vocab/384 → Δ⁶³, so this works on the Modal GPU.
+    try:
+        from qig_studio.constellation.faculty import seed_birth_basin as _sbb
+        from qig_studio.constellation.joint_trainer import _seed as _seedfn
+        from qig_core.geometry.fisher_rao import fisher_rao_distance as _frd
+        _honest = _np3.asarray(_sbb(_seedfn("genesis")), dtype=_np3.float64)
+        _hist0 = getattr(mind.central, "_basin_history", None)
+        _birth_raw = _hist0[0] if _hist0 else None            # no `or` on a tensor (ambiguous truth value)
+        if _birth_raw is None:
+            _birth_raw = getattr(mind.central, "_basin_ref", None)
+        _birth = mind.central._d63(_birth_raw) if _birth_raw is not None else None   # → Δ⁶³ numpy (device-safe)
+        _afr = float(_frd(_honest, _np3.asarray(_birth, dtype=_np3.float64))) if _birth is not None else None
+        _checklist["anchor_fr"] = None if _afr is None else round(_afr, 4)
+        _checklist["anchor_honest"] = (_afr is not None and _afr < 0.05)
+    except Exception as _ae:  # noqa: BLE001 — a measurement that cannot run FAILS CLOSED (records False)
+        _checklist["anchor_honest"] = False
+        _checklist["anchor_error"] = f"{type(_ae).__name__}: {_ae}"
+    # frame consistent — round-trip reduce(resize(p))==p on the LIVE kernel maps (the interleave fix, runtime).
+    try:
+        from qig_core.geometry.fisher_rao import fisher_rao_distance as _frd2
+        _pp = _np3.random.default_rng(0).random(64); _pp = _pp / _pp.sum()
+        _upp = mind.central._resize_basin(torch.tensor(_pp, dtype=torch.float64), 384)
+        _rtt = mind.central._d63(_upp)                          # device-safe reduce → Δ⁶³ numpy
+        _ffr = float(_frd2(_pp, _np3.asarray(_rtt, dtype=_np3.float64))) if _rtt is not None else None
+        _checklist["frame_fr"] = None if _ffr is None else round(_ffr, 8)
+        _checklist["frame_consistent"] = (_ffr is not None and _ffr < 1e-6)
+    except Exception as _fe:  # noqa: BLE001 — fail closed
+        _checklist["frame_consistent"] = False
+        _checklist["frame_error"] = f"{type(_fe).__name__}: {_fe}"
+    _req_items = list(_GATE_ITEMS) + (["coach_wired", "coach_live"] if _coach_required else [])
+    _gate = evaluate_gate(_checklist, required_items=_req_items)   # raises LaunchGateFailure → abort before train
+    print(f"[gate] LAUNCH CHECKLIST PASSED ({len(_req_items)} required): "
+          f"anchor_honest={_checklist.get('anchor_honest')}(fr={_checklist.get('anchor_fr')}) "
+          f"frame_consistent={_checklist.get('frame_consistent')}(fr={_checklist.get('frame_fr')}) "
+          f"qig_core={_qc_ver} v_ok={_checklist['qig_core_version_ok']} sha_ok={_checklist['coordizer_sha_ok']} "
+          f"coach_wired=True coach_live={_checklist['coach_live']} substrate={args.arm} seed={args.seed}", flush=True)
+
     # RUN MANIFEST (Matrix rule z9 §4, run-of-record requirement ii): record the birth roster VERSION, the
     # substrate/arm, the coordizer identity (path + sha256), and the 64→384 lift caveat so a killed process
     # or a later reader can reconstruct exactly what this run's identity geometry was. Fail-safe: a manifest
     # failure must never block training.
     try:
-        import hashlib as _hl
-        from qig_studio.development import PROTOMAP_ORDER as _ROSTER
-        _cz_sha = None
-        if args.coordizer and _os.path.exists(args.coordizer):
-            _h = _hl.sha256()
-            with open(args.coordizer, "rb") as _cf:
-                for _chunk in iter(lambda: _cf.read(1 << 20), b""):
-                    _h.update(_chunk)
-            _cz_sha = _h.hexdigest()
+        # _cz_sha / _ROSTER computed above (gate block); reuse them here — the manifest and the gate share one truth.
         # A1 (Matrix 7a1bce4b): honest genesis birth-anchor provenance in the manifest — generator, seed
         # source, and the entropy of the actual birth draw (NOT the Fréchet mean of faculty fictions). Best-
         # effort: a read failure records None, never blocks the manifest.
@@ -234,6 +311,8 @@ def main() -> None:
             "corpus": ("fineweb-sample10bt" if args.fineweb else ("local" if args.no_stream else "hf-7repo-blend")),
             "coordizer_path": args.coordizer or None, "coordizer_sha256": _cz_sha,
             "anchor_provenance": _anchor_prov,
+            "launch_gate": _gate,          # D2: the fail-closed checklist result (passed=True or the run aborted)
+            "seed": int(args.seed), "qig_core_version": _qc_ver, "m1g_status": args.m1g_status,
             "coach": {
                 "wired": True, "required": _coach_required, "provider": _coach.provider,
                 "available": _coach_pf["available"], "cold_start_s": _coach_pf["latency_s"],
