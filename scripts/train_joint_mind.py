@@ -87,6 +87,11 @@ def main() -> None:
                          "smoke and Modal run-of-record pass 2.15.0 so a stale venv fails closed.")
     ap.add_argument("--coordizer-sha", default="",
                     help="require the coordizer sha256 to match (prefix ok, e.g. 5977cf). Empty = record-only.")
+    ap.add_argument("--corpus-segments", type=int, default=0,
+                    help="truncated-world guard (Matrix 28a66754): staged FineWeb must have >= this many "
+                         "segments (parquet rows). 0 = record-only. Modal/smoke pass the confirmed count.")
+    ap.add_argument("--corpus-sha", default="",
+                    help="require the staged-corpus manifest sha256 (name:sha:rows). Empty = record-only.")
     ap.add_argument("--m1g-status", default="m3-scoped (lands before first stage-advancement decision, Matrix f241cee4)",
                     help="recorded m1g status for the launch checklist (not a step-0 blocker).")
     args = ap.parse_args()
@@ -219,7 +224,8 @@ def main() -> None:
     # remembered. Version pin + coordizer sha are record-only unless passed (the smoke/Modal pass them → E3 parity).
     import hashlib as _hl
     from qig_studio.development import PROTOMAP_ORDER as _ROSTER
-    from qig_studio.launch_gate import INTEGRITY_ITEMS as _GATE_ITEMS, evaluate_gate, sha_ok, version_ok
+    from qig_studio.launch_gate import (INTEGRITY_ITEMS as _GATE_ITEMS, evaluate_gate, segments_ok, sha_ok,
+                                        version_ok)
     import numpy as _np3
     _cz_sha = None
     if args.coordizer and _os.path.exists(args.coordizer):
@@ -240,6 +246,26 @@ def main() -> None:
     _checklist["qig_core_version_ok"] = version_ok(_qc_ver, args.qig_core_pin or None)
     _checklist["coordizer_sha256"] = _cz_sha
     _checklist["coordizer_sha_ok"] = sha_ok(_cz_sha, args.coordizer_sha or None)
+    # CORPUS truncated-world guard (Matrix 28a66754) — only when training on the staged FineWeb shard. The
+    # count (parquet rows) guards against a partial/stale transfer narrower than the coordizer's sample-10BT
+    # fit basis; the manifest sha is exact identity. Content-addressed like the coordizer; record-only unless
+    # --corpus-segments / --corpus-sha are passed (smoke + Modal pass the confirmed values → parity enforced).
+    _corpus_present = None
+    if args.fineweb:
+        try:
+            from qig_studio.fineweb_source import corpus_manifest
+            _cm = corpus_manifest()
+            _corpus_present = (_cm["n_shards"] > 0 and _cm["total_segments"] > 0)
+            _checklist["corpus_segments"] = _cm["total_segments"]
+            _checklist["corpus_n_shards"] = _cm["n_shards"]
+            _checklist["corpus_manifest_sha"] = _cm["manifest_sha"]
+            _checklist["corpus_present"] = bool(_corpus_present)
+            _checklist["corpus_segments_ok"] = segments_ok(_cm["total_segments"], args.corpus_segments or None)
+            _checklist["corpus_sha_ok"] = sha_ok(_cm["manifest_sha"], args.corpus_sha or None)
+        except Exception as _pe:  # noqa: BLE001 — a corpus-manifest read failure FAILS CLOSED for --fineweb
+            _corpus_present = False
+            _checklist["corpus_present"] = False
+            _checklist["corpus_error"] = f"{type(_pe).__name__}: {_pe}"
     _checklist["rulings_applied"] = (list(_ROSTER) == list(PROTOMAP_ORDER))   # roster ratified fb6fee6
     _checklist["coach_wired"] = True
     _checklist["coach_live"] = bool(_coach_pf.get("available")) or (not _coach_required)
@@ -274,6 +300,8 @@ def main() -> None:
         _checklist["frame_consistent"] = False
         _checklist["frame_error"] = f"{type(_fe).__name__}: {_fe}"
     _req_items = list(_GATE_ITEMS) + (["coach_wired", "coach_live"] if _coach_required else [])
+    if args.fineweb:      # the run-of-record corpus must be STAGED + not truncated
+        _req_items += ["corpus_present", "corpus_segments_ok", "corpus_sha_ok"]
     _gate = evaluate_gate(_checklist, required_items=_req_items)   # raises LaunchGateFailure → abort before train
     print(f"[gate] LAUNCH CHECKLIST PASSED ({len(_req_items)} required): "
           f"anchor_honest={_checklist.get('anchor_honest')}(fr={_checklist.get('anchor_fr')}) "

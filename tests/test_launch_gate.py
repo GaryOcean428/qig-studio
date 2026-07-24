@@ -6,7 +6,16 @@ run of record — never a silent pass. Version parity is EXACT (a dev build fail
 """
 import pytest
 
-from qig_studio.launch_gate import (INTEGRITY_ITEMS, LaunchGateFailure, evaluate_gate, sha_ok, version_ok)
+from qig_studio.launch_gate import (INTEGRITY_ITEMS, LaunchGateFailure, evaluate_gate, segments_ok, sha_ok,
+                                    version_ok)
+
+
+def test_segments_ok_truncation_guard():
+    assert segments_ok(1_660_000, None) is True          # no expected → record-only, passes
+    assert segments_ok(1_660_000, 1_660_000) is True     # exact
+    assert segments_ok(1_700_000, 1_660_000) is True     # more is allowed (extra shards)
+    assert segments_ok(900_000, 1_660_000) is False      # TRUNCATED — fewer than the fit basis, fails closed
+    assert segments_ok(None, 1_660_000) is False         # no corpus staged → fails closed
 
 
 def test_version_ok_exact_and_recordonly():

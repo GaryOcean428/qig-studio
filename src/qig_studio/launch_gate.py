@@ -47,6 +47,16 @@ def sha_ok(computed: str | None, expected: str | None) -> bool:
     return bool(c) and (c == e or c.startswith(e))
 
 
+def segments_ok(computed: int | None, expected_min: int | None) -> bool:
+    """Truncated-world guard (Matrix 28a66754): True iff no expected count is requested OR the staged corpus
+    has AT LEAST ``expected_min`` segments. A partial/stale transfer has FEWER rows than the sample-10BT
+    basis the coordizer was fit on — training a mind on a narrower world than its vocab — so fewer fails
+    closed. More is allowed (extra shards staged); the exact-identity strictness lives in the manifest sha."""
+    if not expected_min:
+        return True
+    return computed is not None and int(computed) >= int(expected_min)
+
+
 def evaluate_gate(checklist: dict, *, required_items) -> dict:
     """Validate the launch checklist against ``required_items``. Returns ``{passed, failures, checklist}``;
     raises :class:`LaunchGateFailure` if any required item is falsy (None/False both fail — a measurement

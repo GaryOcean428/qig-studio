@@ -66,6 +66,38 @@ def _cached_shards() -> list[Path]:
     return sorted(_cache_dir().glob("sample__10BT__*.parquet"))
 
 
+def corpus_manifest(shard_dir: str | None = None) -> dict:
+    """Content-addressed identity of the STAGED FineWeb shard(s) — the truncated-world guard (Matrix 28a66754).
+
+    Returns ``{shards: [{name, sha256, num_rows}], total_segments, manifest_sha, n_shards}``. ``num_rows`` is
+    read from the parquet FOOTER metadata (cheap — no data load) and is the TRUNCATION guard: a partial or
+    stale transfer has fewer rows than the sample-10BT basis the coordizer was fit on, so the preflight fails
+    closed instead of training a mind on a narrower world. ``manifest_sha`` = sha256 over the sorted
+    ``name:sha256:num_rows`` lines, so it is stable across shard ordering. Empty (total_segments=0) when no
+    shard is staged — a run-of-record preflight treats that as a fail-closed."""
+    import hashlib
+
+    import pyarrow.parquet as pq
+
+    cache = Path(shard_dir) if shard_dir else _cache_dir()
+    shards = sorted(cache.glob("sample__10BT__*.parquet")) if cache.exists() else []
+    entries: list[dict] = []
+    lines: list[str] = []
+    total = 0
+    for s in shards:
+        h = hashlib.sha256()
+        with open(s, "rb") as f:
+            for chunk in iter(lambda: f.read(1 << 20), b""):
+                h.update(chunk)
+        sha = h.hexdigest()
+        rows = int(pq.ParquetFile(s).metadata.num_rows)   # footer metadata only, no data read
+        total += rows
+        entries.append({"name": s.name, "sha256": sha, "num_rows": rows})
+        lines.append(f"{s.name}:{sha}:{rows}")
+    manifest_sha = hashlib.sha256("\n".join(sorted(lines)).encode()).hexdigest() if lines else None
+    return {"shards": entries, "total_segments": total, "manifest_sha": manifest_sha, "n_shards": len(shards)}
+
+
 def download_shard(path: str, headers: dict) -> Path:
     """Download one shard to the cache (atomic via .part), reusing a cached copy. Bounded RAM (streamed)."""
     import httpx
