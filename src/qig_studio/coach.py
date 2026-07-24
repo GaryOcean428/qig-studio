@@ -33,8 +33,14 @@ from typing import Any
 from .kernel_experience import experience as _experience
 
 _DEFAULT_URL = "http://localhost:11434"
-_DEFAULT_MODEL = "nemotron-3-ultra:cloud"  # free within limits; qwen3.5:4b is the local fallback
+# APPROVED model only (PI hard rule: Qwen3.5-4B / 3.5-0.8B; nemotron/cloud NEVER — was a model-approval
+# violation AND a rate-limit source). Local Ollama default; the self-hosted Modal endpoint below overrides.
+_DEFAULT_MODEL = os.environ.get("QIG_COACH_MODEL", "qwen3.5:4b")
 _LOCAL_FALLBACK_MODEL = "qwen3.5:4b"
+# Self-hosted OpenAI-compatible coach endpoint (modal/modal-coach-endpoint.py — Qwen3.5-4B on L40S,
+# scale-to-zero). Set QIG_COACH_ENDPOINT to route the coach there (no Ollama-cloud rate limit).
+_COACH_ENDPOINT = os.environ.get("QIG_COACH_ENDPOINT", "").rstrip("/")
+_COACH_MODEL_REMOTE = os.environ.get("QIG_COACH_MODEL_REMOTE", "Qwen/Qwen3.5-4B")
 
 # Phase-appropriate encouragement registers (mirrors GeometricCoach's developmental phases).
 _PHASE_REGISTER = {
@@ -104,6 +110,69 @@ class OllamaLLM:
             return None
 
 
+class OpenAICompatLLM:
+    """None-safe OpenAI-compatible chat client — the self-hosted Modal SGLang coach endpoint
+    (modal/modal-coach-endpoint.py: Qwen3.5-4B on L40S, scale-to-zero, authenticated). Mirrors OllamaLLM's
+    interface (``is_available`` + ``complete`` + ``model``) so DevelopmentalCoach is backend-agnostic.
+    Self-hosted → NO Ollama-cloud rate limit; the approved Qwen3.5-4B. Auth via QIG_COACH_KEY (Bearer)."""
+
+    def __init__(self, url: str | None = None, model: str | None = None, api_key: str | None = None) -> None:
+        self.url = (url or _COACH_ENDPOINT).rstrip("/")
+        self.model = model or _COACH_MODEL_REMOTE
+        self.api_key = api_key or os.environ.get("QIG_COACH_KEY", "")
+        self._available: bool | None = None
+
+    def _headers(self) -> dict[str, str]:
+        h = {"content-type": "application/json"}
+        if self.api_key:
+            h["authorization"] = f"Bearer {self.api_key}"
+        return h
+
+    def is_available(self) -> bool:
+        if self._available is None:
+            if not self.url:
+                self._available = False
+            else:
+                try:
+                    import httpx
+
+                    self._available = httpx.get(self.url + "/v1/models", headers=self._headers(),
+                                                timeout=2.0).status_code == 200
+                except Exception:
+                    self._available = False
+        return self._available
+
+    def complete(self, system: str, user: str, timeout: float = 60.0) -> str | None:
+        if not self.is_available():
+            return None
+        try:
+            import httpx
+
+            body = {
+                "model": self.model,
+                "messages": [
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user},
+                ],
+                "max_tokens": 256,
+                "temperature": 0.3,
+                "stream": False,
+            }
+            r = httpx.post(self.url + "/v1/chat/completions", json=body, headers=self._headers(), timeout=timeout)
+            r.raise_for_status()
+            content = ((r.json().get("choices") or [{}])[0].get("message", {}).get("content", "")) or ""
+            return content.strip() or None
+        except Exception:
+            return None
+
+
+def make_coach_llm() -> "OllamaLLM | OpenAICompatLLM":
+    """Pick the coach LLM backend: the self-hosted OpenAI-compatible endpoint (QIG_COACH_ENDPOINT — the Modal
+    SGLang Qwen3.5-4B, no rate limit, approved model) when set, else local Ollama. Both are None-safe, so the
+    coach degrades to keyword interpretation when neither backend is reachable (never crashes the loop)."""
+    return OpenAICompatLLM() if _COACH_ENDPOINT else OllamaLLM()
+
+
 class DevelopmentalCoach:
     """Watches the kernel speak; interprets, encourages, and offers a push on stagnation.
 
@@ -154,7 +223,7 @@ class DevelopmentalCoach:
         if enabled is None:
             enabled = os.environ.get("QIG_COACH", "on").lower() not in ("0", "off", "false", "no")
         self.enabled = enabled
-        self.llm = llm or OllamaLLM()
+        self.llm = llm or make_coach_llm()   # Modal SGLang endpoint if QIG_COACH_ENDPOINT set, else Ollama
         self.cadence = max(1, cadence)
         self._geo_qwen_cache: Any | None = "unset"  # lazy sentinel — see _get_geo_qwen (Deliverable B)
         self.phi_threshold = phi_threshold
